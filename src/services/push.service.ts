@@ -10,7 +10,7 @@ let firebaseInitialized = false;
 
 /**
  * Initialize Firebase Admin SDK from a JSON env var, base64 env var,
- * local file path, or GOOGLE_APPLICATION_CREDENTIALS.
+ * legacy base64 env var, local file path, or GOOGLE_APPLICATION_CREDENTIALS.
  */
 const loadServiceAccount = (): { serviceAccount: admin.ServiceAccount; source: string } | null => {
     const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
@@ -21,13 +21,17 @@ const loadServiceAccount = (): { serviceAccount: admin.ServiceAccount; source: s
         };
     }
 
-    const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+    const serviceAccountBase64 =
+        process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 || process.env.FIREBASE_SERVICE_ACCOUNT;
     if (serviceAccountBase64) {
+        const source = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64
+            ? 'FIREBASE_SERVICE_ACCOUNT_BASE64'
+            : 'FIREBASE_SERVICE_ACCOUNT (legacy)';
         return {
             serviceAccount: JSON.parse(
                 Buffer.from(serviceAccountBase64, 'base64').toString('utf-8'),
             ) as admin.ServiceAccount,
-            source: 'FIREBASE_SERVICE_ACCOUNT_BASE64',
+            source,
         };
     }
 
@@ -61,7 +65,7 @@ const initFirebase = () => {
             logger.info('Firebase Admin SDK initialized using GOOGLE_APPLICATION_CREDENTIALS');
         } else {
             logger.warn(
-                'Firebase not configured; push notifications disabled. Set FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_SERVICE_ACCOUNT_BASE64, FIREBASE_SERVICE_ACCOUNT_PATH, or GOOGLE_APPLICATION_CREDENTIALS.',
+                'Firebase not configured; push notifications disabled. Set FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_SERVICE_ACCOUNT_BASE64, FIREBASE_SERVICE_ACCOUNT (legacy), FIREBASE_SERVICE_ACCOUNT_PATH, or GOOGLE_APPLICATION_CREDENTIALS.',
             );
             return;
         }
