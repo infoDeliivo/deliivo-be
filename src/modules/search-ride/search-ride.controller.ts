@@ -7,8 +7,8 @@ import { SearchRideQuery, EnhancedSearchRideQuery } from './search-ride.types.js
 
 // Cache key helpers
 const cacheKeys = {
-    searchResults: (query: SearchRideQuery) =>
-        `search:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}`,
+    searchResults: (query: SearchRideQuery, viewerId?: string) =>
+        `search:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${viewerId || 'anon'}`,
     rideDetails: (id: string) => `ride:details:${id}`,
 };
 
@@ -16,9 +16,10 @@ const cacheKeys = {
 const CACHE_TTL = 60; // 1 minute for search results
 
 /* ================= SEARCH RIDES ================= */
-export const searchRides = async (req: Request, res: Response) => {
+export const searchRides = async (req: AuthRequest, res: Response) => {
     try {
         const query = req.query as unknown as SearchRideQuery;
+        const viewerId = req.user?.id;
 
         // Parse departureDate if it's a string
         if (typeof query.departureDate === 'string') {
@@ -26,7 +27,7 @@ export const searchRides = async (req: Request, res: Response) => {
         }
 
         // Generate cache key
-        const cacheKey = cacheKeys.searchResults(query);
+        const cacheKey = cacheKeys.searchResults(query, viewerId);
 
         // Try cache first for identical searches
         const cachedResult = await getCache(cacheKey);
@@ -37,7 +38,7 @@ export const searchRides = async (req: Request, res: Response) => {
             });
         }
 
-        const result = await SearchRideService.searchRides(query);
+        const result = await SearchRideService.searchRides(query, viewerId);
 
         // Cache the result
         await setCache(cacheKey, result, CACHE_TTL);
@@ -141,9 +142,10 @@ export const createRideAlert = async (req: AuthRequest, res: Response) => {
 const advancedCacheKey = (query: EnhancedSearchRideQuery) =>
     `search:advanced:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${query.radiusKm || 5}:${query.minSimilarity || 0.75}`;
 
-export const searchRidesAdvanced = async (req: Request, res: Response) => {
+export const searchRidesAdvanced = async (req: AuthRequest, res: Response) => {
     try {
         const query = req.query as unknown as EnhancedSearchRideQuery;
+        const viewerId = req.user?.id;
 
         // Parse departureDate if it's a string
         if (typeof query.departureDate === 'string') {
@@ -151,7 +153,7 @@ export const searchRidesAdvanced = async (req: Request, res: Response) => {
         }
 
         // Generate cache key
-        const cacheKey = advancedCacheKey(query);
+        const cacheKey = `${advancedCacheKey(query)}:${viewerId || 'anon'}`;
 
         // Try cache first
         const cachedResult = await getCache(cacheKey);
@@ -162,7 +164,7 @@ export const searchRidesAdvanced = async (req: Request, res: Response) => {
             });
         }
 
-        const result = await SearchRideService.searchRidesAdvanced(query);
+        const result = await SearchRideService.searchRidesAdvanced(query, viewerId);
 
         // Cache the result for 60 seconds
         await setCache(cacheKey, result, CACHE_TTL);

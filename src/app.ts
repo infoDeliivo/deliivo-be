@@ -18,7 +18,6 @@ import {
 import { protect, errorHandler } from './middlewares/index.js';
 const app = express();
 
-
 app.use(cors());
 app.use(helmet());
 app.use(express.json());
@@ -31,7 +30,7 @@ app.get('/health', (req, res) => {
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', protect, userRouter);
 app.use('/api/v1/publish-ride', protect, publishRideRouter);
-app.use('/api/v1/search-rides', searchRideRouter);
+app.use('/api/v1/search-rides', protect, searchRideRouter);
 app.use('/api/v1/bookings', protect, rideBookingRouter);
 app.use('/api/v1/vehicles', protect, vehiclesRouter);
 app.use('/api/v1/travel-preferences', protect, travelPreferenceRouter);

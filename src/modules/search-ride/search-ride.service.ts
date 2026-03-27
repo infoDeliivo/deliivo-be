@@ -37,7 +37,8 @@ const ALT_ROUTE_PENALTY = 30;
 
 /* ================= BASIC SEARCH RIDES ================= */
 export const searchRides = async (
-    query: SearchRideQuery
+    query: SearchRideQuery,
+    excludeDriverId?: string
 ): Promise<SearchRideResponse> => {
     const {
         departureDate,
@@ -53,7 +54,6 @@ export const searchRides = async (
     const originLng = Number(query.originLng);
     const destinationLat = Number(query.destinationLat);
     const destinationLng = Number(query.destinationLng);
-    const seatsRequired = Number(query.seatsRequired) || 1;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 10;
     const radiusKm = Number(query.radiusKm) || RADIUS_KM;
@@ -66,7 +66,7 @@ export const searchRides = async (
     // Build where clause with bounding box optimization
     const whereClause: Prisma.RideWhereInput = {
         status: RideStatus.PUBLISHED,
-        availableSeats: { gte: seatsRequired },
+        availableSeats: { gt: 0 },
         departureDate: {
             equals: new Date(new Date(departureDate).toISOString().split('T')[0] + 'T00:00:00.000Z'),
         },
@@ -77,6 +77,10 @@ export const searchRides = async (
         destinationLat: { gte: destBB.minLat, lte: destBB.maxLat },
         destinationLng: { gte: destBB.minLng, lte: destBB.maxLng },
     };
+
+    if (excludeDriverId) {
+        whereClause.driverId = { not: excludeDriverId };
+    }
 
     // Add price filter if specified
     if (maxPrice) {
@@ -301,7 +305,8 @@ export const createRideAlert = async (
 
 /* ================= ADVANCED SEARCH RIDES ================= */
 export const searchRidesAdvanced = async (
-    query: EnhancedSearchRideQuery
+    query: EnhancedSearchRideQuery,
+    excludeDriverId?: string
 ): Promise<EnhancedSearchRideResponse> => {
     const {
         departureDate,
@@ -316,7 +321,6 @@ export const searchRidesAdvanced = async (
     const originLng = Number(query.originLng);
     const destinationLat = Number(query.destinationLat);
     const destinationLng = Number(query.destinationLng);
-    const seatsRequired = Number(query.seatsRequired) || 1;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 10;
     const radiusKm = Number(query.radiusKm) || RADIUS_KM;
@@ -340,7 +344,7 @@ export const searchRidesAdvanced = async (
 
     const whereClause: Prisma.RideWhereInput = {
         status: RideStatus.PUBLISHED,
-        availableSeats: { gte: seatsRequired },    // Spec §12: seats must be available
+        availableSeats: { gt: 0 },    // seats must be available
         departureDate: { equals: searchDate },
         OR: [
             {
@@ -361,6 +365,10 @@ export const searchRidesAdvanced = async (
             },
         ],
     };
+
+    if (excludeDriverId) {
+        whereClause.driverId = { not: excludeDriverId };
+    }
 
     if (maxPrice) {
         whereClause.basePricePerSeat = { lte: maxPrice };

@@ -2,52 +2,36 @@ import { Router } from 'express';
 import { validate } from '../../middlewares/validate.js';
 import * as controller from './search-ride.controller.js';
 import {
-    searchRideQuerySchema,
-    rideIdParamSchema,
-    notifyRideSchema,
-    recentSearchesQuerySchema,
-    enhancedSearchRideQuerySchema,
+  searchRideQuerySchema,
+  rideIdParamSchema,
+  notifyRideSchema,
+  recentSearchesQuerySchema,
+  enhancedSearchRideQuerySchema,
 } from './search-ride.validator.js';
-import { protect } from '../../middlewares/authMiddleware.js';
 
 const router = Router();
 
-// Advanced search rides - Public endpoint with three-condition matching
+// Advanced search rides
 router.get(
-    '/advanced',
-    validate({ query: enhancedSearchRideQuerySchema }),
-    controller.searchRidesAdvanced
+  '/advanced',
+  validate({ query: enhancedSearchRideQuerySchema }),
+  controller.searchRidesAdvanced,
 );
 
-// Search rides - Public endpoint (no auth required for browsing)
+// Search rides
+router.get('/', validate({ query: searchRideQuerySchema }), controller.searchRides);
+
+// Get recent searches
 router.get(
-    '/',
-    validate({ query: searchRideQuerySchema }),
-    controller.searchRides
+  '/user/recent',
+  validate({ query: recentSearchesQuerySchema }),
+  controller.getRecentSearches,
 );
 
-// Get recent searches - Protected endpoint
-router.get(
-    '/user/recent',
-    protect,
-    validate({ query: recentSearchesQuerySchema }),
-    controller.getRecentSearches
-);
+// Get ride details
+router.get('/:id', validate({ params: rideIdParamSchema }), controller.getRideDetails);
 
-// Get ride details - Public endpoint
-router.get(
-    '/:id',
-    validate({ params: rideIdParamSchema }),
-    controller.getRideDetails
-);
-
-// Create ride alert (notify when ride available) - Protected endpoint
-router.post(
-    '/notify',
-    protect,
-    validate({ body: notifyRideSchema }),
-    controller.createRideAlert
-);
+// Create ride alert (notify when ride available)
+router.post('/notify', validate({ body: notifyRideSchema }), controller.createRideAlert);
 
 export default router;
-
