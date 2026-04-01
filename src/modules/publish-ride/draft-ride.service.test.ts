@@ -1,0 +1,168 @@
+const mockRedis = {
+    get: jest.fn(),
+    setex: jest.fn(),
+    del: jest.fn(),
+    exists: jest.fn(),
+    on: jest.fn(),
+};
+
+const mockPrisma = {
+    vehicle: {
+        findFirst: jest.fn(),
+    },
+    $transaction: jest.fn(),
+};
+
+const mockFuelPriceService = {
+    getFuelPriceForCurrency: jest.fn(),
+};
+
+jest.mock('../../cache/redis.js', () => ({
+    __esModule: true,
+    default: mockRedis,
+}));
+
+jest.mock('../../config/index.js', () => ({
+    __esModule: true,
+    prisma: mockPrisma,
+}));
+
+jest.mock('../../services/fuel-price.service.js', () => ({
+    __esModule: true,
+    getFuelPriceForCurrency: mockFuelPriceService.getFuelPriceForCurrency,
+}));
+
+import * as DraftRideService from './draft-ride.service';
+import { RideStatus } from '@prisma/client';
+
+describe('publishRide', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    it('stores stopover pricing on the draft when updatePricing is called', async () => {
+        const draft = {
+            userId: 'driver-1',
+            step: 10,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            basePricePerSeat: 30,
+        };
+
+        mockRedis.get.mockResolvedValue(JSON.stringify(draft));
+
+        await DraftRideService.updatePricing('driver-1', {
+            basePricePerSeat: 40,
+            stopoverPricing: [
+                { placeId: 'stop-a', pricePerSeat: 12.5 },
+                { placeId: 'stop-b', pricePerSeat: 20 },
+            ],
+        });
+
+        expect(mockRedis.setex).toHaveBeenCalledTimes(1);
+        const savedDraft = JSON.parse(mockRedis.setex.mock.calls[0][2] as string);
+        expect(savedDraft.stopoverPricingByPlaceId).toEqual({
+            'stop-a': 12.5,
+            'stop-b': 20,
+        });
+        expect(savedDraft.basePricePerSeat).toBe(40);
+    });
+
+    it('preserves existing stopover pricing when updatePricing omits stopoverPricing', async () => {
+        const draft = {
+            userId: 'driver-1',
+            step: 12,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            basePricePerSeat: 30,
+            stopoverPricingByPlaceId: {
+                'stop-a': 12.5,
+                'stop-b': 20,
+            },
+        };
+
+        mockRedis.get.mockResolvedValue(JSON.stringify(draft));
+
+        await DraftRideService.updatePricing('driver-1', {
+            basePricePerSeat: 45,
+        });
+
+        expect(mockRedis.setex).toHaveBeenCalledTimes(1);
+        const savedDraft = JSON.parse(mockRedis.setex.mock.calls[0][2] as string);
+        expect(savedDraft.stopoverPricingByPlaceId).toEqual({
+            'stop-a': 12.5,
+            'stop-b': 20,
+        });
+        expect(savedDraft.basePricePerSeat).toBe(45);
+    });
+
+    it('persists stopover pricePerSeat from draft pricing by placeId and null when missing', async () => {
+        const draft = {
+            userId: 'driver-1',
+            step: 13,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originPlaceId: 'origin-place',
+            originAddress: 'Origin',
+            originLat: 10,
+            originLng: 20,
+            destinationPlaceId: 'destination-place',
+            destinationAddress: 'Destination',
+            destinationLat: 11,
+            destinationLng: 21,
+            routePolyline: 'encoded-polyline',
+            departureDate: new Date('2026-04-01T00:00:00.000Z').toISOString(),
+            departureTime: '09:30',
+            totalSeats: 3,
+            basePricePerSeat: 40,
+            currency: 'GBP',
+            stopovers: [
+                { placeId: 'stop-a', address: 'Stop A', lat: 12, lng: 22 },
+                { placeId: 'stop-b', address: 'Stop B', lat: 13, lng: 23 },
+            ],
+            stopoverPricingByPlaceId: {
+                'stop-a': 18.75,
+            },
+        };
+
+        mockRedis.get.mockResolvedValue(JSON.stringify(draft));
+        mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
+
+        const rideCreate = jest.fn().mockResolvedValue({ id: 'ride-1' });
+        const rideWaypointCreateMany = jest.fn().mockResolvedValue(undefined);
+        const rideFindUnique = jest.fn().mockResolvedValue({
+            id: 'ride-1',
+            status: RideStatus.PUBLISHED,
+            waypoints: [],
+        });
+
+        mockPrisma.$transaction.mockImplementation(async (callback: any) => {
+            return callback({
+                ride: {
+                    create: rideCreate,
+                    findUnique: rideFindUnique,
+                },
+                rideWaypoint: {
+                    createMany: rideWaypointCreateMany,
+                },
+            });
+        });
+
+        await DraftRideService.publishRide('driver-1');
+
+        expect(rideWaypointCreateMany).toHaveBeenCalledWith({
+            data: expect.arrayContaining([
+                expect.objectContaining({
+                    placeId: 'stop-a',
+                    waypointType: 'STOPOVER',
+                    pricePerSeat: 18.75,
+                }),
+                expect.objectContaining({
+                    placeId: 'stop-b',
+                    waypointType: 'STOPOVER',
+                    pricePerSeat: null,
+                }),
+            ]),
+        });
+    });
+});
