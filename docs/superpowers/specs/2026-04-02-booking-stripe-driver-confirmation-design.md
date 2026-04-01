@@ -13,6 +13,9 @@ Chosen behavior:
 - Booking is **not** auto-confirmed after payment.
 - Driver must accept or reject within 30 minutes.
 - If driver rejects or times out, passenger gets automatic full refund.
+- If driver cancels after accepting, passenger gets full refund and driver rating is penalized.
+- If rider cancels more than 24 hours before departure, rider gets 50% refund.
+- If rider cancels within 24 hours of departure, rider gets no refund.
 - Two confirmation codes (OTP) are used:
   - pickup OTP (trip start)
   - drop OTP (trip completion)
@@ -36,11 +39,13 @@ This causes four gaps:
 - Keep booking/seat state, payment state, and driver decision state consistent.
 - Provide explicit APIs for driver accept/reject and OTP verification.
 - Guarantee automatic full refund when driver rejects or does not respond in 30 minutes.
+- Enforce deterministic rider cancellation windows (50% refund before 24h, 0% within 24h).
+- Penalize driver rating when driver cancels after accepting.
 - Keep booking authorization strict (only booking passenger and ride driver can act).
 
 ## Non-Goals
 
-- Wallet or partial refund system.
+- Wallet-credit refund alternatives.
 - Marketplace-style split payouts to drivers.
 - Surge pricing redesign.
 - Re-using old booking confirm endpoint semantics.
@@ -67,6 +72,10 @@ Why this approach:
 7. If rejected or deadline expires: booking moves to `CANCELLED`, full refund is created, seats are restored.
 8. Pickup OTP verify moves booking to `IN_PROGRESS`.
 9. Drop OTP verify moves booking to `COMPLETED`.
+10. If driver cancels after accepting: booking moves to `CANCELLED`, full refund is created, and driver rating penalty is applied.
+11. If rider cancels:
+   - more than 24h before departure -> `CANCELLED`, 50% refund
+   - within 24h -> `CANCELLED`, no refund
 
 ## State Machine
 
@@ -88,6 +97,9 @@ Why this approach:
 - Driver accept -> `CONFIRMED`
 - Driver reject -> `CANCELLED` then refund
 - Driver timeout (30 min) -> `CANCELLED` then refund
+- Driver cancel after accept -> `CANCELLED` then full refund + rating penalty event
+- Rider cancel where `timeToDeparture > 24h` -> `CANCELLED` then 50% refund
+- Rider cancel where `timeToDeparture <= 24h` -> `CANCELLED` with no refund
 - Pickup OTP verify -> `IN_PROGRESS`
 - Drop OTP verify -> `COMPLETED`
 - Refund success updates refund fields and keeps booking terminal state as `CANCELLED`.
@@ -179,7 +191,30 @@ Rules:
 - Only `DRIVER_PENDING`.
 - Trigger full refund and seat restoration.
 
-### 6) Pickup OTP Verify (Driver API)
+### 6) Driver Cancel After Accept
+
+`POST /api/v1/driver/bookings/:id/cancel`
+
+Rules:
+
+- Only ride driver.
+- Allowed only after booking is `CONFIRMED` and before `IN_PROGRESS`.
+- Trigger full refund and seat restoration.
+- Create rating-penalty event for driver (down-rating).
+
+### 7) Rider Cancel Booking
+
+`POST /api/v1/bookings/:id/cancel`
+
+Rules:
+
+- Only booking passenger.
+- Allowed only before `IN_PROGRESS`.
+- If time to departure is more than 24h: refund 50% of paid amount.
+- If time to departure is 24h or less: no refund.
+- Seat restoration applies when booking is cancelled before trip start.
+
+### 8) Pickup OTP Verify (Driver API)
 
 `POST /api/v1/driver/bookings/:id/pickup-otp/verify`
 
@@ -199,7 +234,7 @@ Rules:
 - OTP must match, not expired, within attempt limit.
 - Transition to `IN_PROGRESS`.
 
-### 7) Drop OTP Verify (Driver API)
+### 9) Drop OTP Verify (Driver API)
 
 `POST /api/v1/driver/bookings/:id/drop-otp/verify`
 
@@ -228,8 +263,15 @@ Add fields:
 - `paymentCapturedAt DateTime?`
 - `refundId String?`
 - `refundedAt DateTime?`
+- `refundAmount Float?`
+- `refundPercent Float?`
 - `driverDecisionDeadlineAt DateTime?`
 - `driverDecisionAt DateTime?`
+- `cancelledAt DateTime?`
+- `cancelledByRole String?` // DRIVER | PASSENGER | SYSTEM
+- `cancellationReason String?`
+- `driverPenaltyAppliedAt DateTime?`
+- `driverPenaltyValue Float?`
 - `pickupOtpHash String?`
 - `pickupOtpExpiresAt DateTime?`
 - `pickupOtpVerifiedAt DateTime?`
@@ -270,13 +312,41 @@ Add scheduler/worker task that runs periodically (for example every minute):
 
 Job must be idempotent and safe on retries.
 
+## Cancellation and Refund Policy
+
+### Driver Cancellation After Accept
+
+- Condition: driver has already accepted (`CONFIRMED`) and then cancels before trip starts.
+- Refund: 100% to passenger.
+- Seat handling: restore seats.
+- Driver accountability: apply rating penalty event immediately.
+
+### Rider Cancellation Window
+
+- Condition A: cancellation request is more than 24 hours before scheduled departure.
+  - Refund: 50% of captured amount.
+  - Platform keeps 50% as cancellation fee.
+- Condition B: cancellation request is within 24 hours of scheduled departure.
+  - Refund: 0%.
+  - No Stripe refund issued.
+
+### Time Window Calculation
+
+- Compute `timeToDeparture` from ride `departureDate + departureTime` (server canonical datetime).
+- Rule:
+  - `timeToDeparture > 24h` => 50% refund
+  - `timeToDeparture <= 24h` => 0% refund
+- Use a single shared helper to avoid endpoint/job mismatch.
+
 ## Seat Integrity Rules
 
 - Seats are decremented at booking creation.
 - Seats are incremented on:
   - payment failure,
   - driver reject,
-  - driver timeout cancellation.
+  - driver timeout cancellation,
+  - driver cancel after accept,
+  - rider cancel before trip start.
 - No double increment on repeated webhook/job execution.
 
 Use transactional updates with status guards to keep exactly-once state transitions.
@@ -300,6 +370,8 @@ Passenger notifications:
 - driver accepted
 - driver rejected + refund initiated/succeeded
 - timeout cancelled + refund initiated/succeeded
+- driver cancelled after accept + full refund initiated/succeeded
+- rider cancellation processed + refund result (50% or 0%)
 - trip started
 - trip completed
 
@@ -307,6 +379,8 @@ Driver notifications:
 
 - paid booking awaiting decision
 - reminder near decision deadline
+- rider cancelled (include refund rule outcome)
+- cancellation penalty applied after driver-cancel event
 - trip started/completed status updates
 
 ### Driver Booking Request Modal Payload
@@ -370,6 +444,8 @@ Unit tests:
 - booking state transitions
 - payment webhook handlers
 - timeout cancellation logic
+- rider cancellation refund calculation (>24h => 50%, <=24h => 0%)
+- driver cancellation after accept triggers penalty event
 - OTP hash/verify and attempt limit behavior
 
 Integration tests:
@@ -377,6 +453,9 @@ Integration tests:
 - create booking -> pay -> webhook -> driver accept -> pickup OTP -> drop OTP
 - create booking -> pay -> driver reject -> refund + seat restore
 - create booking -> pay -> timeout -> refund + seat restore
+- create booking -> pay -> driver accept -> driver cancel -> full refund + driver penalty
+- create booking -> pay -> rider cancel (>24h) -> 50% refund
+- create booking -> pay -> rider cancel (<=24h) -> no refund
 
 Failure-path tests:
 
@@ -405,5 +484,8 @@ Contract tests:
 - Paid booking cannot become confirmed without driver accept.
 - Driver decision deadline is enforced at 30 minutes.
 - Reject/timeout always triggers full refund and seat restoration.
+- Driver cancel after accept triggers full refund and driver rating penalty.
+- Rider cancel more than 24h before departure gives 50% refund.
+- Rider cancel within 24h gives 0% refund.
 - Pickup/drop OTP gates work and are auditable.
 - Booking, payment, seat, and notification states remain consistent under retries and webhook duplication.
