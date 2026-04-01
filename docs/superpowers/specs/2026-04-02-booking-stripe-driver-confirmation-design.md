@@ -309,6 +309,54 @@ Driver notifications:
 - reminder near decision deadline
 - trip started/completed status updates
 
+### Driver Booking Request Modal Payload
+
+For a new paid booking that needs driver decision, create notification with:
+
+- `type`: `booking.request.driver_decision`
+- `title`: short, actionable text (example: `New ride request`)
+- `body`: short summary (example: `Rider wants Mathura to Delhi`)
+- `data`: payload for modal rendering and deep-link fallback
+
+Recommended `data` payload:
+
+```json
+{
+  "bookingId": "booking-uuid",
+  "rideId": "ride-uuid",
+  "passengerName": "Rider Name",
+  "passengerAvatarUrl": "https://cdn.example/avatar.jpg",
+  "originAddress": "Mathura",
+  "destinationAddress": "Delhi",
+  "seatsBooked": "1",
+  "totalPrice": "850",
+  "currency": "INR",
+  "decisionDeadlineAt": "2026-04-02T12:30:00.000Z",
+  "deepLink": "app://driver/booking-request/booking-uuid"
+}
+```
+
+Rules:
+
+- Keep `data` values as strings for push compatibility.
+- Always include `bookingId`, `rideId`, and `deepLink`.
+- Driver app can fetch fresh booking details by `bookingId` before rendering modal.
+
+### Online vs Offline Delivery Behavior
+
+Use existing notification service behavior:
+
+- If driver has active socket session:
+  - send `notification:new` WebSocket event immediately,
+  - open booking-request modal in-app instantly with payload from event data.
+- If driver has no active socket session:
+  - send FCM/APNs push with same core `data`,
+  - on push tap, app resolves `deepLink`,
+  - app fetches booking details by `bookingId`,
+  - app opens the same booking-request modal UI.
+
+This gives one UX contract with two transport paths (socket for online, push for offline).
+
 Passenger app behavior:
 
 - On driver accept, passenger receives pickup OTP and drop OTP in booking details payload.
