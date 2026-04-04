@@ -9,11 +9,7 @@ import {
   requestOtpService,
 } from './auth.service.js';
 import { sendMail } from '../mail/mail.service.js';
-import {
-  signupOtpTemplate,
-  loginOtpTemplate,
-  resetOtpTemplate,
-} from '../mail/mail.templates.js';
+import { signupOtpTemplate, loginOtpTemplate, resetOtpTemplate } from '../mail/mail.templates.js';
 import { createOtp, verifyOtp, resendOtp } from '../otp/otp.service.js';
 import {
   sendSms,
@@ -25,7 +21,7 @@ import {
 type OtpPurpose = 'signup' | 'login' | 'reset_password';
 
 const shouldExposeOtp =
-  process.env.NODE_ENV !== 'production' && process.env.EXPOSE_OTP_IN_RESPONSE === 'true';
+  process.env.NODE_ENV !== 'production' || process.env.EXPOSE_OTP_IN_RESPONSE === 'true';
 
 const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
   if (purpose === 'signup') {
