@@ -14,7 +14,7 @@
     "openapi:bundle": "redocly bundle docs/openapi/openapi.yaml -o docs/openapi/dist/openapi.json --ext json",
     "openapi:coverage": "node --loader ts-node/esm src/scripts/check-openapi-coverage.ts",
     "openapi:check": "npm run openapi:lint && npm run openapi:bundle && npm run openapi:coverage",
-    "start": "NODE_ENV=production node dist/server.js",
+    "start": "npm run openapi:bundle && NODE_ENV=production node dist/server.js",
     "start:staging": "NODE_ENV=staging node dist/server.js",
     "start:worker": "NODE_ENV=production node dist/modules/mail/mail.worker.js",
     "start:worker:staging": "NODE_ENV=staging node dist/modules/mail/mail.worker.js",
