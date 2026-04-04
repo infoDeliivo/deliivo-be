@@ -1,5 +1,7 @@
 import { SendSmsPayload } from './sms.types.js';
 import { smsQueue } from './sms.queue.js';
+import logger from '../../utils/logger.js';
+import { getSmsQueueConfig, isValidE164PhoneNumber, maskPhoneNumber } from './sms.config.js';
 
 export interface SendSmsResult {
     success: boolean;
@@ -14,22 +16,50 @@ export interface SendSmsResult {
  */
 export const sendSms = async (to: string, body: string): Promise<SendSmsResult> => {
     try {
-        const payload: SendSmsPayload = { to, body };
+        const normalizedTo = to.trim();
+        const normalizedBody = body.trim();
+        const queueConfig = getSmsQueueConfig();
+
+        if (!isValidE164PhoneNumber(normalizedTo)) {
+            return { success: false, error: 'Phone number must be in E.164 format (example: +919876543210)' };
+        }
+
+        if (!normalizedBody) {
+            return { success: false, error: 'SMS body is required' };
+        }
+
+        if (normalizedBody.length > queueConfig.maxBodyLength) {
+            return {
+                success: false,
+                error: `SMS body exceeds ${queueConfig.maxBodyLength} characters`,
+            };
+        }
+
+        const payload: SendSmsPayload = { to: normalizedTo, body: normalizedBody };
 
         const job = await smsQueue.add('send-sms', payload, {
-            attempts: 3,
+            attempts: queueConfig.retryAttempts,
             backoff: {
                 type: 'exponential',
-                delay: 2000,
+                delay: queueConfig.retryBackoffMs,
             },
-            removeOnComplete: true,
-            removeOnFail: false,
+            removeOnComplete: {
+                count: queueConfig.removeOnCompleteCount,
+            },
+            removeOnFail: {
+                count: queueConfig.removeOnFailCount,
+            },
         });
 
-        console.log(`[SMS] Queued job ${job.id} for ${to}`);
+        logger.info('[SMS] Queued SMS job', {
+            jobId: job.id,
+            to: maskPhoneNumber(normalizedTo),
+        });
         return { success: true, jobId: job.id };
     } catch (error: any) {
-        console.error('[SMS ERROR] Failed to queue SMS:', error?.message || error);
+        logger.error('[SMS] Failed to queue SMS job', {
+            error: error?.message || String(error),
+        });
         return { success: false, error: error?.message || 'Failed to queue SMS' };
     }
 };

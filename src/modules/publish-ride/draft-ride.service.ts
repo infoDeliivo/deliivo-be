@@ -21,6 +21,7 @@ import {
     StopoverSuggestionsResult,
 } from './publish-ride.types.js';
 import { getFuelPriceForCurrency } from '../../services/fuel-price.service.js';
+import { buildStopoverPricingByPlaceId, getStopoverPriceByPlaceId } from './stopover-pricing.utils.js';
 
 // ============================================================
 //  CONSTANTS
@@ -106,6 +107,7 @@ interface DraftRide {
     vehicleId?: string | null;
     maxLuggagePerPerson?: number;
     backSeatOnly?: boolean;
+    stopoverPricingByPlaceId?: Record<string, number>;
 
     // Notes (Step 13)
     notes?: string;
@@ -636,6 +638,9 @@ export const updatePricing = async (
 ): Promise<DraftRide> => {
     const draft = await getDraft(driverId);
     draft.basePricePerSeat = input.basePricePerSeat;
+    if (input.stopoverPricing !== undefined) {
+        draft.stopoverPricingByPlaceId = buildStopoverPricingByPlaceId(input.stopoverPricing);
+    }
     draft.step = Math.max(draft.step, 12);
     return saveDraft(draft);
 };
@@ -756,6 +761,7 @@ export const publishRide = async (driverId: string) => {
             lng: s.lng,
             waypointType: 'STOPOVER' as const,
             orderIndex: i + 50,
+            pricePerSeat: getStopoverPriceByPlaceId(draft.stopoverPricingByPlaceId, s.placeId),
         }));
 
         const allWaypoints = [...pickups, ...dropoffs, ...stopovers];

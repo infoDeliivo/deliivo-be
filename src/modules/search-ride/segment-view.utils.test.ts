@@ -19,6 +19,7 @@ describe('resolveSegmentView', () => {
                 address: 'B',
                 lat: 2,
                 lng: 2,
+                waypointType: 'STOPOVER',
                 orderIndex: 50,
                 pricePerSeat: 10,
             },
@@ -28,6 +29,7 @@ describe('resolveSegmentView', () => {
                 address: 'C',
                 lat: 3,
                 lng: 3,
+                waypointType: 'STOPOVER',
                 orderIndex: 51,
                 pricePerSeat: 20,
             },
@@ -61,5 +63,46 @@ describe('resolveSegmentView', () => {
         expect(result?.originAddress).toBe('C');
         expect(result?.destinationAddress).toBe('D');
         expect(result?.bookingContext?.dropoffWaypointId).toBeNull();
+    });
+
+    it('ignores non-stopover waypoints so origin -> first stopover remains valid', () => {
+        const rideWithPickupAndDropoff = {
+            ...ride,
+            waypoints: [
+                {
+                    id: 'wp-pickup',
+                    placeId: 'place-p',
+                    address: 'Pickup',
+                    lat: 1.5,
+                    lng: 1.5,
+                    waypointType: 'PICKUP',
+                    orderIndex: 0,
+                    pricePerSeat: null,
+                },
+                ...ride.waypoints,
+                {
+                    id: 'wp-dropoff',
+                    placeId: 'place-x',
+                    address: 'Dropoff',
+                    lat: 3.5,
+                    lng: 3.5,
+                    waypointType: 'DROPOFF',
+                    orderIndex: 100,
+                    pricePerSeat: null,
+                },
+            ],
+        };
+
+        const points = buildSegmentPoints(rideWithPickupAndDropoff);
+        expect(points.some((point) => point.ref === 'waypoint:wp-pickup')).toBe(false);
+        expect(points.some((point) => point.ref === 'waypoint:wp-dropoff')).toBe(false);
+
+        const result = resolveSegmentView(
+            rideWithPickupAndDropoff,
+            points,
+            'origin',
+            'waypoint:wp-b'
+        );
+        expect(result?.basePricePerSeat).toBe(10);
     });
 });

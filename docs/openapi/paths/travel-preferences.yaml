@@ -1,0 +1,127 @@
+{
+  "paths": {
+    "/api/v1/travel-preferences": {
+      "put": {
+        "operationId": "travelPreferencesPut",
+        "summary": "PUT travel-preferences/",
+        "tags": [
+          "Travel Preferences"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "../components/examples/common.yaml#/TravelPreferenceSuccess"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "chattiness",
+                  "pets"
+                ],
+                "properties": {
+                  "chattiness": {
+                    "type": "string",
+                    "enum": [
+                      "chatterbox",
+                      "chatty_when_comfortable",
+                      "quiet"
+                    ]
+                  },
+                  "pets": {
+                    "type": "string",
+                    "enum": [
+                      "love_pets",
+                      "depends_on_animal",
+                      "no_pets"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "travelPreferencesGet",
+        "summary": "GET travel-preferences/",
+        "tags": [
+          "Travel Preferences"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "../components/examples/common.yaml#/TravelPreferenceSuccess"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    }
+  }
+}

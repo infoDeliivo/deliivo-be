@@ -7,8 +7,8 @@ This document explains how ride price is calculated in the `publish-ride` module
 1. `PUT /draft/capacity` stores `totalSeats`, `basePricePerSeat`, and `currency` in the draft.
 2. `GET /draft/pricing/recommended` calculates a suggested `basePricePerSeat` from route distance.
 3. Client pre-fills `basePricePerSeat` with this suggestion, and user can keep or edit it.
-4. `PUT /draft/pricing` stores the final `basePricePerSeat` selected by the driver.
-5. `POST /draft/publish` saves ride to DB with `basePricePerSeat` and `currency`.
+4. `PUT /draft/pricing` stores the final `basePricePerSeat` selected by the driver and optional stopover cumulative pricing keyed by `placeId`.
+5. `POST /draft/publish` saves ride to DB with `basePricePerSeat`, `currency`, and stopover waypoint `pricePerSeat` values when present.
 
 ## 2. Recommended Price Formula
 
@@ -73,6 +73,12 @@ For each selected stopover in the draft:
 - `stopRecommendedPrice = round(recommendedPrice * ratio * 100) / 100`
 - Results are sorted by `distanceFromOriginKm` ascending.
 
+### 3.3 Draft stopover pricing storage (`PUT /draft/pricing`)
+
+- The draft stores cumulative stopover pricing in `stopoverPricingByPlaceId`.
+- The request payload uses `stopoverPricing[]`, each entry keyed by `placeId`.
+- This is draft-safe and survives until publish without depending on database waypoint IDs.
+
 ## 4. Validation and Errors
 
 - `basePricePerSeat` must be positive (`updateCapacitySchema`, `updatePricingSchema`).
@@ -85,8 +91,8 @@ For each selected stopover in the draft:
 ## 5. What Is Persisted Today
 
 - On publish, ride row stores `basePricePerSeat`, `currency`, `totalSeats`, and `availableSeats`.
-- Waypoints are created without `pricePerSeat` in `publishRide`.
-- `updatePricing` accepts `waypointPricing` in schema, but service currently applies only `basePricePerSeat`.
+- Stopover waypoints are published with `pricePerSeat` from the draft map when available.
+- Missing stopover pricing persists as `null`.
 
 ## 6. Downstream Booking Price
 

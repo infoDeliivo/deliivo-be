@@ -1,0 +1,122 @@
+{
+  "BadRequest": {
+    "description": "Bad request.",
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "../schemas/common.yaml#/ApiErrorEnvelope"
+        },
+        "examples": {
+          "badRequest": {
+            "$ref": "../examples/common.yaml#/BadRequestError"
+          }
+        }
+      }
+    }
+  },
+  "Unauthorized": {
+    "description": "Authentication required.",
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "../schemas/common.yaml#/ApiErrorEnvelope"
+        },
+        "examples": {
+          "unauthorized": {
+            "$ref": "../examples/common.yaml#/UnauthorizedError"
+          }
+        }
+      }
+    }
+  },
+  "Forbidden": {
+    "description": "Access forbidden.",
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "../schemas/common.yaml#/ApiErrorEnvelope"
+        },
+        "examples": {
+          "forbidden": {
+            "$ref": "../examples/common.yaml#/ForbiddenError"
+          }
+        }
+      }
+    }
+  },
+  "NotFound": {
+    "description": "Resource not found.",
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "../schemas/common.yaml#/ApiErrorEnvelope"
+        },
+        "examples": {
+          "notFound": {
+            "$ref": "../examples/common.yaml#/NotFoundError"
+          }
+        }
+      }
+    }
+  },
+  "Conflict": {
+    "description": "Conflict.",
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "../schemas/common.yaml#/ApiErrorEnvelope"
+        },
+        "examples": {
+          "conflict": {
+            "$ref": "../examples/common.yaml#/ConflictError"
+          }
+        }
+      }
+    }
+  },
+  "TooManyRequests": {
+    "description": "Too many requests.",
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "../schemas/common.yaml#/ApiErrorEnvelope"
+        },
+        "examples": {
+          "rateLimited": {
+            "$ref": "../examples/common.yaml#/RateLimitedError"
+          }
+        }
+      }
+    }
+  },
+  "ServerError": {
+    "description": "Internal server error.",
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "../schemas/common.yaml#/ApiErrorEnvelope"
+        },
+        "examples": {
+          "serverError": {
+            "$ref": "../examples/common.yaml#/ServerError"
+          }
+        }
+      }
+    }
+  },
+  "WebhookBadRequest": {
+    "description": "Invalid Stripe webhook signature.",
+    "content": {
+      "text/plain": {
+        "schema": {
+          "type": "string"
+        },
+        "examples": {
+          "invalidSignature": {
+            "value": "Invalid stripe signature"
+          }
+        }
+      }
+    }
+  }
+}

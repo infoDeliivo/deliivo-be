@@ -1,0 +1,419 @@
+import { BookingStatus } from '@prisma/client';
+import { prisma } from '../../config/index.js';
+import { createNotification } from '../notification/notification.service.js';
+import { refundPaymentIntent } from '../payments/stripe.service.js';
+import { generateBookingOtp, hashOtp, isOtpValid } from '../ride-booking/booking-otp.utils.js';
+import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
+
+const PICKUP_OTP_TTL_MS = 6 * 60 * 60 * 1000;
+const DROP_OTP_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_OTP_ATTEMPTS = 5;
+const DRIVER_PENALTY_PERCENT = 50;
+
+type DriverBookingResult = {
+    bookingId: string;
+    rideId: string;
+    passengerId: string;
+    status: BookingStatus;
+};
+
+const fetchDriverBooking = async (bookingId: string) => {
+    return prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: {
+            passenger: {
+                select: {
+                    id: true,
+                    name: true,
+                    avatarUrl: true,
+                },
+            },
+            ride: {
+                select: {
+                    id: true,
+                    driverId: true,
+                    originAddress: true,
+                    destinationAddress: true,
+                },
+            },
+        },
+    });
+};
+
+type DriverBookingRecord = NonNullable<Awaited<ReturnType<typeof fetchDriverBooking>>>;
+
+const requireDriverBooking = (
+    driverId: string,
+    booking: Awaited<ReturnType<typeof fetchDriverBooking>>
+): DriverBookingRecord => {
+    if (!booking) throw new Error('BOOKING_NOT_FOUND');
+    if (booking.ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
+    return booking;
+};
+
+const assertDecisionWindowOpen = (deadlineAt: Date | null) => {
+    if (!deadlineAt) return;
+    if (deadlineAt.getTime() < Date.now()) {
+        throw new Error('BOOKING_DECISION_DEADLINE_PASSED');
+    }
+};
+
+export const acceptBooking = async (driverId: string, bookingId: string): Promise<DriverBookingResult> => {
+    const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
+
+    if (booking.status !== BookingStatus.DRIVER_PENDING) {
+        throw new Error('BOOKING_NOT_DRIVER_PENDING');
+    }
+
+    assertDecisionWindowOpen(booking.driverDecisionDeadlineAt);
+
+    const now = new Date();
+    const pickupOtp = generateBookingOtp();
+    const dropOtp = generateBookingOtp();
+
+    const updated = await prisma.rideBooking.update({
+        where: { id: bookingId },
+        data: {
+            status: BookingStatus.CONFIRMED,
+            driverDecisionAt: now,
+            pickupOtpHash: hashOtp(pickupOtp),
+            pickupOtpExpiresAt: new Date(now.getTime() + PICKUP_OTP_TTL_MS),
+            dropOtpHash: hashOtp(dropOtp),
+            dropOtpExpiresAt: new Date(now.getTime() + DROP_OTP_TTL_MS),
+            otpAttemptCount: 0,
+        },
+        select: {
+            id: true,
+            rideId: true,
+            passengerId: true,
+            status: true,
+        },
+    });
+
+    await createNotification({
+        userId: booking.passengerId,
+        type: 'booking.driver.accepted',
+        title: 'Ride confirmed',
+        body: `${booking.passenger.name ?? 'Your driver'} accepted your booking`,
+        data: {
+            bookingId: booking.id,
+            rideId: booking.ride.id,
+            pickupOtp,
+            dropOtp,
+            deepLink: `app://booking/${booking.id}`,
+        },
+    });
+
+    return {
+        bookingId: updated.id,
+        rideId: updated.rideId,
+        passengerId: updated.passengerId,
+        status: updated.status,
+    };
+};
+
+export const rejectBooking = async (driverId: string, bookingId: string): Promise<DriverBookingResult> => {
+    const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
+
+    if (booking.status !== BookingStatus.DRIVER_PENDING) {
+        throw new Error('BOOKING_NOT_DRIVER_PENDING');
+    }
+
+    assertDecisionWindowOpen(booking.driverDecisionDeadlineAt);
+
+    const fullRefundAmount = booking.paymentAmount ?? booking.totalPrice;
+    let refundId: string | null = null;
+    let refundInitiated = false;
+
+    if (booking.paymentCapturedAt && booking.stripePaymentIntentId) {
+        const refund = await refundPaymentIntent(
+            booking.stripePaymentIntentId,
+            toMinorCurrencyUnits(fullRefundAmount)
+        );
+        refundId = refund.id;
+        refundInitiated = true;
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+        const current = await tx.rideBooking.findUnique({
+            where: { id: bookingId },
+            select: {
+                id: true,
+                status: true,
+                rideId: true,
+                passengerId: true,
+                seatsBooked: true,
+            },
+        });
+
+        if (!current) throw new Error('BOOKING_NOT_FOUND');
+        if (current.status !== BookingStatus.DRIVER_PENDING) {
+            throw new Error('BOOKING_NOT_DRIVER_PENDING');
+        }
+
+        await tx.rideBooking.update({
+            where: { id: bookingId },
+            data: {
+                status: BookingStatus.CANCELLED,
+                driverDecisionAt: new Date(),
+                cancelledAt: new Date(),
+                cancelledByRole: 'DRIVER',
+                cancellationReason: 'DRIVER_REJECTED',
+                refundPercent: 100,
+                refundAmount: fullRefundAmount,
+                refundId: refundId ?? undefined,
+                refundedAt: refundInitiated ? new Date() : undefined,
+            },
+        });
+
+        await tx.ride.update({
+            where: { id: current.rideId },
+            data: {
+                availableSeats: { increment: current.seatsBooked },
+            },
+        });
+
+        return current;
+    });
+
+    await createNotification({
+        userId: booking.passengerId,
+        type: 'booking.driver.rejected',
+        title: 'Booking declined',
+        body: `${booking.passenger.name ?? 'Passenger'}, the driver declined this ride request`,
+        data: {
+            bookingId: booking.id,
+            rideId: booking.ride.id,
+            refundInitiated: refundInitiated ? 'true' : 'false',
+            refundPercent: '100',
+            deepLink: `app://booking/${booking.id}`,
+        },
+    });
+
+    return {
+        bookingId: updated.id,
+        rideId: updated.rideId,
+        passengerId: updated.passengerId,
+        status: BookingStatus.CANCELLED,
+    };
+};
+
+export const cancelAfterAccept = async (driverId: string, bookingId: string): Promise<DriverBookingResult> => {
+    const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
+
+    if (booking.status !== BookingStatus.CONFIRMED) {
+        throw new Error('BOOKING_NOT_CONFIRMED');
+    }
+
+    const fullRefundAmount = booking.paymentAmount ?? booking.totalPrice;
+    let refundId: string | null = null;
+    let refundInitiated = false;
+
+    if (booking.paymentCapturedAt && booking.stripePaymentIntentId) {
+        const refund = await refundPaymentIntent(
+            booking.stripePaymentIntentId,
+            toMinorCurrencyUnits(fullRefundAmount)
+        );
+        refundId = refund.id;
+        refundInitiated = true;
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+        const current = await tx.rideBooking.findUnique({
+            where: { id: bookingId },
+            select: {
+                id: true,
+                status: true,
+                rideId: true,
+                passengerId: true,
+                seatsBooked: true,
+            },
+        });
+
+        if (!current) throw new Error('BOOKING_NOT_FOUND');
+        if (current.status !== BookingStatus.CONFIRMED) {
+            throw new Error('BOOKING_NOT_CONFIRMED');
+        }
+
+        await tx.rideBooking.update({
+            where: { id: bookingId },
+            data: {
+                status: BookingStatus.CANCELLED,
+                cancelledAt: new Date(),
+                cancelledByRole: 'DRIVER',
+                cancellationReason: 'DRIVER_CANCELLED_AFTER_ACCEPT',
+                refundPercent: 100,
+                refundAmount: fullRefundAmount,
+                refundId: refundId ?? undefined,
+                refundedAt: refundInitiated ? new Date() : undefined,
+                driverPenaltyAppliedAt: new Date(),
+                driverPenaltyValue: DRIVER_PENALTY_PERCENT,
+            },
+        });
+
+        await tx.ride.update({
+            where: { id: current.rideId },
+            data: {
+                availableSeats: { increment: current.seatsBooked },
+            },
+        });
+
+        await tx.driverPenaltyEvent.create({
+            data: {
+                driverId,
+                bookingId: current.id,
+                penaltyPercent: DRIVER_PENALTY_PERCENT,
+                reason: 'DRIVER_CANCELLED_AFTER_ACCEPT',
+            },
+        });
+
+        return current;
+    });
+
+    await createNotification({
+        userId: booking.passengerId,
+        type: 'booking.driver.cancelled',
+        title: 'Ride cancelled by driver',
+        body: 'Your driver cancelled this ride. Refund has been initiated.',
+        data: {
+            bookingId: booking.id,
+            rideId: booking.ride.id,
+            refundInitiated: refundInitiated ? 'true' : 'false',
+            refundPercent: '100',
+            deepLink: `app://booking/${booking.id}`,
+        },
+    });
+
+    return {
+        bookingId: updated.id,
+        rideId: updated.rideId,
+        passengerId: updated.passengerId,
+        status: BookingStatus.CANCELLED,
+    };
+};
+
+const assertOtpGuard = (booking: DriverBookingRecord, expectedStatus: BookingStatus) => {
+    if (booking.status !== expectedStatus) throw new Error('INVALID_BOOKING_STATUS');
+};
+
+export const verifyPickupOtp = async (
+    driverId: string,
+    bookingId: string,
+    otp: string
+): Promise<DriverBookingResult> => {
+    const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
+    assertOtpGuard(booking, BookingStatus.CONFIRMED);
+
+    if (!booking.pickupOtpHash || !booking.pickupOtpExpiresAt) {
+        throw new Error('PICKUP_OTP_NOT_AVAILABLE');
+    }
+    if (booking.pickupOtpExpiresAt.getTime() < Date.now()) {
+        throw new Error('PICKUP_OTP_EXPIRED');
+    }
+    if (booking.otpAttemptCount >= MAX_OTP_ATTEMPTS) {
+        throw new Error('OTP_ATTEMPT_LIMIT_EXCEEDED');
+    }
+
+    if (!isOtpValid(otp, booking.pickupOtpHash)) {
+        await prisma.rideBooking.update({
+            where: { id: bookingId },
+            data: { otpAttemptCount: { increment: 1 } },
+        });
+        throw new Error('INVALID_PICKUP_OTP');
+    }
+
+    const updated = await prisma.rideBooking.update({
+        where: { id: bookingId },
+        data: {
+            status: BookingStatus.IN_PROGRESS,
+            pickupOtpVerifiedAt: new Date(),
+            otpAttemptCount: 0,
+        },
+        select: {
+            id: true,
+            rideId: true,
+            passengerId: true,
+            status: true,
+        },
+    });
+
+    await createNotification({
+        userId: booking.passengerId,
+        type: 'booking.trip.started',
+        title: 'Trip started',
+        body: 'Your trip is now in progress',
+        data: {
+            bookingId: booking.id,
+            rideId: booking.ride.id,
+            deepLink: `app://booking/${booking.id}`,
+        },
+    });
+
+    return {
+        bookingId: updated.id,
+        rideId: updated.rideId,
+        passengerId: updated.passengerId,
+        status: updated.status,
+    };
+};
+
+export const verifyDropOtp = async (
+    driverId: string,
+    bookingId: string,
+    otp: string
+): Promise<DriverBookingResult> => {
+    const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
+    assertOtpGuard(booking, BookingStatus.IN_PROGRESS);
+
+    if (!booking.dropOtpHash || !booking.dropOtpExpiresAt) {
+        throw new Error('DROP_OTP_NOT_AVAILABLE');
+    }
+    if (booking.dropOtpExpiresAt.getTime() < Date.now()) {
+        throw new Error('DROP_OTP_EXPIRED');
+    }
+    if (booking.otpAttemptCount >= MAX_OTP_ATTEMPTS) {
+        throw new Error('OTP_ATTEMPT_LIMIT_EXCEEDED');
+    }
+
+    if (!isOtpValid(otp, booking.dropOtpHash)) {
+        await prisma.rideBooking.update({
+            where: { id: bookingId },
+            data: { otpAttemptCount: { increment: 1 } },
+        });
+        throw new Error('INVALID_DROP_OTP');
+    }
+
+    const updated = await prisma.rideBooking.update({
+        where: { id: bookingId },
+        data: {
+            status: BookingStatus.COMPLETED,
+            dropOtpVerifiedAt: new Date(),
+            otpAttemptCount: 0,
+        },
+        select: {
+            id: true,
+            rideId: true,
+            passengerId: true,
+            status: true,
+        },
+    });
+
+    await createNotification({
+        userId: booking.passengerId,
+        type: 'booking.trip.completed',
+        title: 'Trip completed',
+        body: 'Your trip has been completed successfully',
+        data: {
+            bookingId: booking.id,
+            rideId: booking.ride.id,
+            deepLink: `app://booking/${booking.id}`,
+        },
+    });
+
+    return {
+        bookingId: updated.id,
+        rideId: updated.rideId,
+        passengerId: updated.passengerId,
+        status: updated.status,
+    };
+};

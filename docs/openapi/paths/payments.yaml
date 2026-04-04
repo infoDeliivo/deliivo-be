@@ -1,0 +1,49 @@
+{
+  "paths": {
+    "/api/v1/payments/stripe/webhook": {
+      "post": {
+        "operationId": "paymentsPostStripeWebhook",
+        "summary": "POST payments/stripe/webhook",
+        "tags": [
+          "Payments"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Webhook received",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/WebhookReceipt"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "../components/examples/common.yaml#/WebhookAckResponse"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/WebhookBadRequest"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          },
+          "description": "Raw Stripe event payload."
+        }
+      }
+    }
+  }
+}

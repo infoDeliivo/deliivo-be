@@ -3,7 +3,6 @@ import { validate } from '../../middlewares/validate.js';
 import * as controller from './ride-booking.controller.js';
 import {
     createBookingSchema,
-    confirmBookingSchema,
     bookingIdParamSchema,
     listBookingsQuerySchema,
 } from './ride-booking.validator.js';
@@ -31,16 +30,16 @@ router.get(
     controller.getBookingById
 );
 
-// Confirm booking
-router.patch(
-    '/:id/confirm',
-    validate({ params: bookingIdParamSchema, body: confirmBookingSchema }),
-    controller.confirmBooking
+// Check booking payment status after payment UI flow
+router.post(
+    '/:id/payment/confirm',
+    validate({ params: bookingIdParamSchema }),
+    controller.confirmBookingPaymentStatus
 );
 
 // Cancel booking
-router.delete(
-    '/:id',
+router.post(
+    '/:id/cancel',
     validate({ params: bookingIdParamSchema }),
     controller.cancelBooking
 );

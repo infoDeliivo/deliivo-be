@@ -1,0 +1,290 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Carpooling API",
+    "version": "1.0.0",
+    "description": "Auto-generated baseline OpenAPI contract for all mounted /api/v1 routes. Replace generic request/response schemas with module-specific contracts over time.",
+    "license": {
+      "name": "UNLICENSED",
+      "identifier": "UNLICENSED"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Relative server URL"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Auth endpoints"
+    },
+    {
+      "name": "Bookings",
+      "description": "Bookings endpoints"
+    },
+    {
+      "name": "Chat",
+      "description": "Chat endpoints"
+    },
+    {
+      "name": "Driver Bookings",
+      "description": "Driver Bookings endpoints"
+    },
+    {
+      "name": "Maps",
+      "description": "Maps endpoints"
+    },
+    {
+      "name": "Notifications",
+      "description": "Notifications endpoints"
+    },
+    {
+      "name": "Payments",
+      "description": "Payments endpoints"
+    },
+    {
+      "name": "Publish Ride",
+      "description": "Publish Ride endpoints"
+    },
+    {
+      "name": "Search Rides",
+      "description": "Search Rides endpoints"
+    },
+    {
+      "name": "Travel Preferences",
+      "description": "Travel Preferences endpoints"
+    },
+    {
+      "name": "Users",
+      "description": "Users endpoints"
+    },
+    {
+      "name": "Vehicles",
+      "description": "Vehicles endpoints"
+    },
+    {
+      "name": "WebSocket",
+      "description": "Socket.IO real-time data streaming events"
+    }
+  ],
+  "paths": {
+    "/api/v1/auth/signup": {
+      "$ref": "./paths/auth.yaml#/paths/~1api~1v1~1auth~1signup"
+    },
+    "/api/v1/auth/otp/request": {
+      "$ref": "./paths/auth.yaml#/paths/~1api~1v1~1auth~1otp~1request"
+    },
+    "/api/v1/auth/otp/resend": {
+      "$ref": "./paths/auth.yaml#/paths/~1api~1v1~1auth~1otp~1resend"
+    },
+    "/api/v1/auth/otp/verify": {
+      "$ref": "./paths/auth.yaml#/paths/~1api~1v1~1auth~1otp~1verify"
+    },
+    "/api/v1/auth/login": {
+      "$ref": "./paths/auth.yaml#/paths/~1api~1v1~1auth~1login"
+    },
+    "/api/v1/auth/access-token": {
+      "$ref": "./paths/auth.yaml#/paths/~1api~1v1~1auth~1access-token"
+    },
+    "/api/v1/auth/logout": {
+      "$ref": "./paths/auth.yaml#/paths/~1api~1v1~1auth~1logout"
+    },
+    "/api/v1/users/me": {
+      "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me"
+    },
+    "/api/v1/users/me/profile": {
+      "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1profile"
+    },
+    "/api/v1/users/me/onboarding/complete": {
+      "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1onboarding~1complete"
+    },
+    "/api/v1/users/me/avatar": {
+      "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1avatar"
+    },
+    "/api/v1/publish-ride/draft/origin": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1origin"
+    },
+    "/api/v1/publish-ride/draft/destination": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1destination"
+    },
+    "/api/v1/publish-ride/draft/routes/compute": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1routes~1compute"
+    },
+    "/api/v1/publish-ride/draft/routes/select": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1routes~1select"
+    },
+    "/api/v1/publish-ride/draft/stopovers/suggestions": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1stopovers~1suggestions"
+    },
+    "/api/v1/publish-ride/draft/stopovers": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1stopovers"
+    },
+    "/api/v1/publish-ride/draft/schedule": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1schedule"
+    },
+    "/api/v1/publish-ride/draft/capacity": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1capacity"
+    },
+    "/api/v1/publish-ride/draft/pricing/recommended": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1pricing~1recommended"
+    },
+    "/api/v1/publish-ride/draft/pricing": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1pricing"
+    },
+    "/api/v1/publish-ride/draft/notes": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1notes"
+    },
+    "/api/v1/publish-ride/draft/publish": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1publish"
+    },
+    "/api/v1/publish-ride/fuel-price": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1fuel-price"
+    },
+    "/api/v1/publish-ride/fuel-price/refresh": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1fuel-price~1refresh"
+    },
+    "/api/v1/publish-ride": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride"
+    },
+    "/api/v1/publish-ride/{id}": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1{id}"
+    },
+    "/api/v1/search-rides/advanced": {
+      "$ref": "./paths/search-rides.yaml#/paths/~1api~1v1~1search-rides~1advanced"
+    },
+    "/api/v1/search-rides": {
+      "$ref": "./paths/search-rides.yaml#/paths/~1api~1v1~1search-rides"
+    },
+    "/api/v1/search-rides/user/recent": {
+      "$ref": "./paths/search-rides.yaml#/paths/~1api~1v1~1search-rides~1user~1recent"
+    },
+    "/api/v1/search-rides/{id}": {
+      "$ref": "./paths/search-rides.yaml#/paths/~1api~1v1~1search-rides~1{id}"
+    },
+    "/api/v1/search-rides/notify": {
+      "$ref": "./paths/search-rides.yaml#/paths/~1api~1v1~1search-rides~1notify"
+    },
+    "/api/v1/bookings": {
+      "$ref": "./paths/bookings.yaml#/paths/~1api~1v1~1bookings"
+    },
+    "/api/v1/bookings/{id}": {
+      "$ref": "./paths/bookings.yaml#/paths/~1api~1v1~1bookings~1{id}"
+    },
+    "/api/v1/bookings/{id}/payment/confirm": {
+      "$ref": "./paths/bookings.yaml#/paths/~1api~1v1~1bookings~1{id}~1payment~1confirm"
+    },
+    "/api/v1/bookings/{id}/cancel": {
+      "$ref": "./paths/bookings.yaml#/paths/~1api~1v1~1bookings~1{id}~1cancel"
+    },
+    "/api/v1/driver/bookings/{id}/accept": {
+      "$ref": "./paths/driver-bookings.yaml#/paths/~1api~1v1~1driver~1bookings~1{id}~1accept"
+    },
+    "/api/v1/driver/bookings/{id}/reject": {
+      "$ref": "./paths/driver-bookings.yaml#/paths/~1api~1v1~1driver~1bookings~1{id}~1reject"
+    },
+    "/api/v1/driver/bookings/{id}/cancel": {
+      "$ref": "./paths/driver-bookings.yaml#/paths/~1api~1v1~1driver~1bookings~1{id}~1cancel"
+    },
+    "/api/v1/driver/bookings/{id}/pickup-otp/verify": {
+      "$ref": "./paths/driver-bookings.yaml#/paths/~1api~1v1~1driver~1bookings~1{id}~1pickup-otp~1verify"
+    },
+    "/api/v1/driver/bookings/{id}/drop-otp/verify": {
+      "$ref": "./paths/driver-bookings.yaml#/paths/~1api~1v1~1driver~1bookings~1{id}~1drop-otp~1verify"
+    },
+    "/api/v1/vehicles/draft": {
+      "$ref": "./paths/vehicles.yaml#/paths/~1api~1v1~1vehicles~1draft"
+    },
+    "/api/v1/vehicles/draft/vehicle-details": {
+      "$ref": "./paths/vehicles.yaml#/paths/~1api~1v1~1vehicles~1draft~1vehicle-details"
+    },
+    "/api/v1/vehicles/draft/upload-document": {
+      "$ref": "./paths/vehicles.yaml#/paths/~1api~1v1~1vehicles~1draft~1upload-document"
+    },
+    "/api/v1/vehicles/draft/save": {
+      "$ref": "./paths/vehicles.yaml#/paths/~1api~1v1~1vehicles~1draft~1save"
+    },
+    "/api/v1/vehicles": {
+      "$ref": "./paths/vehicles.yaml#/paths/~1api~1v1~1vehicles"
+    },
+    "/api/v1/vehicles/{id}": {
+      "$ref": "./paths/vehicles.yaml#/paths/~1api~1v1~1vehicles~1{id}"
+    },
+    "/api/v1/travel-preferences": {
+      "$ref": "./paths/travel-preferences.yaml#/paths/~1api~1v1~1travel-preferences"
+    },
+    "/api/v1/maps/routes/compute": {
+      "$ref": "./paths/maps.yaml#/paths/~1api~1v1~1maps~1routes~1compute"
+    },
+    "/api/v1/maps/routes/multi": {
+      "$ref": "./paths/maps.yaml#/paths/~1api~1v1~1maps~1routes~1multi"
+    },
+    "/api/v1/maps/roads/snap": {
+      "$ref": "./paths/maps.yaml#/paths/~1api~1v1~1maps~1roads~1snap"
+    },
+    "/api/v1/maps/geolocation": {
+      "$ref": "./paths/maps.yaml#/paths/~1api~1v1~1maps~1geolocation"
+    },
+    "/api/v1/maps/place/autocomplete": {
+      "$ref": "./paths/maps.yaml#/paths/~1api~1v1~1maps~1place~1autocomplete"
+    },
+    "/api/v1/maps/place/place-details": {
+      "$ref": "./paths/maps.yaml#/paths/~1api~1v1~1maps~1place~1place-details"
+    },
+    "/api/v1/chat": {
+      "$ref": "./paths/chat.yaml#/paths/~1api~1v1~1chat"
+    },
+    "/api/v1/chat/unread-count": {
+      "$ref": "./paths/chat.yaml#/paths/~1api~1v1~1chat~1unread-count"
+    },
+    "/api/v1/chat/{conversationId}/messages": {
+      "$ref": "./paths/chat.yaml#/paths/~1api~1v1~1chat~1{conversationId}~1messages"
+    },
+    "/api/v1/chat/send": {
+      "$ref": "./paths/chat.yaml#/paths/~1api~1v1~1chat~1send"
+    },
+    "/api/v1/chat/send-image": {
+      "$ref": "./paths/chat.yaml#/paths/~1api~1v1~1chat~1send-image"
+    },
+    "/api/v1/chat/send-location": {
+      "$ref": "./paths/chat.yaml#/paths/~1api~1v1~1chat~1send-location"
+    },
+    "/api/v1/chat/{conversationId}/read": {
+      "$ref": "./paths/chat.yaml#/paths/~1api~1v1~1chat~1{conversationId}~1read"
+    },
+    "/api/v1/notifications": {
+      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications"
+    },
+    "/api/v1/notifications/read": {
+      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1read"
+    },
+    "/api/v1/notifications/unread-count": {
+      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1unread-count"
+    },
+    "/api/v1/notifications/devices/register": {
+      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1devices~1register"
+    },
+    "/api/v1/notifications/devices/{tokenId}": {
+      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1devices~1{tokenId}"
+    },
+    "/api/v1/payments/stripe/webhook": {
+      "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1stripe~1webhook"
+    },
+    "/socket.io": {
+      "$ref": "./paths/websocket.yaml#/paths/~1socket.io"
+    },
+    "/socket.io/events": {
+      "$ref": "./paths/websocket.yaml#/paths/~1socket.io~1events"
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}

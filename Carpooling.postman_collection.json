@@ -1214,15 +1214,17 @@
               "raw": "{\n    \"rideId\": \"{{ride_id}}\",\n    \"seatsBooked\": 2,\n    \"luggageCount\": 1,\n    \"pickupWaypointId\": \"{{pickup_waypoint_id}}\",\n    \"dropoffWaypointId\": \"{{dropoff_waypoint_id}}\",\n    \"notes\": \"I'll be waiting near the main entrance. Wearing a blue jacket.\"\n}"
             },
             "url": {
-              "raw": "{{base_url}}/ride-booking",
+              "raw": "{{base_url}}/api/v1/bookings",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
-                "ride-booking"
+                "api",
+                "v1",
+                "bookings"
               ]
             },
-            "description": "Create a new booking for a ride. Pickup and dropoff waypoint IDs are optional - if not provided, origin and destination will be used."
+            "description": "Create a new booking for a ride. Pickup and dropoff waypoint IDs are optional."
           },
           "response": []
         },
@@ -1232,12 +1234,14 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/ride-booking?page=1&limit=10",
+              "raw": "{{base_url}}/api/v1/bookings?page=1&limit=10",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
-                "ride-booking"
+                "api",
+                "v1",
+                "bookings"
               ],
               "query": [
                 {
@@ -1251,12 +1255,12 @@
                 {
                   "key": "status",
                   "value": "CONFIRMED",
-                  "description": "Filter by status: PENDING, CONFIRMED, CANCELLED, COMPLETED",
+                  "description": "Filter by status: PAYMENT_PENDING, DRIVER_PENDING, CONFIRMED, IN_PROGRESS, PAYMENT_FAILED, CANCELLED, COMPLETED",
                   "disabled": true
                 }
               ]
             },
-            "description": "Get all bookings for the authenticated user with pagination."
+            "description": "Get all bookings for the authenticated passenger with pagination."
           },
           "response": []
         },
@@ -1266,12 +1270,14 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/ride-booking/{{booking_id}}",
+              "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
-                "ride-booking",
+                "api",
+                "v1",
+                "bookings",
                 "{{booking_id}}"
               ]
             },
@@ -1280,9 +1286,129 @@
           "response": []
         },
         {
-          "name": "Confirm Booking",
+          "name": "Confirm Booking Payment Status",
           "request": {
-            "method": "PATCH",
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}/payment/confirm",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bookings",
+                "{{booking_id}}",
+                "payment",
+                "confirm"
+              ]
+            },
+            "description": "Check and confirm booking payment status after payment UI flow."
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Booking",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}/cancel",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bookings",
+                "{{booking_id}}",
+                "cancel"
+              ]
+            },
+            "description": "Cancel a booking as passenger."
+          },
+          "response": []
+        }
+      ],
+      "description": "Passenger booking APIs"
+    },
+    {
+      "name": "Driver Booking",
+      "item": [
+        {
+          "name": "Accept Booking",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/driver/bookings/{{booking_id}}/accept",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "driver",
+                "bookings",
+                "{{booking_id}}",
+                "accept"
+              ]
+            },
+            "description": "Driver accepts a pending booking."
+          },
+          "response": []
+        },
+        {
+          "name": "Reject Booking",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/driver/bookings/{{booking_id}}/reject",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "driver",
+                "bookings",
+                "{{booking_id}}",
+                "reject"
+              ]
+            },
+            "description": "Driver rejects a pending booking."
+          },
+          "response": []
+        },
+        {
+          "name": "Driver Cancel Booking",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/driver/bookings/{{booking_id}}/cancel",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "driver",
+                "bookings",
+                "{{booking_id}}",
+                "cancel"
+              ]
+            },
+            "description": "Driver cancels an accepted booking."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify Pickup OTP",
+          "request": {
+            "method": "POST",
             "header": [
               {
                 "key": "Content-Type",
@@ -1291,44 +1417,103 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n    \"paymentMethodId\": \"pm_card_visa\"\n}"
+              "raw": "{\n    \"otp\": \"{{otp}}\"\n}"
             },
             "url": {
-              "raw": "{{base_url}}/ride-booking/{{booking_id}}/confirm",
+              "raw": "{{base_url}}/api/v1/driver/bookings/{{booking_id}}/pickup-otp/verify",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
-                "ride-booking",
+                "api",
+                "v1",
+                "driver",
+                "bookings",
                 "{{booking_id}}",
-                "confirm"
+                "pickup-otp",
+                "verify"
               ]
             },
-            "description": "Confirm a pending booking. Payment method ID is optional."
+            "description": "Verify pickup OTP to start ride (moves booking to IN_PROGRESS)."
           },
           "response": []
         },
         {
-          "name": "Cancel Booking",
+          "name": "Verify Drop OTP",
           "request": {
-            "method": "DELETE",
-            "header": [],
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"otp\": \"{{otp}}\"\n}"
+            },
             "url": {
-              "raw": "{{base_url}}/ride-booking/{{booking_id}}",
+              "raw": "{{base_url}}/api/v1/driver/bookings/{{booking_id}}/drop-otp/verify",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
-                "ride-booking",
-                "{{booking_id}}"
+                "api",
+                "v1",
+                "driver",
+                "bookings",
+                "{{booking_id}}",
+                "drop-otp",
+                "verify"
               ]
             },
-            "description": "Cancel a booking. Only pending or confirmed bookings can be cancelled."
+            "description": "Verify drop OTP to complete ride."
           },
           "response": []
         }
       ],
-      "description": "APIs for booking and managing ride reservations as a passenger"
+      "description": "Driver-side booking decision and OTP APIs"
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "Stripe Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "stripe-signature",
+                "value": "{{stripe_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"id\": \"evt_test_webhook\",\n    \"type\": \"payment_intent.succeeded\",\n    \"data\": {\n        \"object\": {\n            \"id\": \"pi_test_123\"\n        }\n    }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/payments/stripe/webhook",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "webhook"
+              ]
+            },
+            "description": "Stripe webhook endpoint. This route is intentionally unauthenticated."
+          },
+          "response": []
+        }
+      ],
+      "description": "Payment and webhook endpoints"
     },
     {
       "name": "Publish Ride — Wizard (Redis Draft)",
@@ -2614,6 +2799,26 @@
   "variable": [
     {
       "key": "ride_id",
+      "value": ""
+    },
+    {
+      "key": "booking_id",
+      "value": ""
+    },
+    {
+      "key": "pickup_waypoint_id",
+      "value": ""
+    },
+    {
+      "key": "dropoff_waypoint_id",
+      "value": ""
+    },
+    {
+      "key": "otp",
+      "value": "123456"
+    },
+    {
+      "key": "stripe_signature",
       "value": ""
     }
   ]

@@ -1,14 +1,14 @@
 import { Response } from 'express';
-import * as BookingService from './ride-booking.service.js';
+import { deleteCache, deleteCachePattern, getCache, setCache } from '../../services/cache.service.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
-import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
-import { deleteCache, getCache, setCache } from '../../services/cache.service.js';
+import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
+import * as BookingService from './ride-booking.service.js';
 
-// Cache key helpers
 const cacheKeys = {
     booking: (id: string) => `booking:${id}`,
     userBookings: (userId: string) => `user:${userId}:bookings`,
-    rideDetails: (id: string) => `ride:details:${id}`,
+    ride: (id: string) => `ride:${id}`,
+    rideDetailsPattern: (id: string) => `ride:details:${id}:*`,
 };
 
 /* ================= CREATE BOOKING ================= */
@@ -16,13 +16,13 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
     try {
         const booking = await BookingService.createBooking(req.user.id, req.body);
 
-        // Invalidate related caches
         await deleteCache(cacheKeys.userBookings(req.user.id));
-        await deleteCache(cacheKeys.rideDetails(req.body.rideId));
+        await deleteCache(cacheKeys.ride(req.body.rideId));
+        await deleteCachePattern(cacheKeys.rideDetailsPattern(req.body.rideId));
 
         return sendSuccess(res, {
             status: HttpStatus.CREATED,
-            message: 'Booking created successfully',
+            message: 'Booking created, payment required',
             data: booking,
         });
     } catch (error: any) {
@@ -44,7 +44,15 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 break;
             case 'BOOKING_ALREADY_EXISTS':
                 status = HttpStatus.CONFLICT;
-                message = 'You already have a booking for this ride';
+                message = 'You already have an active booking for this ride';
+                break;
+            case 'INVALID_BOOKING_SEGMENT':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Selected ride segment is invalid';
+                break;
+            case 'PAYMENT_INITIALIZATION_FAILED':
+                status = HttpStatus.INTERNAL_ERROR;
+                message = 'Could not initialize payment intent';
                 break;
         }
 
@@ -52,30 +60,29 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
     }
 };
 
-/* ================= CONFIRM BOOKING ================= */
-export const confirmBooking = async (req: AuthRequest, res: Response) => {
+/* ================= CHECK PAYMENT STATUS ================= */
+export const confirmBookingPaymentStatus = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        const booking = await BookingService.confirmBooking(req.user.id, bookingId);
+        const booking = await BookingService.getBookingPaymentStatus(req.user.id, bookingId);
 
-        // Invalidate caches
+        if (!booking) {
+            return sendError(res, {
+                status: HttpStatus.NOT_FOUND,
+                message: 'Booking not found',
+            });
+        }
+
         await deleteCache(cacheKeys.booking(bookingId));
-        await deleteCache(cacheKeys.userBookings(req.user.id));
 
         return sendSuccess(res, {
-            message: 'Booking confirmed successfully',
+            message: 'Booking payment status fetched successfully',
             data: booking,
         });
-    } catch (error: any) {
-        const status = error.message === 'BOOKING_NOT_FOUND'
-            ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
-
+    } catch {
         return sendError(res, {
-            status,
-            message: error.message === 'BOOKING_NOT_FOUND'
-                ? 'Booking not found or cannot be confirmed'
-                : 'Failed to confirm booking',
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to fetch booking payment status',
         });
     }
 };
@@ -84,25 +91,39 @@ export const confirmBooking = async (req: AuthRequest, res: Response) => {
 export const cancelBooking = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        await BookingService.cancelBooking(req.user.id, bookingId);
+        const result = await BookingService.cancelBooking(req.user.id, bookingId);
 
-        // Invalidate caches
         await deleteCache(cacheKeys.booking(bookingId));
         await deleteCache(cacheKeys.userBookings(req.user.id));
+        await deleteCache(cacheKeys.ride(result.rideId));
+        await deleteCachePattern(cacheKeys.rideDetailsPattern(result.rideId));
 
         return sendSuccess(res, {
             message: 'Booking cancelled successfully',
+            data: {
+                refundPercent: result.refundPercent,
+                refundAmount: result.refundAmount,
+                refundInitiated: result.refundInitiated,
+            },
         });
     } catch (error: any) {
-        const status = error.message === 'BOOKING_NOT_FOUND'
-            ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
+        if (error.message === 'BOOKING_NOT_FOUND') {
+            return sendError(res, {
+                status: HttpStatus.NOT_FOUND,
+                message: 'Booking not found or cannot be cancelled',
+            });
+        }
+
+        if (error.message === 'BOOKING_NOT_CANCELLABLE') {
+            return sendError(res, {
+                status: HttpStatus.CONFLICT,
+                message: 'Booking can no longer be cancelled',
+            });
+        }
 
         return sendError(res, {
-            status,
-            message: error.message === 'BOOKING_NOT_FOUND'
-                ? 'Booking not found or cannot be cancelled'
-                : 'Failed to cancel booking',
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to cancel booking',
         });
     }
 };
@@ -113,7 +134,6 @@ export const getBookingById = async (req: AuthRequest, res: Response) => {
         const bookingId = req.params.id as string;
         const cacheKey = cacheKeys.booking(bookingId);
 
-        // Try cache first
         const cachedBooking = await getCache(cacheKey);
         if (cachedBooking) {
             return sendSuccess(res, {
@@ -131,14 +151,13 @@ export const getBookingById = async (req: AuthRequest, res: Response) => {
             });
         }
 
-        // Cache the result
         await setCache(cacheKey, booking);
 
         return sendSuccess(res, {
             message: 'Booking fetched successfully',
             data: booking,
         });
-    } catch (error: any) {
+    } catch {
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to fetch booking',
@@ -155,7 +174,7 @@ export const listUserBookings = async (req: AuthRequest, res: Response) => {
             message: 'Bookings fetched successfully',
             data: result,
         });
-    } catch (error: any) {
+    } catch {
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to fetch bookings',

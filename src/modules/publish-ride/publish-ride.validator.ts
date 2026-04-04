@@ -71,9 +71,9 @@ export const updateRouteSchema = z.object({
 /* ================= UPDATE PRICING SCHEMA ================= */
 export const updatePricingSchema = z.object({
     basePricePerSeat: z.number().positive('Price must be positive'),
-    waypointPricing: z.array(
+    stopoverPricing: z.array(
         z.object({
-            waypointId: z.string().uuid(),
+            placeId: z.string().trim().min(1, 'Place ID is required'),
             pricePerSeat: z.number().positive(),
         })
     ).optional(),

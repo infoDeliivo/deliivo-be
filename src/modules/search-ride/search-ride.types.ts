@@ -49,10 +49,15 @@ export interface SearchRideResult {
         id: string;
         brand: string | null;
         model_num: string | null;
+        model_name?: string | null;
         type: string | null;
         color: string | null;
+        year?: number | null;
         imageUrl: string | null;
-    };
+        isVerified?: boolean;
+    } | null;
+
+    bookings?: SearchRideBooking[];
 
     // Origin
     originPlaceId: string;
@@ -67,6 +72,7 @@ export interface SearchRideResult {
     destinationLng: number;
 
     // Route info
+    routePolyline?: string | null;
     routeDistanceMeters: number | null;
     routeDurationSeconds: number | null;
 
@@ -87,6 +93,28 @@ export interface SearchRideResult {
     distanceFromDestination?: number;
 }
 
+export interface SearchRideBookedRider {
+    id: string;
+    name: string | null;
+    nickName: string | null;
+    phone: string | null;
+    avatarUrl: string | null;
+}
+
+export interface SearchRideBooking {
+    id: string;
+    rideId: string;
+    passengerId: string;
+    seatsBooked: number;
+    totalPrice: number;
+    status: BookingStatus;
+    pickupWaypointId: string | null;
+    dropoffWaypointId: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    rider: SearchRideBookedRider;
+}
+
 /* ================= SEARCH RESPONSE ================= */
 export interface SearchRideResponse {
     rides: SearchRideResult[];
@@ -103,6 +131,12 @@ export interface RideDetailsResponse extends SearchRideResult {
     notes: string | null;
     waypoints: WaypointInfo[];
     totalSeats: number;
+    isSegmentView?: boolean;
+    segmentId?: string;
+    bookingContext?: BookingContext;
+    segment?: SegmentDiagnostics;
+    fullRide?: RideSnapshot;
+    segmentRide?: SegmentRideSnapshot | null;
 }
 
 /* ================= WAYPOINT INFO ================= */
@@ -115,6 +149,35 @@ export interface WaypointInfo {
     waypointType: string;
     orderIndex: number;
     pricePerSeat: number | null;
+}
+
+export interface RideSnapshot {
+    id: string;
+    originPlaceId: string;
+    originAddress: string;
+    originLat: number;
+    originLng: number;
+    destinationPlaceId: string;
+    destinationAddress: string;
+    destinationLat: number;
+    destinationLng: number;
+    routePolyline?: string | null;
+    routeDistanceMeters: number | null;
+    routeDurationSeconds: number | null;
+    departureDate: Date;
+    departureTime: string;
+    totalSeats?: number;
+    availableSeats: number;
+    basePricePerSeat: number;
+    currency: string;
+    status: RideStatus;
+    waypoints?: WaypointInfo[];
+}
+
+export interface SegmentRideSnapshot extends RideSnapshot {
+    bookingContext: BookingContext;
+    segment: SegmentDiagnostics;
+    segmentId?: string;
 }
 
 /* ================= RECENT SEARCH ================= */
@@ -165,6 +228,7 @@ export interface DPoint {
     lat: number;
     lng: number;
     address: string;
+    waypointId?: string;
     /** 'ORIGIN' | 'WAYPOINT' | 'DEST' */
     pointType: 'ORIGIN' | 'WAYPOINT' | 'DEST';
 }
@@ -195,6 +259,18 @@ export interface WaypointMatch {
     waypointAddress: string;
     distanceKm: number;
     matchType: 'PICKUP' | 'DROPOFF';
+}
+
+export interface BookingContext {
+    rideId: string;
+    pickupWaypointId: string | null;
+    dropoffWaypointId: string | null;
+}
+
+export interface SegmentDiagnostics {
+    pickupCumulativePrice: number;
+    dropCumulativePrice: number;
+    segmentFare: number;
 }
 
 /**
@@ -229,6 +305,12 @@ export interface EnhancedSearchRideResult extends SearchRideResult {
     routePolyline?: string | null;
     /** Relevant waypoints near rider */
     relevantWaypoints?: WaypointInfo[];
+    isSegmentView?: boolean;
+    segmentId?: string;
+    bookingContext?: BookingContext;
+    segment?: SegmentDiagnostics;
+    fullRide?: RideSnapshot;
+    segmentRide?: SegmentRideSnapshot | null;
 }
 
 /**

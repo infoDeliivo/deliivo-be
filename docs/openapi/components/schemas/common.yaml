@@ -1,0 +1,802 @@
+{
+  "ApiSuccessEnvelope": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "success": {
+        "const": true
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "OK",
+          "CREATED"
+        ]
+      },
+      "message": {
+        "type": "string"
+      },
+      "data": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": true
+          },
+          {
+            "type": "array",
+            "items": {}
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "success",
+      "status",
+      "message",
+      "data"
+    ]
+  },
+  "ApiErrorEnvelope": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "success": {
+        "const": false
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "BAD_REQUEST",
+          "UNAUTHORIZED",
+          "FORBIDDEN",
+          "NOT_FOUND",
+          "CONFLICT",
+          "TOO_MANY_REQUESTS",
+          "INTERNAL_ERROR"
+        ]
+      },
+      "message": {
+        "type": "string"
+      },
+      "error": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": true
+          },
+          {
+            "type": "array",
+            "items": {}
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "success",
+      "status",
+      "message"
+    ]
+  },
+  "Pagination": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "page": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "total": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "totalPages": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "hasMore": {
+        "type": "boolean"
+      },
+      "nextCursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "GeoPoint": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "latitude",
+      "longitude"
+    ],
+    "properties": {
+      "latitude": {
+        "type": "number"
+      },
+      "longitude": {
+        "type": "number"
+      }
+    }
+  },
+  "TokenPair": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [
+      "accessToken",
+      "refreshToken"
+    ],
+    "properties": {
+      "accessToken": {
+        "type": "string"
+      },
+      "refreshToken": {
+        "type": "string"
+      }
+    }
+  },
+  "UserBasicInfo": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "name": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "nickName": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "avatarUrl": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "uri"
+      },
+      "onboardingStatus": {
+        "type": "string"
+      },
+      "isVerified": {
+        "type": "boolean"
+      }
+    }
+  },
+  "TravelPreference": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "chattiness": {
+        "type": "string"
+      },
+      "pets": {
+        "type": "string"
+      }
+    }
+  },
+  "VehicleSummary": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "brand": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "model_num": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "model_name": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "type": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "color": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "imageUrl": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "isVerified": {
+        "type": "boolean"
+      }
+    }
+  },
+  "UserProfile": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "user": {
+        "$ref": "#/UserBasicInfo"
+      },
+      "travelPreference": {
+        "oneOf": [
+          {
+            "$ref": "#/TravelPreference"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "vehicle": {
+        "oneOf": [
+          {
+            "$ref": "#/VehicleSummary"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "stats": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "totalRides": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalBookings": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "memberSince": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  },
+  "VehicleDraft": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "licenseCountry": {
+        "type": "string"
+      },
+      "licenseNumber": {
+        "type": "string"
+      },
+      "brand": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "model_num": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "model_name": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "type": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "color": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "year": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "documents": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "next": {
+        "type": "string"
+      }
+    }
+  },
+  "RideDraft": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "next": {
+        "type": "string"
+      },
+      "origin": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "destination": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "route": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": true
+      },
+      "stopovers": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "schedule": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "capacity": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "pricing": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "notes": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "RideSummary": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "originAddress": {
+        "type": "string"
+      },
+      "destinationAddress": {
+        "type": "string"
+      },
+      "departureDate": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "totalSeats": {
+        "type": "integer"
+      },
+      "availableSeats": {
+        "type": "integer"
+      },
+      "basePricePerSeat": {
+        "type": "number"
+      },
+      "status": {
+        "type": "string"
+      }
+    }
+  },
+  "RideDetails": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "originAddress": {
+        "type": "string"
+      },
+      "destinationAddress": {
+        "type": "string"
+      },
+      "departureDate": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "waypoints": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "notes": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "SearchResults": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "rides": {
+        "type": "array",
+        "items": {
+          "$ref": "#/RideSummary"
+        }
+      },
+      "pagination": {
+        "$ref": "#/Pagination"
+      },
+      "grouped": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  },
+  "PriceRecommendation": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "basePricePerSeat": {
+        "type": "number"
+      },
+      "recommendedPricePerSeat": {
+        "type": "number"
+      },
+      "currency": {
+        "type": "string"
+      },
+      "fuelEstimate": {
+        "type": "number"
+      },
+      "competitorMedian": {
+        "type": [
+          "number",
+          "null"
+        ]
+      }
+    }
+  },
+  "StopoverSuggestion": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "placeId": {
+        "type": "string"
+      },
+      "address": {
+        "type": "string"
+      },
+      "lat": {
+        "type": "number"
+      },
+      "lng": {
+        "type": "number"
+      },
+      "pricePerSeat": {
+        "type": [
+          "number",
+          "null"
+        ]
+      }
+    }
+  },
+  "Booking": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "rideId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "passengerId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "seatsBooked": {
+        "type": "integer"
+      },
+      "luggageCount": {
+        "type": "integer"
+      },
+      "totalPrice": {
+        "type": "number"
+      },
+      "status": {
+        "type": "string"
+      },
+      "payment": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": true
+      }
+    }
+  },
+  "DriverBookingResult": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "bookingId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "rideId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "passengerId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "status": {
+        "type": "string"
+      }
+    }
+  },
+  "ConversationList": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "nextCursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "hasMore": {
+        "type": "boolean"
+      }
+    }
+  },
+  "MessageList": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "messages": {
+        "type": "array",
+        "items": {
+          "$ref": "#/Message"
+        }
+      },
+      "nextCursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "hasMore": {
+        "type": "boolean"
+      }
+    }
+  },
+  "Message": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "conversationId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "senderId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "receiverId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "type": {
+        "type": "string"
+      },
+      "text": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "createdAt": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
+  },
+  "UnreadCount": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "unreadCount": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "NotificationList": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "notifications": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "nextCursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "hasMore": {
+        "type": "boolean"
+      }
+    }
+  },
+  "DeviceToken": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "platform": {
+        "type": "string"
+      },
+      "token": {
+        "type": "string"
+      },
+      "userId": {
+        "type": "string",
+        "format": "uuid"
+      }
+    }
+  },
+  "PlacePrediction": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "description": {
+        "type": "string"
+      },
+      "placeId": {
+        "type": "string"
+      }
+    }
+  },
+  "PlaceDetails": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "address": {
+        "type": "string"
+      },
+      "location": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "lat": {
+            "type": "number"
+          },
+          "lng": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  },
+  "MapRouteResult": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "routes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  },
+  "WebhookReceipt": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "received": {
+        "type": "boolean"
+      },
+      "duplicate": {
+        "type": "boolean"
+      }
+    }
+  }
+}

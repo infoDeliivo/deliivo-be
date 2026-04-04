@@ -4,6 +4,7 @@ import * as controller from './search-ride.controller.js';
 import {
   searchRideQuerySchema,
   rideIdParamSchema,
+  rideDetailsQuerySchema,
   notifyRideSchema,
   recentSearchesQuerySchema,
   enhancedSearchRideQuerySchema,
@@ -29,7 +30,11 @@ router.get(
 );
 
 // Get ride details
-router.get('/:id', validate({ params: rideIdParamSchema }), controller.getRideDetails);
+router.get(
+  '/:id',
+  validate({ params: rideIdParamSchema, query: rideDetailsQuerySchema }),
+  controller.getRideDetails,
+);
 
 // Create ride alert (notify when ride available)
 router.post('/notify', validate({ body: notifyRideSchema }), controller.createRideAlert);

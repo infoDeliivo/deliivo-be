@@ -1,0 +1,1004 @@
+{
+  "paths": {
+    "/socket.io": {
+      "get": {
+        "operationId": "socketIoRealtimeStream",
+        "summary": "Socket.IO real-time stream (chat, presence, notifications)",
+        "description": "Socket.IO handshake endpoint used for live data streaming.\n\nUse your JWT access token during handshake authentication.\n\nAuthentication options:\n1. `auth.token` in Socket.IO client options (recommended).\n2. `Authorization: Bearer <token>` handshake header.\n\nEvent streams covered:\n- Chat messages and read/delivery receipts.\n- Typing indicators.\n- Presence checks/heartbeats.\n- Real-time notifications (`notification:new`).\n\nSend Keys (client -> server):\n- `chat:send`: `receiverId`, `text`, `clientMsgId`, `type`, `payloadJson`\n- `chat:typing`: `conversationId`, `receiverId`\n- `chat:stopTyping`: `conversationId`, `receiverId`\n- `chat:read`: `conversationId`, `lastReadMessageId`\n- `chat:sync`: `lastMessageTs`\n- `presence:check`: `userId`\n\nReceive Keys (server -> client):\n- `chat:message`: `id`, `conversationId`, `senderId`, `receiverId`, `type`, `text`, `payloadJson`, `clientMsgId`, `createdAt`\n- `chat:delivered`: `messageId`, `conversationId`, `deliveredAt`\n- `chat:typing`: `conversationId`, `senderId`\n- `chat:stopTyping`: `conversationId`, `senderId`\n- `chat:read`: `conversationId`, `readBy`, `lastReadMessageId`, `readAt`\n- `chat:sync`: `messages`\n- `notification:new`: `type`, `data.id`, `data.title`, `data.body`, `data.notificationType`, `data.data`, `data.preview`, `data.createdAt`",
+        "tags": [
+          "WebSocket"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "EIO",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "4"
+              ],
+              "default": "4"
+            },
+            "description": "Engine.IO protocol version."
+          },
+          {
+            "name": "transport",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "polling",
+                "websocket"
+              ],
+              "default": "polling"
+            },
+            "description": "Socket.IO transport. Start with polling then upgrade to websocket."
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional bearer token handshake header: `Bearer <accessToken>`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Engine.IO polling handshake initialized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineIoHandshakeResponse"
+                },
+                "examples": {
+                  "pollingHandshake": {
+                    "value": {
+                      "sid": "v8kRj8A2gL6mXk2TAAAB",
+                      "upgrades": [
+                        "websocket"
+                      ],
+                      "pingInterval": 25000,
+                      "pingTimeout": 60000,
+                      "maxPayload": 1000000
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "101": {
+            "description": "WebSocket upgrade successful (`transport=websocket`)."
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        },
+        "x-socketio": {
+          "namespace": "/",
+          "authentication": {
+            "required": true,
+            "methods": [
+              "auth.token",
+              "authorization-header"
+            ]
+          },
+          "clientToServerEvents": [
+            {
+              "event": "chat:send",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatSendPayload"
+              },
+              "ack": {
+                "$ref": "#/components/schemas/WsChatSendAck"
+              }
+            },
+            {
+              "event": "chat:typing",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatTypingRequest"
+              }
+            },
+            {
+              "event": "chat:stopTyping",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatTypingRequest"
+              }
+            },
+            {
+              "event": "chat:read",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatReadRequest"
+              }
+            },
+            {
+              "event": "chat:sync",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatSyncRequest"
+              },
+              "ack": {
+                "$ref": "#/components/schemas/WsChatSyncAck"
+              }
+            },
+            {
+              "event": "presence:ping",
+              "payload": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            },
+            {
+              "event": "presence:check",
+              "payload": {
+                "$ref": "#/components/schemas/WsPresenceCheckRequest"
+              },
+              "ack": {
+                "$ref": "#/components/schemas/WsPresenceCheckAck"
+              }
+            }
+          ],
+          "serverToClientEvents": [
+            {
+              "event": "chat:message",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatMessageEvent"
+              }
+            },
+            {
+              "event": "chat:delivered",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatDeliveredEvent"
+              }
+            },
+            {
+              "event": "chat:typing",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatTypingEvent"
+              }
+            },
+            {
+              "event": "chat:stopTyping",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatTypingEvent"
+              }
+            },
+            {
+              "event": "chat:read",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatReadEvent"
+              }
+            },
+            {
+              "event": "chat:sync",
+              "payload": {
+                "$ref": "#/components/schemas/WsChatSyncPushEvent"
+              }
+            },
+            {
+              "event": "notification:new",
+              "payload": {
+                "$ref": "#/components/schemas/WsNotificationNewEvent"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "/socket.io/events": {
+      "get": {
+        "operationId": "socketIoEventCatalog",
+        "summary": "Socket.IO event payload catalog",
+        "description": "Documentation endpoint for Socket.IO stream contracts. This is for API documentation only and maps all client->server and server->client event payload shapes.",
+        "tags": [
+          "WebSocket"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event catalog and payload contracts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SocketIoEventCatalog"
+                },
+                "examples": {
+                  "eventCatalog": {
+                    "value": {
+                      "namespace": "/",
+                      "sendEventKeys": {
+                        "chat:send": [
+                          "receiverId",
+                          "text",
+                          "clientMsgId",
+                          "type",
+                          "payloadJson"
+                        ],
+                        "chat:typing": [
+                          "conversationId",
+                          "receiverId"
+                        ],
+                        "chat:stopTyping": [
+                          "conversationId",
+                          "receiverId"
+                        ],
+                        "chat:read": [
+                          "conversationId",
+                          "lastReadMessageId"
+                        ],
+                        "chat:sync": [
+                          "lastMessageTs"
+                        ],
+                        "presence:ping": [],
+                        "presence:check": [
+                          "userId"
+                        ]
+                      },
+                      "receiveEventKeys": {
+                        "chat:message": [
+                          "id",
+                          "conversationId",
+                          "senderId",
+                          "receiverId",
+                          "type",
+                          "text",
+                          "payloadJson",
+                          "clientMsgId",
+                          "createdAt"
+                        ],
+                        "chat:delivered": [
+                          "messageId",
+                          "conversationId",
+                          "deliveredAt"
+                        ],
+                        "chat:typing": [
+                          "conversationId",
+                          "senderId"
+                        ],
+                        "chat:stopTyping": [
+                          "conversationId",
+                          "senderId"
+                        ],
+                        "chat:read": [
+                          "conversationId",
+                          "readBy",
+                          "lastReadMessageId",
+                          "readAt"
+                        ],
+                        "chat:sync": [
+                          "messages"
+                        ],
+                        "notification:new": [
+                          "type",
+                          "data.id",
+                          "data.title",
+                          "data.body",
+                          "data.notificationType",
+                          "data.data",
+                          "data.preview",
+                          "data.createdAt"
+                        ]
+                      },
+                      "clientToServer": [
+                        {
+                          "event": "chat:send",
+                          "payload": {
+                            "receiverId": "8e0cbf9a-16e3-4f0e-b856-252f9a8b9263",
+                            "text": "Hi",
+                            "clientMsgId": "m-1739120000",
+                            "type": "TEXT"
+                          },
+                          "ack": {
+                            "success": true,
+                            "message": {
+                              "id": "f8e76031-8d56-4c0d-b0cb-3e7ee3f90e31",
+                              "conversationId": "f6b74f26-0b1d-4666-8be6-0f116ef6d3d2",
+                              "type": "TEXT",
+                              "createdAt": "2026-04-02T12:00:00.000Z"
+                            }
+                          }
+                        },
+                        {
+                          "event": "chat:typing",
+                          "payload": {
+                            "conversationId": "f6b74f26-0b1d-4666-8be6-0f116ef6d3d2",
+                            "receiverId": "8e0cbf9a-16e3-4f0e-b856-252f9a8b9263"
+                          }
+                        },
+                        {
+                          "event": "chat:read",
+                          "payload": {
+                            "conversationId": "f6b74f26-0b1d-4666-8be6-0f116ef6d3d2",
+                            "lastReadMessageId": "f8e76031-8d56-4c0d-b0cb-3e7ee3f90e31"
+                          }
+                        },
+                        {
+                          "event": "presence:check",
+                          "payload": {
+                            "userId": "8e0cbf9a-16e3-4f0e-b856-252f9a8b9263"
+                          },
+                          "ack": {
+                            "userId": "8e0cbf9a-16e3-4f0e-b856-252f9a8b9263",
+                            "online": true,
+                            "lastSeen": 1743573662000
+                          }
+                        }
+                      ],
+                      "serverToClient": [
+                        {
+                          "event": "chat:message",
+                          "payload": {
+                            "id": "f8e76031-8d56-4c0d-b0cb-3e7ee3f90e31",
+                            "conversationId": "f6b74f26-0b1d-4666-8be6-0f116ef6d3d2",
+                            "senderId": "b7111132-7f6f-44f8-a444-7b8fc1fceabc",
+                            "receiverId": "8e0cbf9a-16e3-4f0e-b856-252f9a8b9263",
+                            "type": "TEXT",
+                            "text": "Hi",
+                            "payloadJson": null,
+                            "clientMsgId": "m-1739120000",
+                            "createdAt": "2026-04-02T12:00:00.000Z"
+                          }
+                        },
+                        {
+                          "event": "notification:new",
+                          "payload": {
+                            "type": "notification.new",
+                            "data": {
+                              "id": "2d0f9361-d4fa-4b04-aa41-d8924f57672f",
+                              "title": "Booking Update",
+                              "body": "Driver accepted your booking.",
+                              "notificationType": "BOOKING_CONFIRMED",
+                              "data": {
+                                "bookingId": "f5c6e4e9-9705-4ce2-bd7d-5c5930f2f28b"
+                              },
+                              "preview": true,
+                              "createdAt": "2026-04-02T12:02:00.000Z"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SocketIoCatalogEventItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event",
+          "payload"
+        ],
+        "properties": {
+          "event": {
+            "type": "string"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WsChatSendPayload"
+              },
+              {
+                "$ref": "#/components/schemas/WsChatTypingRequest"
+              },
+              {
+                "$ref": "#/components/schemas/WsChatReadRequest"
+              },
+              {
+                "$ref": "#/components/schemas/WsChatSyncRequest"
+              },
+              {
+                "$ref": "#/components/schemas/WsPresenceCheckRequest"
+              },
+              {
+                "$ref": "#/components/schemas/WsChatMessageEvent"
+              },
+              {
+                "$ref": "#/components/schemas/WsChatDeliveredEvent"
+              },
+              {
+                "$ref": "#/components/schemas/WsChatTypingEvent"
+              },
+              {
+                "$ref": "#/components/schemas/WsChatReadEvent"
+              },
+              {
+                "$ref": "#/components/schemas/WsChatSyncPushEvent"
+              },
+              {
+                "$ref": "#/components/schemas/WsNotificationNewEvent"
+              }
+            ]
+          },
+          "ack": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WsChatSendAck"
+              },
+              {
+                "$ref": "#/components/schemas/WsChatSyncAck"
+              },
+              {
+                "$ref": "#/components/schemas/WsPresenceCheckAck"
+              },
+              {
+                "$ref": "#/components/schemas/WsErrorAck"
+              }
+            ]
+          }
+        }
+      },
+      "SocketIoEventCatalog": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "namespace",
+          "sendEventKeys",
+          "receiveEventKeys",
+          "clientToServer",
+          "serverToClient"
+        ],
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "example": "/"
+          },
+          "sendEventKeys": {
+            "$ref": "#/components/schemas/SocketIoClientToServerKeyMap"
+          },
+          "receiveEventKeys": {
+            "$ref": "#/components/schemas/SocketIoServerToClientKeyMap"
+          },
+          "clientToServer": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SocketIoCatalogEventItem"
+            }
+          },
+          "serverToClient": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SocketIoCatalogEventItem"
+            }
+          }
+        }
+      },
+      "SocketIoEventKeyList": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "SocketIoClientToServerKeyMap": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chat:send",
+          "chat:typing",
+          "chat:stopTyping",
+          "chat:read",
+          "chat:sync",
+          "presence:ping",
+          "presence:check"
+        ],
+        "properties": {
+          "chat:send": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "chat:typing": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "chat:stopTyping": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "chat:read": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "chat:sync": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "presence:ping": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "presence:check": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          }
+        }
+      },
+      "SocketIoServerToClientKeyMap": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chat:message",
+          "chat:delivered",
+          "chat:typing",
+          "chat:stopTyping",
+          "chat:read",
+          "chat:sync",
+          "notification:new"
+        ],
+        "properties": {
+          "chat:message": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "chat:delivered": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "chat:typing": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "chat:stopTyping": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "chat:read": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "chat:sync": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          },
+          "notification:new": {
+            "$ref": "#/components/schemas/SocketIoEventKeyList"
+          }
+        }
+      },
+      "EngineIoHandshakeResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sid",
+          "upgrades",
+          "pingInterval",
+          "pingTimeout"
+        ],
+        "properties": {
+          "sid": {
+            "type": "string"
+          },
+          "upgrades": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pingInterval": {
+            "type": "integer"
+          },
+          "pingTimeout": {
+            "type": "integer"
+          },
+          "maxPayload": {
+            "type": "integer"
+          }
+        }
+      },
+      "WsChatSendPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receiverId",
+          "clientMsgId"
+        ],
+        "properties": {
+          "receiverId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "text": {
+            "type": "string"
+          },
+          "clientMsgId": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "TEXT",
+              "IMAGE",
+              "FILE",
+              "LOCATION",
+              "SYSTEM"
+            ],
+            "default": "TEXT"
+          },
+          "payloadJson": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "WsChatSendAck": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "success",
+              "message"
+            ],
+            "properties": {
+              "success": {
+                "const": true
+              },
+              "message": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "conversationId",
+                  "type",
+                  "createdAt"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "conversationId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "$ref": "#/components/schemas/WsErrorAck"
+          }
+        ]
+      },
+      "WsErrorAck": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "WsChatMessageEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "conversationId",
+          "senderId",
+          "receiverId",
+          "type",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "senderId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "receiverId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payloadJson": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "clientMsgId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WsChatDeliveredEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "messageId",
+          "conversationId",
+          "deliveredAt"
+        ],
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "deliveredAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WsChatTypingRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversationId",
+          "receiverId"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "receiverId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WsChatTypingEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversationId",
+          "senderId"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "senderId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WsChatReadRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversationId",
+          "lastReadMessageId"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lastReadMessageId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WsChatReadEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversationId",
+          "readBy",
+          "lastReadMessageId",
+          "readAt"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "readBy": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lastReadMessageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "readAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WsChatSyncRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "lastMessageTs": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WsChatSyncAck": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "success",
+              "messages"
+            ],
+            "properties": {
+              "success": {
+                "const": true
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WsChatMessageEvent"
+                }
+              }
+            }
+          },
+          {
+            "$ref": "#/components/schemas/WsErrorAck"
+          }
+        ]
+      },
+      "WsChatSyncPushEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "messages"
+        ],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WsChatMessageEvent"
+            }
+          }
+        }
+      },
+      "WsPresenceCheckRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "userId"
+        ],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WsPresenceCheckAck": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "userId",
+              "online",
+              "lastSeen"
+            ],
+            "properties": {
+              "userId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "lastSeen": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "$ref": "#/components/schemas/WsErrorAck"
+          }
+        ]
+      },
+      "WsNotificationNewEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "data"
+        ],
+        "properties": {
+          "type": {
+            "const": "notification.new"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "title",
+              "body",
+              "notificationType",
+              "data",
+              "preview",
+              "createdAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "notificationType": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "preview": {
+                "type": "boolean"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

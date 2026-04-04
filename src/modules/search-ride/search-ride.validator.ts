@@ -48,6 +48,10 @@ export const rideIdParamSchema = z.object({
     id: z.string().uuid('Invalid ride ID'),
 });
 
+export const rideDetailsQuerySchema = z.object({
+    segmentId: z.string().min(1, 'segmentId is required').optional(),
+});
+
 /* ================= NOTIFY REQUEST SCHEMA ================= */
 export const notifyRideSchema = z.object({
     originLat: z.number().min(-90).max(90),

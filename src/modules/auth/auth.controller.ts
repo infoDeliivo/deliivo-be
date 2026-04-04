@@ -13,7 +13,6 @@ import {
   signupOtpTemplate,
   loginOtpTemplate,
   resetOtpTemplate,
-  signupWelcomeTemplate,
 } from '../mail/mail.templates.js';
 import { createOtp, verifyOtp, resendOtp } from '../otp/otp.service.js';
 import {
@@ -23,10 +22,50 @@ import {
   resetOtpSmsTemplate,
 } from '../sms/index.js';
 
+type OtpPurpose = 'signup' | 'login' | 'reset_password';
+
+const shouldExposeOtp =
+  process.env.NODE_ENV !== 'production' && process.env.EXPOSE_OTP_IN_RESPONSE === 'true';
+
+const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
+  if (purpose === 'signup') {
+    return {
+      mailSubject: 'Signup OTP',
+      mailTemplate: signupOtpTemplate(code),
+      smsTemplate: signupOtpSmsTemplate(code),
+    };
+  }
+
+  if (purpose === 'login') {
+    return {
+      mailSubject: 'Login OTP',
+      mailTemplate: loginOtpTemplate(code),
+      smsTemplate: loginOtpSmsTemplate(code),
+    };
+  }
+
+  return {
+    mailSubject: 'Password Reset OTP',
+    mailTemplate: resetOtpTemplate(code),
+    smsTemplate: resetOtpSmsTemplate(code),
+  };
+};
+
 export const signup = async (req: Request, res: Response) => {
   try {
-    const { method, email, phone } = req.body;
+    const { method, email, phone } = req.body as {
+      method: 'email' | 'phone';
+      email?: string;
+      phone?: string;
+    };
     const identifier = method === 'email' ? email : phone;
+
+    if (!identifier) {
+      return sendError(res, {
+        message: 'Identifier is required',
+        status: HttpStatus.BAD_REQUEST,
+      });
+    }
 
     const result = await signupService(method, identifier);
     if (result.success === false) {
@@ -52,7 +91,13 @@ export const signup = async (req: Request, res: Response) => {
         html: signupOtpTemplate(code),
       });
     } else if (method === 'phone') {
-      await sendSms(identifier, signupOtpSmsTemplate(code));
+      const smsResult = await sendSms(identifier, signupOtpSmsTemplate(code));
+      if (!smsResult.success) {
+        return sendError(res, {
+          message: smsResult.error || 'Failed to queue OTP SMS',
+          status: HttpStatus.INTERNAL_ERROR,
+        });
+      }
     }
 
     return sendSuccess(res, {
@@ -60,7 +105,7 @@ export const signup = async (req: Request, res: Response) => {
       message: 'Signup successful, verify OTP',
       data: {
         next: 'verify_otp',
-        ...((process.env.NODE_ENV !== 'production' || true) && { code }),
+        ...(shouldExposeOtp && { code }),
       },
     });
   } catch (err: any) {
@@ -76,7 +121,11 @@ export const signup = async (req: Request, res: Response) => {
 };
 export const requestOtp = async (req: Request, res: Response) => {
   try {
-    const { method, identifier, purpose } = req.body;
+    const { method, identifier, purpose } = req.body as {
+      method: 'email' | 'phone';
+      identifier: string;
+      purpose: OtpPurpose;
+    };
 
     const { user, success } = await requestOtpService(identifier, purpose, method);
     if (!success) {
@@ -92,22 +141,29 @@ export const requestOtp = async (req: Request, res: Response) => {
     }
 
     const code = otp.code;
+    const template = getOtpTemplateByPurpose(purpose, code);
 
     if (method === 'email') {
       await sendMail({
         to: identifier,
-        subject: 'Your OTP',
-        html: resetOtpTemplate(code),
+        subject: template.mailSubject,
+        html: template.mailTemplate,
       });
     } else if (method === 'phone') {
-      await sendSms(identifier, resetOtpSmsTemplate(code));
+      const smsResult = await sendSms(identifier, template.smsTemplate);
+      if (!smsResult.success) {
+        return sendError(res, {
+          message: smsResult.error || 'Failed to queue OTP SMS',
+          status: HttpStatus.INTERNAL_ERROR,
+        });
+      }
     }
 
     return sendSuccess(res, {
       message: 'OTP sent successfully',
       data: {
         next: 'verify_otp',
-        ...((process.env.NODE_ENV !== 'production' || true) && { code }),
+        ...(shouldExposeOtp && { code }),
       },
     });
   } catch (err) {
@@ -117,7 +173,12 @@ export const requestOtp = async (req: Request, res: Response) => {
 };
 export const verifyOtpCont = async (req: Request, res: Response) => {
   try {
-    const { identifier, code, purpose, method } = req.body;
+    const { identifier, code, purpose, method } = req.body as {
+      identifier: string;
+      code: string;
+      purpose: OtpPurpose;
+      method: 'email' | 'phone';
+    };
 
     const verifyResult = await verifyOtp(identifier, purpose, code, method);
 
@@ -165,7 +226,10 @@ export const verifyOtpCont = async (req: Request, res: Response) => {
 };
 export const login = async (req: Request, res: Response) => {
   try {
-    const { method, identifier } = req.body;
+    const { method, identifier } = req.body as {
+      method: 'email' | 'phone';
+      identifier: string;
+    };
     if (method !== 'email' && method !== 'phone') {
       return res.status(400).json({ message: 'Invalid login request' });
     }
@@ -195,17 +259,23 @@ export const login = async (req: Request, res: Response) => {
       await sendMail({
         to: identifier,
         subject: 'Login OTP',
-        html: loginOtpSmsTemplate(code),
+        html: loginOtpTemplate(code),
       });
     } else if (method === 'phone') {
-      await sendSms(identifier, loginOtpSmsTemplate(code));
+      const smsResult = await sendSms(identifier, loginOtpSmsTemplate(code));
+      if (!smsResult.success) {
+        return sendError(res, {
+          message: smsResult.error || 'Failed to queue OTP SMS',
+          status: HttpStatus.INTERNAL_ERROR,
+        });
+      }
     }
 
     return sendSuccess(res, {
       message: 'OTP sent for login',
       data: {
         next: 'verify_otp',
-        ...((process.env.NODE_ENV !== 'production' || true) && { code }),
+        ...(shouldExposeOtp && { code }),
       },
     });
   } catch (err) {
@@ -235,7 +305,11 @@ export const refreshToken = async (req: Request, res: Response) => {
 
 export const resendOtpCont = async (req: Request, res: Response) => {
   try {
-    const { identifier, purpose, method } = req.body;
+    const { identifier, purpose, method } = req.body as {
+      identifier: string;
+      purpose: OtpPurpose;
+      method: 'email' | 'phone';
+    };
     const resendOtpResult = await resendOtp(identifier, purpose, method);
     if (!resendOtpResult.success) {
       let errorMessage: string;
@@ -251,23 +325,29 @@ export const resendOtpCont = async (req: Request, res: Response) => {
     }
 
     const result = resendOtpResult;
+    const template = getOtpTemplateByPurpose(purpose, result.otp);
+
     if (method === 'email') {
       await sendMail({
         to: identifier,
-        subject: 'Resend OTP',
-        html: purpose === 'signup' ? signupOtpTemplate(result.otp) : loginOtpTemplate(result.otp),
+        subject: `Resend ${template.mailSubject}`,
+        html: template.mailTemplate,
       });
     } else if (method === 'phone') {
-      const smsTemplate =
-        purpose === 'signup' ? signupOtpSmsTemplate(result.otp) : loginOtpSmsTemplate(result.otp);
-      await sendSms(identifier, smsTemplate);
+      const smsResult = await sendSms(identifier, template.smsTemplate);
+      if (!smsResult.success) {
+        return sendError(res, {
+          message: smsResult.error || 'Failed to queue OTP SMS',
+          status: HttpStatus.INTERNAL_ERROR,
+        });
+      }
     }
 
     return sendSuccess(res, {
       message: result.reused ? 'OTP resent' : 'New OTP generated',
       status: HttpStatus.OK,
       data: {
-        ...(process.env.NODE_ENV !== 'production' && { code: result.otp }),
+        ...(shouldExposeOtp && { code: result.otp }),
       },
     });
   } catch {

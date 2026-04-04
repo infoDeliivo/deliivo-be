@@ -30,4 +30,16 @@ describe('viewToken', () => {
 
         expect(() => decodeViewToken(`${token}x`)).toThrow('INVALID_VIEW_TOKEN');
     });
+
+    it('rejects malformed but correctly signed payloads', () => {
+        const token = encodeViewToken({
+            v: 1,
+            rideId: '',
+            mode: 'segment',
+            pickupRef: 'bad-ref' as any,
+            dropRef: 'destination',
+        } as any);
+
+        expect(() => decodeViewToken(token)).toThrow('INVALID_VIEW_TOKEN');
+    });
 });

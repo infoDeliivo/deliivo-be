@@ -68,7 +68,10 @@ Set these on all 3 app services:
 - `MAIL_FROM=...`
 - `TWILIO_ACCOUNT_SID=...`
 - `TWILIO_AUTH_TOKEN=...`
-- `TWILIO_PHONE_NUMBER=...`
+- `TWILIO_PHONE_NUMBER=...` (or use messaging service SID below)
+- `TWILIO_MESSAGING_SERVICE_SID=...` (recommended for production)
+- `TWILIO_STATUS_CALLBACK_URL=...` (optional)
+- `SMS_MOCK_MODE=false`
 - `AWS_ACCESS_KEY_ID=...`
 - `AWS_SECRET_ACCESS_KEY=...`
 - `AWS_REGION=...`

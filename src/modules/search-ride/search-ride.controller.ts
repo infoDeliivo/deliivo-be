@@ -8,8 +8,9 @@ import { SearchRideQuery, EnhancedSearchRideQuery } from './search-ride.types.js
 // Cache key helpers
 const cacheKeys = {
     searchResults: (query: SearchRideQuery, viewerId?: string) =>
-        `search:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${viewerId || 'anon'}`,
-    rideDetails: (id: string) => `ride:details:${id}`,
+        `search:v2:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${viewerId || 'anon'}`,
+    rideDetails: (id: string, segmentId?: string) =>
+        `ride:details:${id}:${segmentId || 'full'}:v2`,
 };
 
 // Cache TTL in seconds
@@ -59,7 +60,9 @@ export const searchRides = async (req: AuthRequest, res: Response) => {
 export const getRideDetails = async (req: Request, res: Response) => {
     try {
         const rideId = req.params.id as string;
-        const cacheKey = cacheKeys.rideDetails(rideId);
+        const query = req.query as { segmentId?: string };
+        const segmentId = query.segmentId;
+        const cacheKey = cacheKeys.rideDetails(rideId, segmentId);
 
         // Try cache first
         const cachedRide = await getCache(cacheKey);
@@ -70,12 +73,21 @@ export const getRideDetails = async (req: Request, res: Response) => {
             });
         }
 
-        const ride = await SearchRideService.getRideDetails(rideId);
+        const ride = segmentId
+            ? await SearchRideService.getRideSegmentById(segmentId)
+            : await SearchRideService.getRideDetails(rideId);
 
         if (!ride) {
             return sendError(res, {
                 status: HttpStatus.NOT_FOUND,
                 message: 'Ride not found or not available',
+            });
+        }
+
+        if (ride.id !== rideId) {
+            return sendError(res, {
+                status: HttpStatus.BAD_REQUEST,
+                message: 'Invalid segment selection for ride',
             });
         }
 
@@ -87,9 +99,78 @@ export const getRideDetails = async (req: Request, res: Response) => {
             data: ride,
         });
     } catch (error: any) {
+        if (error.message === 'INVALID_SEGMENT_ID') {
+            return sendError(res, {
+                status: HttpStatus.BAD_REQUEST,
+                message: 'Invalid segment selection for ride',
+            });
+        }
+
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: error.message || 'Failed to fetch ride details',
+        });
+    }
+};
+
+/* ================= GET RIDE VIEW DETAILS BY TOKEN ================= */
+export const getRideViewByToken = async (req: Request, res: Response) => {
+    try {
+        const viewToken = req.params.viewToken as string;
+        const ride = await SearchRideService.getRideViewByToken(viewToken);
+
+        if (!ride) {
+            return sendError(res, {
+                status: HttpStatus.NOT_FOUND,
+                message: 'Ride not found or not available',
+            });
+        }
+
+        return sendSuccess(res, {
+            message: 'Ride details fetched successfully',
+            data: ride,
+        });
+    } catch (error: any) {
+        const status = error.message === 'INVALID_VIEW_TOKEN'
+            ? HttpStatus.BAD_REQUEST
+            : HttpStatus.INTERNAL_ERROR;
+
+        return sendError(res, {
+            status,
+            message: status === HttpStatus.BAD_REQUEST
+                ? 'Invalid ride view token'
+                : 'Failed to fetch ride details',
+        });
+    }
+};
+
+/* ================= GET RIDE SEGMENT DETAILS BY ID ================= */
+export const getRideSegmentById = async (req: Request, res: Response) => {
+    try {
+        const segmentId = req.params.segmentId as string;
+        const ride = await SearchRideService.getRideSegmentById(segmentId);
+
+        if (!ride) {
+            return sendError(res, {
+                status: HttpStatus.NOT_FOUND,
+                message: 'Ride not found or not available',
+            });
+        }
+
+        return sendSuccess(res, {
+            message: 'Ride details fetched successfully',
+            data: ride,
+        });
+    } catch (error: any) {
+        const status = error.message === 'INVALID_SEGMENT_ID'
+            ? HttpStatus.BAD_REQUEST
+            : HttpStatus.INTERNAL_ERROR;
+
+        return sendError(res, {
+            status,
+            message: status === HttpStatus.BAD_REQUEST
+                ? 'Invalid ride segment id'
+                : 'Failed to fetch ride details',
         });
     }
 };
@@ -140,7 +221,7 @@ export const createRideAlert = async (req: AuthRequest, res: Response) => {
 
 /* ================= ADVANCED SEARCH RIDES (4-CONDITION) ================= */
 const advancedCacheKey = (query: EnhancedSearchRideQuery) =>
-    `search:advanced:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${query.radiusKm || 5}:${query.minSimilarity || 0.75}`;
+    `search:advanced:v2:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${query.radiusKm || 5}:${query.minSimilarity || 0.75}`;
 
 export const searchRidesAdvanced = async (req: AuthRequest, res: Response) => {
     try {

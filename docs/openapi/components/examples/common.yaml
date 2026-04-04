@@ -1,0 +1,852 @@
+{
+  "BadRequestError": {
+    "summary": "Bad request error",
+    "value": {
+      "success": false,
+      "status": "BAD_REQUEST",
+      "message": "Invalid request"
+    }
+  },
+  "UnauthorizedError": {
+    "summary": "Unauthorized error",
+    "value": {
+      "success": false,
+      "status": "UNAUTHORIZED",
+      "message": "Authentication required"
+    }
+  },
+  "ForbiddenError": {
+    "summary": "Forbidden error",
+    "value": {
+      "success": false,
+      "status": "FORBIDDEN",
+      "message": "Access forbidden"
+    }
+  },
+  "NotFoundError": {
+    "summary": "Not found error",
+    "value": {
+      "success": false,
+      "status": "NOT_FOUND",
+      "message": "Resource not found"
+    }
+  },
+  "ConflictError": {
+    "summary": "Conflict error",
+    "value": {
+      "success": false,
+      "status": "CONFLICT",
+      "message": "Conflict detected"
+    }
+  },
+  "RateLimitedError": {
+    "summary": "Rate limited error",
+    "value": {
+      "success": false,
+      "status": "TOO_MANY_REQUESTS",
+      "message": "Too many requests"
+    }
+  },
+  "ServerError": {
+    "summary": "Server error",
+    "value": {
+      "success": false,
+      "status": "INTERNAL_ERROR",
+      "message": "Something went wrong"
+    }
+  },
+  "AuthSignupEmailRequest": {
+    "summary": "Email signup request",
+    "value": {
+      "method": "email",
+      "email": "jane@example.com"
+    }
+  },
+  "AuthSignupPhoneRequest": {
+    "summary": "Phone signup request",
+    "value": {
+      "method": "phone",
+      "phone": "+15551234567"
+    }
+  },
+  "AuthOtpRequest": {
+    "summary": "OTP request",
+    "value": {
+      "method": "email",
+      "identifier": "jane@example.com",
+      "purpose": "signup"
+    }
+  },
+  "AuthOtpVerifyRequest": {
+    "summary": "OTP verify request",
+    "value": {
+      "code": "1234",
+      "method": "email",
+      "identifier": "jane@example.com",
+      "purpose": "signup"
+    }
+  },
+  "AuthLoginRequest": {
+    "summary": "Login request",
+    "value": {
+      "method": "email",
+      "identifier": "jane@example.com"
+    }
+  },
+  "AuthRefreshRequest": {
+    "summary": "Refresh token request",
+    "value": {
+      "refreshToken": "refresh-token-value"
+    }
+  },
+  "AuthSignupSuccess": {
+    "summary": "Signup response",
+    "value": {
+      "success": true,
+      "status": "CREATED",
+      "message": "Signup successful, verify OTP",
+      "data": {
+        "next": "verify_otp",
+        "code": "1234"
+      }
+    }
+  },
+  "AuthOtpSuccess": {
+    "summary": "OTP response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "OTP sent successfully",
+      "data": {
+        "next": "verify_otp",
+        "code": "1234"
+      }
+    }
+  },
+  "AuthTokensSuccess": {
+    "summary": "Token pair response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Verification successful",
+      "data": {
+        "accessToken": "access-token-value",
+        "refreshToken": "refresh-token-value",
+        "user": {
+          "id": "11111111-1111-1111-1111-111111111111",
+          "email": "jane@example.com",
+          "role": "USER"
+        },
+        "next": "home"
+      }
+    }
+  },
+  "AuthRefreshSuccess": {
+    "summary": "Refresh response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Token refreshed successfully",
+      "data": {
+        "accessToken": "new-access-token",
+        "refreshToken": "new-refresh-token"
+      }
+    }
+  },
+  "AuthLogoutSuccess": {
+    "summary": "Logout response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Logged out successfully",
+      "data": null
+    }
+  },
+  "UserMeSuccess": {
+    "summary": "User me response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "User fetched successfully",
+      "data": {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "name": "Jane Doe",
+        "nickName": "Jane",
+        "email": {
+          "value": "jane@example.com",
+          "isVerified": true
+        },
+        "phone": {
+          "value": "+15551234567",
+          "isVerified": false
+        },
+        "avatarUrl": "https://cdn.example.com/avatar.jpg",
+        "onboardingStatus": "COMPLETED",
+        "isVerified": true,
+        "createdAt": "2026-04-02T00:00:00.000Z"
+      }
+    }
+  },
+  "UserProfileSuccess": {
+    "summary": "Profile response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Profile fetched successfully",
+      "data": {
+        "user": {
+          "id": "11111111-1111-1111-1111-111111111111",
+          "name": "Jane Doe",
+          "nickName": "Jane",
+          "email": {
+            "value": "jane@example.com",
+            "isVerified": true
+          },
+          "phone": {
+            "value": "+15551234567",
+            "isVerified": false
+          },
+          "onboardingStatus": "COMPLETED",
+          "isVerified": true,
+          "createdAt": "2026-04-02T00:00:00.000Z"
+        },
+        "travelPreference": {
+          "id": "22222222-2222-2222-2222-222222222222",
+          "chattiness": "chatty_when_comfortable",
+          "pets": "love_pets"
+        },
+        "vehicle": {
+          "id": "33333333-3333-3333-3333-333333333333",
+          "brand": "Toyota",
+          "model_num": "Camry",
+          "type": "CAR",
+          "color": "Blue",
+          "imageUrl": "https://cdn.example.com/vehicle.jpg",
+          "isVerified": true
+        },
+        "stats": {
+          "totalRides": 8,
+          "totalBookings": 13,
+          "memberSince": "2026-01-01T00:00:00.000Z"
+        }
+      }
+    }
+  },
+  "AvatarUploadSuccess": {
+    "summary": "Avatar upload response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Avatar uploaded successfully",
+      "data": {
+        "avatarUrl": "https://cdn.example.com/avatar.jpg"
+      }
+    }
+  },
+  "TravelPreferenceRequest": {
+    "summary": "Travel preference request",
+    "value": {
+      "chattiness": "quiet",
+      "pets": "depends_on_animal"
+    }
+  },
+  "TravelPreferenceSuccess": {
+    "summary": "Travel preference response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Travel preference saved successfully",
+      "data": {
+        "id": "22222222-2222-2222-2222-222222222222",
+        "chattiness": "quiet",
+        "pets": "depends_on_animal"
+      }
+    }
+  },
+  "VehicleDraftLicenseRequest": {
+    "summary": "Vehicle draft license request",
+    "value": {
+      "licenseCountry": "IN",
+      "licenseNumber": "MH12AB1234"
+    }
+  },
+  "VehicleDraftDetailsRequest": {
+    "summary": "Vehicle draft details request",
+    "value": {
+      "brand": "Toyota",
+      "model_num": "Camry",
+      "model_name": "Camry Hybrid",
+      "type": "CAR",
+      "color": "Blue",
+      "year": 2024
+    }
+  },
+  "VehicleCreateRequest": {
+    "summary": "Vehicle create request",
+    "value": {
+      "licenseCountry": "IN",
+      "licenseNumber": "MH12AB1234"
+    }
+  },
+  "VehicleDetailsRequest": {
+    "summary": "Vehicle details request",
+    "value": {
+      "brand": "Toyota",
+      "model_num": "Camry",
+      "model_name": "Camry Hybrid",
+      "type": "CAR",
+      "color": "Blue",
+      "year": 2024
+    }
+  },
+  "VehicleSuccess": {
+    "summary": "Vehicle response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Vehicle fetched successfully",
+      "data": {
+        "id": "33333333-3333-3333-3333-333333333333",
+        "brand": "Toyota",
+        "model_num": "Camry",
+        "model_name": "Camry Hybrid",
+        "type": "CAR",
+        "color": "Blue",
+        "imageUrl": "https://cdn.example.com/vehicle.jpg",
+        "isVerified": true
+      }
+    }
+  },
+  "VehicleDraftSuccess": {
+    "summary": "Vehicle draft response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Vehicle draft updated successfully",
+      "data": {
+        "licenseCountry": "IN",
+        "licenseNumber": "MH12AB1234",
+        "brand": "Toyota",
+        "model_num": "Camry",
+        "model_name": "Camry Hybrid",
+        "type": "CAR",
+        "color": "Blue",
+        "year": 2024,
+        "documents": [],
+        "next": "upload_document"
+      }
+    }
+  },
+  "RideDraftOriginRequest": {
+    "summary": "Ride draft origin request",
+    "value": {
+      "originPlaceId": "place-origin",
+      "originAddress": "Mathura, Uttar Pradesh",
+      "originLat": 27.4924,
+      "originLng": 77.6737,
+      "pickup": {
+        "placeId": "pickup-place",
+        "address": "Mathura Junction",
+        "lat": 27.4921,
+        "lng": 77.6731
+      }
+    }
+  },
+  "RideDraftDestinationRequest": {
+    "summary": "Ride draft destination request",
+    "value": {
+      "destinationPlaceId": "place-destination",
+      "destinationAddress": "Delhi, India",
+      "destinationLat": 28.7041,
+      "destinationLng": 77.1025,
+      "dropoff": {
+        "placeId": "dropoff-place",
+        "address": "Connaught Place",
+        "lat": 28.6315,
+        "lng": 77.2167
+      }
+    }
+  },
+  "RideDraftScheduleRequest": {
+    "summary": "Ride draft schedule request",
+    "value": {
+      "departureDate": "2026-04-15T00:00:00.000Z",
+      "departureTime": "09:30"
+    }
+  },
+  "RideDraftCapacityRequest": {
+    "summary": "Ride draft capacity request",
+    "value": {
+      "totalSeats": 4,
+      "maxLuggagePerPerson": 2,
+      "backSeatOnly": false
+    }
+  },
+  "RideDraftPricingRequest": {
+    "summary": "Ride draft pricing request",
+    "value": {
+      "basePricePerSeat": 499,
+      "stopoverPricing": [
+        {
+          "placeId": "stop-1",
+          "pricePerSeat": 150
+        }
+      ]
+    }
+  },
+  "RideDraftNotesRequest": {
+    "summary": "Ride draft notes request",
+    "value": {
+      "notes": "No smoking, AC preferred."
+    }
+  },
+  "RideDraftSuccess": {
+    "summary": "Ride draft response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Draft updated successfully",
+      "data": {
+        "next": "publish",
+        "origin": {
+          "placeId": "place-origin",
+          "address": "Mathura, Uttar Pradesh",
+          "lat": 27.4924,
+          "lng": 77.6737
+        },
+        "destination": {
+          "placeId": "place-destination",
+          "address": "Delhi, India",
+          "lat": 28.7041,
+          "lng": 77.1025
+        },
+        "route": {
+          "distanceMeters": 150000,
+          "durationSeconds": 10800
+        },
+        "stopovers": [],
+        "schedule": {
+          "departureDate": "2026-04-15T00:00:00.000Z",
+          "departureTime": "09:30"
+        },
+        "capacity": {
+          "totalSeats": 4,
+          "maxLuggagePerPerson": 2,
+          "backSeatOnly": false
+        },
+        "pricing": {
+          "basePricePerSeat": 499
+        },
+        "notes": "No smoking, AC preferred."
+      }
+    }
+  },
+  "RidePublishedSuccess": {
+    "summary": "Published ride response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Ride published successfully",
+      "data": {
+        "id": "44444444-4444-4444-4444-444444444444",
+        "originAddress": "Mathura, Uttar Pradesh",
+        "destinationAddress": "Delhi, India",
+        "status": "PUBLISHED"
+      }
+    }
+  },
+  "SearchRidesSuccess": {
+    "summary": "Search rides response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Rides fetched successfully",
+      "data": {
+        "rides": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "originAddress": "Mathura, Uttar Pradesh",
+            "destinationAddress": "Delhi, India",
+            "departureDate": "2026-04-15T09:30:00.000Z",
+            "totalSeats": 4,
+            "availableSeats": 2,
+            "basePricePerSeat": 499,
+            "status": "PUBLISHED"
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 1,
+          "totalPages": 1,
+          "hasMore": false
+        }
+      }
+    }
+  },
+  "SearchAlertRequest": {
+    "summary": "Ride alert request",
+    "value": {
+      "originLat": 27.4924,
+      "originLng": 77.6737,
+      "destinationLat": 28.7041,
+      "destinationLng": 77.1025,
+      "departureDate": "2026-04-15T00:00:00.000Z",
+      "radiusKm": 5
+    }
+  },
+  "SearchAlertSuccess": {
+    "summary": "Ride alert response",
+    "value": {
+      "success": true,
+      "status": "CREATED",
+      "message": "Alert created. You will be notified when matching rides are available.",
+      "data": {
+        "success": true,
+        "message": "Alert created. You will be notified when matching rides are available."
+      }
+    }
+  },
+  "BookingCreateRequest": {
+    "summary": "Booking create request",
+    "value": {
+      "rideId": "44444444-4444-4444-4444-444444444444",
+      "seatsBooked": 1,
+      "luggageCount": 1,
+      "notes": "Window seat if possible."
+    }
+  },
+  "BookingSuccess": {
+    "summary": "Booking response",
+    "value": {
+      "success": true,
+      "status": "CREATED",
+      "message": "Booking created, payment required",
+      "data": {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "rideId": "44444444-4444-4444-4444-444444444444",
+        "passengerId": "11111111-1111-1111-1111-111111111111",
+        "seatsBooked": 1,
+        "luggageCount": 1,
+        "totalPrice": 499,
+        "status": "PAYMENT_PENDING"
+      }
+    }
+  },
+  "DriverBookingSuccess": {
+    "summary": "Driver booking response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Booking accepted successfully",
+      "data": {
+        "bookingId": "55555555-5555-5555-5555-555555555555",
+        "rideId": "44444444-4444-4444-4444-444444444444",
+        "passengerId": "11111111-1111-1111-1111-111111111111",
+        "status": "CONFIRMED"
+      }
+    }
+  },
+  "DriverOtpRequest": {
+    "summary": "Driver OTP request",
+    "value": {
+      "otp": "123456"
+    }
+  },
+  "MapComputeRouteRequest": {
+    "summary": "Map route request",
+    "value": {
+      "origin": {
+        "latitude": 27.4924,
+        "longitude": 77.6737
+      },
+      "destination": {
+        "latitude": 28.7041,
+        "longitude": 77.1025
+      },
+      "waypoints": [
+        {
+          "latitude": 27.7,
+          "longitude": 77.5
+        }
+      ],
+      "travelMode": "DRIVE"
+    }
+  },
+  "MapMultiRouteRequest": {
+    "summary": "Map multi route request",
+    "value": {
+      "origin": {
+        "latitude": 27.4924,
+        "longitude": 77.6737
+      },
+      "destination": {
+        "latitude": 28.7041,
+        "longitude": 77.1025
+      },
+      "waypoints": [
+        {
+          "latitude": 27.7,
+          "longitude": 77.5
+        }
+      ],
+      "travelMode": "DRIVE",
+      "computeAlternativeRoutes": true,
+      "routingPreference": "TRAFFIC_AWARE",
+      "departureTime": "2026-04-15T09:30:00.000Z"
+    }
+  },
+  "MapSnapRoadsRequest": {
+    "summary": "Snap roads request",
+    "value": {
+      "points": [
+        {
+          "latitude": 27.4924,
+          "longitude": 77.6737
+        },
+        {
+          "latitude": 27.5,
+          "longitude": 77.7
+        }
+      ]
+    }
+  },
+  "MapGeolocationRequest": {
+    "summary": "Geolocation request",
+    "value": {
+      "considerIp": true,
+      "wifiAccessPoints": [
+        {
+          "macAddress": "00:11:22:33:44:55",
+          "signalStrength": -45
+        }
+      ],
+      "cellTowers": [
+        {
+          "cellId": 1,
+          "locationAreaCode": 2,
+          "mobileCountryCode": 91,
+          "mobileNetworkCode": 1,
+          "signalStrength": -60
+        }
+      ]
+    }
+  },
+  "MapRouteSuccess": {
+    "summary": "Route response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Route computed successfully",
+      "data": {
+        "routes": [
+          {
+            "distanceMeters": 150000,
+            "durationSeconds": 10800,
+            "polyline": "encoded-polyline"
+          }
+        ]
+      }
+    }
+  },
+  "MapPlacesSuccess": {
+    "summary": "Places response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Autocomplete fetched successfully",
+      "data": [
+        {
+          "description": "Mathura Junction, Mathura, India",
+          "placeId": "place-origin"
+        }
+      ]
+    }
+  },
+  "MapPlaceDetailsSuccess": {
+    "summary": "Place details response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Place details fetched successfully",
+      "data": {
+        "name": "Mathura Junction",
+        "address": "Mathura, Uttar Pradesh",
+        "location": {
+          "lat": 27.4924,
+          "lng": 77.6737
+        }
+      }
+    }
+  },
+  "ChatSendMessageRequest": {
+    "summary": "Chat message request",
+    "value": {
+      "receiverId": "22222222-2222-2222-2222-222222222222",
+      "text": "I am on the way.",
+      "clientMsgId": "client-msg-1",
+      "type": "TEXT"
+    }
+  },
+  "ChatSendLocationRequest": {
+    "summary": "Chat location request",
+    "value": {
+      "receiverId": "22222222-2222-2222-2222-222222222222",
+      "clientMsgId": "client-msg-2",
+      "latitude": 27.4924,
+      "longitude": 77.6737,
+      "address": "Mathura, Uttar Pradesh",
+      "placeId": "place-origin",
+      "text": "Meeting point"
+    }
+  },
+  "ChatSendImageRequest": {
+    "summary": "Chat image request",
+    "value": {
+      "receiverId": "22222222-2222-2222-2222-222222222222",
+      "clientMsgId": "client-msg-3",
+      "text": "Car photo"
+    }
+  },
+  "ChatMessageSuccess": {
+    "summary": "Message response",
+    "value": {
+      "success": true,
+      "status": "CREATED",
+      "message": "Message sent successfully",
+      "data": {
+        "id": "66666666-6666-6666-6666-666666666666",
+        "conversationId": "77777777-7777-7777-7777-777777777777",
+        "senderId": "11111111-1111-1111-1111-111111111111",
+        "receiverId": "22222222-2222-2222-2222-222222222222",
+        "type": "TEXT",
+        "text": "I am on the way.",
+        "createdAt": "2026-04-02T00:00:00.000Z"
+      }
+    }
+  },
+  "ChatConversationsSuccess": {
+    "summary": "Conversation list response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Conversations fetched successfully",
+      "data": {
+        "items": [
+          {
+            "conversationId": "77777777-7777-7777-7777-777777777777",
+            "lastMessage": "I am on the way."
+          }
+        ],
+        "nextCursor": null,
+        "hasMore": false
+      }
+    }
+  },
+  "ChatMessagesSuccess": {
+    "summary": "Message list response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Messages fetched successfully",
+      "data": {
+        "messages": [
+          {
+            "id": "66666666-6666-6666-6666-666666666666",
+            "conversationId": "77777777-7777-7777-7777-777777777777",
+            "senderId": "11111111-1111-1111-1111-111111111111",
+            "receiverId": "22222222-2222-2222-2222-222222222222",
+            "type": "TEXT",
+            "text": "I am on the way.",
+            "createdAt": "2026-04-02T00:00:00.000Z"
+          }
+        ],
+        "nextCursor": null,
+        "hasMore": false
+      }
+    }
+  },
+  "ChatUnreadSuccess": {
+    "summary": "Unread count response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Unread count fetched successfully",
+      "data": {
+        "unreadCount": 3
+      }
+    }
+  },
+  "NotificationListSuccess": {
+    "summary": "Notification list response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Notifications fetched successfully",
+      "data": {
+        "notifications": [
+          {
+            "id": "88888888-8888-8888-8888-888888888888",
+            "title": "New ride request",
+            "read": false
+          }
+        ],
+        "nextCursor": null,
+        "hasMore": false
+      }
+    }
+  },
+  "NotificationUnreadSuccess": {
+    "summary": "Notification unread response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Unread count fetched successfully",
+      "data": {
+        "unreadCount": 4
+      }
+    }
+  },
+  "NotificationMarkReadRequest": {
+    "summary": "Notification mark read request",
+    "value": {
+      "notificationIds": [
+        "88888888-8888-8888-8888-888888888888"
+      ]
+    }
+  },
+  "NotificationRegisterDeviceRequest": {
+    "summary": "Device register request",
+    "value": {
+      "platform": "android",
+      "token": "device-token-value"
+    }
+  },
+  "NotificationDeviceSuccess": {
+    "summary": "Device register response",
+    "value": {
+      "success": true,
+      "status": "CREATED",
+      "message": "Device registered successfully",
+      "data": {
+        "id": "99999999-9999-9999-9999-999999999999",
+        "platform": "android",
+        "token": "device-token-value",
+        "userId": "11111111-1111-1111-1111-111111111111"
+      }
+    }
+  },
+  "WebhookAckResponse": {
+    "summary": "Webhook acknowledgement",
+    "value": {
+      "received": true
+    }
+  },
+  "WebhookDuplicateResponse": {
+    "summary": "Duplicate webhook acknowledgement",
+    "value": {
+      "received": true,
+      "duplicate": true
+    }
+  }
+}

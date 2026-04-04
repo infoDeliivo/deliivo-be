@@ -2,7 +2,7 @@ import { ListBucketsCommand } from "@aws-sdk/client-s3";
 import s3 from "../config/s3.config";
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const testS3Connection = async () => {
     try {

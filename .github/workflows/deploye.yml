@@ -24,6 +24,7 @@ jobs:
       - name: Install & Build
         run: |
           npm ci
+          npm run openapi:check
           npm run build  # Make sure your tsconfig outputs to dist/
 
       # 4️⃣ Setup SSH agent with your PEM key

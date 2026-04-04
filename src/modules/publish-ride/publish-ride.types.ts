@@ -62,12 +62,14 @@ export interface UpdateRouteInput {
 }
 
 /* ================= UPDATE PRICING INPUT ================= */
+export interface StopoverPricingInput {
+    placeId: string;
+    pricePerSeat: number;
+}
+
 export interface UpdatePricingInput {
     basePricePerSeat: number;
-    waypointPricing?: {
-        waypointId: string;
-        pricePerSeat: number;
-    }[];
+    stopoverPricing?: StopoverPricingInput[];
 }
 
 /* ================= UPDATE NOTES INPUT ================= */

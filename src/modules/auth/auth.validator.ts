@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+const otpPurposeSchema = z
+  .enum(['signup', 'login', 'reset', 'reset_password'])
+  .transform((purpose) => (purpose === 'reset' ? 'reset_password' : purpose));
+
 export const signupSchema = z
   .object({
     method: z.enum(['email', 'phone']),
@@ -21,14 +25,14 @@ export const signupSchema = z
 export const otpRequestSchema = z.object({
   method: z.enum(['email', 'phone']),
   identifier: z.string(),
-  purpose: z.enum(['signup', 'login', 'reset']),
+  purpose: otpPurposeSchema,
 });
 
 export const otpVerifySchema = z.object({
   code: z.string().length(4),
   method: z.enum(['email', 'phone']),
   identifier: z.string(),
-  purpose: z.enum(['signup', 'login', 'reset_password']),
+  purpose: otpPurposeSchema,
 }).strict();
 
 

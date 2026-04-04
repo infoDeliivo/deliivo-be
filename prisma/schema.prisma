@@ -178,8 +178,11 @@ enum WaypointType {
 }
 
 enum BookingStatus {
-  PENDING
+  PAYMENT_PENDING
+  DRIVER_PENDING
   CONFIRMED
+  IN_PROGRESS
+  PAYMENT_FAILED
   CANCELLED
   COMPLETED
 }
@@ -275,9 +278,9 @@ model RideWaypoint {
 }
 
 model RideBooking {
-  id          String @id @default(uuid())
-  rideId      String
-  ride        Ride   @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  id        String @id @default(uuid())
+  rideId    String
+  ride      Ride   @relation(fields: [rideId], references: [id], onDelete: Cascade)
   passengerId String
   passenger   User   @relation("PassengerBookings", fields: [passengerId], references: [id], onDelete: Cascade)
 
@@ -287,13 +290,60 @@ model RideBooking {
   seatsBooked Int   @default(1)
   totalPrice  Float
 
-  status BookingStatus @default(PENDING)
+  status BookingStatus @default(PAYMENT_PENDING)
+
+  stripePaymentIntentId   String?   @unique
+  stripeChargeId          String?
+  paymentAmount           Float?
+  paymentCurrency         String?
+  paymentCapturedAt       DateTime?
+  refundId                String?
+  refundedAt              DateTime?
+  refundAmount            Float?
+  refundPercent           Float?
+  driverDecisionDeadlineAt DateTime?
+  driverDecisionAt        DateTime?
+  cancelledAt             DateTime?
+  cancelledByRole         String?
+  cancellationReason      String?
+  driverPenaltyAppliedAt  DateTime?
+  driverPenaltyValue      Float?
+  pickupOtpHash           String?
+  pickupOtpExpiresAt      DateTime?
+  pickupOtpVerifiedAt     DateTime?
+  dropOtpHash             String?
+  dropOtpExpiresAt        DateTime?
+  dropOtpVerifiedAt       DateTime?
+  otpAttemptCount         Int       @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([rideId])
   @@index([passengerId])
+  @@index([status])
+  @@index([driverDecisionDeadlineAt])
+}
+
+model StripeWebhookEvent {
+  id              String   @id @default(uuid())
+  stripeEventId   String   @unique
+  eventType       String
+  paymentIntentId String?
+  processedAt     DateTime @default(now())
+  payload         Json?
+}
+
+model DriverPenaltyEvent {
+  id             String   @id @default(uuid())
+  driverId       String
+  bookingId      String
+  penaltyPercent Float
+  reason         String
+  createdAt      DateTime @default(now())
+
+  @@index([driverId, createdAt])
+  @@index([bookingId])
 }
 
 // ============ CHAT MODELS ============

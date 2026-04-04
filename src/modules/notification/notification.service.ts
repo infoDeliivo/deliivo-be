@@ -7,6 +7,16 @@ import logger from '../../utils/logger.js';
 // Redis key for unread count cache (60s TTL)
 const unreadKey = (userId: string) => `unread:${userId}`;
 
+export const normalizeNotificationDataForTransport = (
+    data?: Record<string, unknown>
+): Record<string, string> => {
+    if (!data) return {};
+
+    return Object.fromEntries(
+        Object.entries(data).map(([key, value]) => [key, value == null ? '' : String(value)])
+    );
+};
+
 // ============ NOTIFICATION CRUD ============
 
 /**
@@ -15,6 +25,7 @@ const unreadKey = (userId: string) => `unread:${userId}`;
  */
 export const createNotification = async (input: CreateNotificationInput) => {
     const { userId, type, title, body, data } = input;
+    const normalizedData = normalizeNotificationDataForTransport(data);
 
     const notification = await prisma.notification.create({
         data: {
@@ -54,7 +65,7 @@ export const createNotification = async (input: CreateNotificationInput) => {
                         title: notification.title,
                         body: notification.body,
                         notificationType: notification.type,
-                        data: notification.data,
+                        data: normalizedData,
                         preview: true,
                         createdAt: notification.createdAt,
                     },
@@ -80,9 +91,7 @@ export const createNotification = async (input: CreateNotificationInput) => {
                 data: {
                     notificationId: notification.id,
                     type: notification.type,
-                    ...(data ? Object.fromEntries(
-                        Object.entries(data).map(([k, v]) => [k, String(v)])
-                    ) : {}),
+                    ...normalizedData,
                 },
             });
         } catch (error) {

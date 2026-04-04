@@ -11,10 +11,23 @@ export interface ViewTokenPayload {
 
 const INVALID_VIEW_TOKEN = 'INVALID_VIEW_TOKEN';
 
-const getSecret = (): string =>
-    process.env.SEGMENT_VIEW_TOKEN_SECRET ||
-    process.env.JWT_SECRET ||
-    'dev-segment-secret';
+const isValidRef = (value: string): value is SegmentPointRef =>
+    value === 'origin' ||
+    value === 'destination' ||
+    (value.startsWith('waypoint:') && value.slice('waypoint:'.length).trim().length > 0);
+
+const getSecret = (): string => {
+    const secret = process.env.SEGMENT_VIEW_TOKEN_SECRET || process.env.JWT_SECRET;
+    if (secret) {
+        return secret;
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error(INVALID_VIEW_TOKEN);
+    }
+
+    return 'dev-segment-secret';
+};
 
 const base64UrlEncode = (input: Buffer | string): string =>
     Buffer.isBuffer(input) ? input.toString('base64url') : Buffer.from(input).toString('base64url');
@@ -56,8 +69,11 @@ export const decodeViewToken = (token: string): ViewTokenPayload => {
             (payload as ViewTokenPayload).v !== 1 ||
             (payload as ViewTokenPayload).mode !== 'segment' ||
             typeof (payload as ViewTokenPayload).rideId !== 'string' ||
+            (payload as ViewTokenPayload).rideId.trim().length === 0 ||
             typeof (payload as ViewTokenPayload).pickupRef !== 'string' ||
-            typeof (payload as ViewTokenPayload).dropRef !== 'string'
+            typeof (payload as ViewTokenPayload).dropRef !== 'string' ||
+            !isValidRef((payload as ViewTokenPayload).pickupRef) ||
+            !isValidRef((payload as ViewTokenPayload).dropRef)
         ) {
             throw new Error(INVALID_VIEW_TOKEN);
         }

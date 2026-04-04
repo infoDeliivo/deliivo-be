@@ -1,0 +1,72 @@
+{
+  "CursorQuery": {
+    "name": "cursor",
+    "in": "query",
+    "required": false,
+    "description": "Cursor for pagination.",
+    "schema": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "LimitQuery": {
+    "name": "limit",
+    "in": "query",
+    "required": false,
+    "description": "Maximum number of items to return.",
+    "schema": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 20
+    }
+  },
+  "IdPath": {
+    "name": "id",
+    "in": "path",
+    "required": true,
+    "description": "Resource identifier.",
+    "schema": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "ConversationIdPath": {
+    "name": "conversationId",
+    "in": "path",
+    "required": true,
+    "description": "Conversation identifier.",
+    "schema": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "TokenIdPath": {
+    "name": "tokenId",
+    "in": "path",
+    "required": true,
+    "description": "Device token identifier.",
+    "schema": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "StripeSignatureHeader": {
+    "name": "stripe-signature",
+    "in": "header",
+    "required": true,
+    "description": "Stripe webhook signature.",
+    "schema": {
+      "type": "string"
+    }
+  },
+  "SegmentIdQuery": {
+    "name": "segmentId",
+    "in": "query",
+    "required": false,
+    "description": "Ride segment identifier.",
+    "schema": {
+      "type": "string"
+    }
+  }
+}

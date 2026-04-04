@@ -8,7 +8,7 @@ export interface SegmentPoint {
     lat: number;
     lng: number;
     cumulativePrice: number;
-    orderIndex: number;
+    position: number;
 }
 
 export interface SegmentBookingContext {
@@ -43,6 +43,7 @@ export interface SegmentRideWaypoint {
     address: string;
     lat: number;
     lng: number;
+    waypointType: string;
     orderIndex: number;
     pricePerSeat: number | null;
 }
@@ -61,20 +62,23 @@ export interface SegmentRide {
     waypoints: SegmentRideWaypoint[];
 }
 
-export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => [
-    {
-        ref: 'origin',
-        waypointId: null,
-        placeId: ride.originPlaceId,
-        address: ride.originAddress,
-        lat: ride.originLat,
-        lng: ride.originLng,
-        cumulativePrice: 0,
-        orderIndex: 0,
-    },
-    ...[...ride.waypoints]
-        .sort((a, b) => a.orderIndex - b.orderIndex)
-        .map((waypoint) => ({
+export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
+    const stopoverWaypoints = [...ride.waypoints]
+        .filter((waypoint) => waypoint.waypointType === 'STOPOVER')
+        .sort((a, b) => a.orderIndex - b.orderIndex);
+
+    return [
+        {
+            ref: 'origin',
+            waypointId: null,
+            placeId: ride.originPlaceId,
+            address: ride.originAddress,
+            lat: ride.originLat,
+            lng: ride.originLng,
+            cumulativePrice: 0,
+            position: 0,
+        },
+        ...stopoverWaypoints.map((waypoint, index) => ({
             ref: `waypoint:${waypoint.id}` as const,
             waypointId: waypoint.id,
             placeId: waypoint.placeId,
@@ -82,19 +86,20 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => [
             lat: waypoint.lat,
             lng: waypoint.lng,
             cumulativePrice: waypoint.pricePerSeat ?? Number.NaN,
-            orderIndex: waypoint.orderIndex,
+            position: index + 1,
         })),
-    {
-        ref: 'destination',
-        waypointId: null,
-        placeId: ride.destinationPlaceId,
-        address: ride.destinationAddress,
-        lat: ride.destinationLat,
-        lng: ride.destinationLng,
-        cumulativePrice: ride.basePricePerSeat,
-        orderIndex: Number.MAX_SAFE_INTEGER,
-    },
-];
+        {
+            ref: 'destination',
+            waypointId: null,
+            placeId: ride.destinationPlaceId,
+            address: ride.destinationAddress,
+            lat: ride.destinationLat,
+            lng: ride.destinationLng,
+            cumulativePrice: ride.basePricePerSeat,
+            position: stopoverWaypoints.length + 1,
+        },
+    ];
+};
 
 const findPointByRef = (
     points: SegmentPoint[],
@@ -120,7 +125,7 @@ export const resolveSegmentView = (
         return null;
     }
 
-    if (pickup.orderIndex >= drop.orderIndex) {
+    if (pickup.position >= drop.position) {
         return null;
     }
 

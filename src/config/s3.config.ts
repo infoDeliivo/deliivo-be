@@ -1,6 +1,6 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import { configDotenv } from "dotenv";
-configDotenv();
+configDotenv({ quiet: true });
 const s3 = new S3Client({
     region: process.env.AWS_REGION || 'us-east-1',
     credentials: {

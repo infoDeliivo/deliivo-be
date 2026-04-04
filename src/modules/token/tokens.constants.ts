@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config();
+dotenv.config({ quiet: true });
 
 // Support legacy JWT_SECRET while standardizing new deployments on ACCESS_TOKEN_SECRET.
 export const ACCESS_TOKEN_SECRET =

@@ -1,6 +1,8 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
-dotenv.config();
+import logger from '../utils/logger.js';
+
+dotenv.config({ quiet: true });
 
 const transporter = nodemailer.createTransport({
   host: process.env.MAIL_HOST || 'smtp.gmail.com',
@@ -22,21 +24,22 @@ const getMailerLogMeta = () => ({
   hasFrom: Boolean(process.env.MAIL_FROM),
 });
 
-console.log('[MAILER] Config loaded', getMailerLogMeta());
+logger.info('[MAILER] Config loaded', getMailerLogMeta());
 
 export const verifyMailer = async (): Promise<boolean> => {
   const mailerMeta = getMailerLogMeta();
 
   if (!mailerMeta.hasUser || !mailerMeta.hasPass || !mailerMeta.hasFrom) {
-    console.warn('[MAILER] Variables are incomplete', mailerMeta);
+    logger.warn('[MAILER] Variables are incomplete; skipping SMTP verification', mailerMeta);
+    return false;
   }
 
   try {
     await transporter.verify();
-    console.log('[MAILER] Connection verified', mailerMeta);
+    logger.info('[MAILER] Connection verified', mailerMeta);
     return true;
   } catch (error) {
-    console.error('[MAILER] Verification failed', {
+    logger.error('[MAILER] Verification failed', {
       ...mailerMeta,
       error: error instanceof Error ? error.message : String(error),
     });
