@@ -16,10 +16,18 @@ jest.mock('../payments/stripe.service.js', () => ({
     refundPaymentIntent: jest.fn(),
 }));
 
+const mockCreateNotification = jest.fn();
+
+jest.mock('../notification/notification.service.js', () => ({
+    __esModule: true,
+    createNotification: (...args: unknown[]) => mockCreateNotification(...args),
+}));
+
 import { createBooking } from './ride-booking.service';
 import { createBookingPaymentIntent } from '../payments/stripe.service.js';
 
 const mockedCreateBookingPaymentIntent = createBookingPaymentIntent as jest.Mock;
+const mockedCreateNotification = mockCreateNotification;
 
 const buildTx = () => {
     const ride = {
@@ -69,6 +77,12 @@ const buildTx = () => {
     };
 
     return {
+        user: {
+            findUnique: jest.fn().mockResolvedValue({
+                name: 'Passenger',
+                avatarUrl: null,
+            }),
+        },
         ride: {
             findFirst: jest.fn().mockResolvedValue(ride),
             update: jest.fn().mockResolvedValue(null),
@@ -79,7 +93,10 @@ const buildTx = () => {
                 id: 'booking-1',
                 ...data,
                 stripePaymentIntentId: null,
+                paymentAmount: data.paymentAmount ?? null,
                 paymentCurrency: data.paymentCurrency,
+                paymentCapturedAt: data.paymentCapturedAt ?? null,
+                driverDecisionDeadlineAt: data.driverDecisionDeadlineAt ?? null,
                 createdAt: new Date('2026-03-01T00:00:00.000Z'),
                 updatedAt: new Date('2026-03-01T00:00:00.000Z'),
                 ride: {
@@ -95,6 +112,7 @@ const buildTx = () => {
 describe('createBooking segment pricing + payment intent', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        process.env.BOOKING_PAYMENT_MODE = 'stripe';
 
         mockedCreateBookingPaymentIntent.mockResolvedValue({
             paymentIntentId: 'pi_123',
@@ -204,5 +222,42 @@ describe('createBooking segment pricing + payment intent', () => {
                 dropoffWaypointId: 'wp-b',
             })
         ).rejects.toThrow('INVALID_BOOKING_SEGMENT');
+    });
+
+    it('creates a driver-pending booking and notifies the driver when payment mode is bypass', async () => {
+        process.env.BOOKING_PAYMENT_MODE = 'bypass';
+
+        const tx = buildTx();
+        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+
+        const booking = await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(booking.status).toBe('DRIVER_PENDING');
+        expect(booking.payment).toBeNull();
+        expect(mockedCreateBookingPaymentIntent).not.toHaveBeenCalled();
+        expect(mockedCreateNotification).toHaveBeenCalledWith({
+            userId: 'driver-1',
+            type: 'booking.request.driver_decision',
+            title: 'New ride request',
+            body: 'Passenger wants B to C',
+            data: {
+                bookingId: 'booking-1',
+                rideId: 'ride-1',
+                passengerName: 'Passenger',
+                passengerAvatarUrl: '',
+                originAddress: 'B',
+                destinationAddress: 'C',
+                seatsBooked: '1',
+                totalPrice: '10',
+                currency: 'GBP',
+                decisionDeadlineAt: '',
+                deepLink: 'app://driver/booking-request/booking-1',
+            },
+        });
     });
 });

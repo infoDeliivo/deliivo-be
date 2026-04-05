@@ -8,6 +8,8 @@ import {
 } from '../search-ride/segment-view.utils.js';
 import { decodeViewToken } from '../search-ride/view-token.utils.js';
 import { createBookingPaymentIntent, refundPaymentIntent } from '../payments/stripe.service.js';
+import { createNotification } from '../notification/notification.service.js';
+import { DRIVER_DECISION_NOTIFICATION_TYPE } from '../payments/stripe.constants.js';
 import {
     CancelBookingResult,
     CreateBookingInput,
@@ -21,6 +23,7 @@ import {
     getRiderRefundPercent,
     toMinorCurrencyUnits,
 } from './booking-cancellation-policy.js';
+import { isBypassBookingPaymentMode } from './booking-payment-mode.js';
 
 type RideWaypointDetails = {
     id: string;
@@ -231,11 +234,22 @@ const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string)
     );
 };
 
+const resolveSegmentAddress = (
+    defaultAddress: string,
+    waypointId: string | null,
+    waypoints: Array<{ id: string; address: string }>
+): string => {
+    if (!waypointId) return defaultAddress;
+    return waypoints.find((waypoint) => waypoint.id === waypointId)?.address ?? defaultAddress;
+};
+
 /* ================= CREATE BOOKING ================= */
 export const createBooking = async (
     passengerId: string,
     input: CreateBookingInput
 ): Promise<BookingResponse> => {
+    const bypassBookingPaymentMode = isBypassBookingPaymentMode();
+    const paymentCapturedAt = bypassBookingPaymentMode ? new Date() : null;
     const {
         rideId,
         segmentId,
@@ -290,6 +304,14 @@ export const createBooking = async (
             throw new Error('BOOKING_ALREADY_EXISTS');
         }
 
+        const passenger = await tx.user.findUnique({
+            where: { id: passengerId },
+            select: {
+                name: true,
+                avatarUrl: true,
+            },
+        });
+
         let pickupRef: SegmentPointRef;
         let dropRef: SegmentPointRef;
 
@@ -332,8 +354,12 @@ export const createBooking = async (
                 totalPrice,
                 pickupWaypointId: resolvedPickupWaypointId,
                 dropoffWaypointId: resolvedDropoffWaypointId,
-                status: BookingStatus.PAYMENT_PENDING,
+                status: bypassBookingPaymentMode
+                    ? BookingStatus.DRIVER_PENDING
+                    : BookingStatus.PAYMENT_PENDING,
+                paymentAmount: bypassBookingPaymentMode ? totalPrice : undefined,
                 paymentCurrency: ride.currency,
+                paymentCapturedAt: paymentCapturedAt ?? undefined,
             },
             include: {
                 ride: {
@@ -366,8 +392,48 @@ export const createBooking = async (
             totalPrice,
             resolvedPickupWaypointId,
             resolvedDropoffWaypointId,
+            passenger,
         };
     });
+
+    if (bypassBookingPaymentMode) {
+        const passengerName = bookingSeed.passenger?.name ?? 'Rider';
+        const originAddress = resolveSegmentAddress(
+            bookingSeed.ride.originAddress,
+            bookingSeed.resolvedPickupWaypointId,
+            bookingSeed.ride.waypoints ?? []
+        );
+        const destinationAddress = resolveSegmentAddress(
+            bookingSeed.ride.destinationAddress,
+            bookingSeed.resolvedDropoffWaypointId,
+            bookingSeed.ride.waypoints ?? []
+        );
+
+        await createNotification({
+            userId: bookingSeed.ride.driverId,
+            type: DRIVER_DECISION_NOTIFICATION_TYPE,
+            title: 'New ride request',
+            body: `${passengerName} wants ${originAddress} to ${destinationAddress}`,
+            data: {
+                bookingId: bookingSeed.booking.id,
+                rideId: bookingSeed.booking.rideId,
+                passengerName,
+                passengerAvatarUrl: bookingSeed.passenger?.avatarUrl ?? '',
+                originAddress,
+                destinationAddress,
+                seatsBooked: String(bookingSeed.booking.seatsBooked),
+                totalPrice: String(bookingSeed.booking.totalPrice),
+                currency: bookingSeed.booking.paymentCurrency ?? bookingSeed.ride.currency,
+                decisionDeadlineAt: '',
+                deepLink: `app://driver/booking-request/${bookingSeed.booking.id}`,
+            },
+        });
+
+        return mapBookingResponse(bookingSeed.booking as unknown as BookingWithRideDetails, {
+            luggageCount,
+            notes: notes ?? null,
+        });
+    }
 
     let paymentIntent: Awaited<ReturnType<typeof createBookingPaymentIntent>>;
     try {
