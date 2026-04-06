@@ -44,11 +44,13 @@ import { BookingStatus } from '@prisma/client';
 import {
     acceptBooking,
     rejectBooking,
+    cancelAfterAccept,
     verifyPickupOtp,
 } from './driver-booking.service.js';
 
 describe('driver booking service', () => {
     beforeEach(() => {
+        process.env.BOOKING_PAYMENT_MODE = 'stripe';
         jest.clearAllMocks();
         mockHashOtp.mockImplementation((otp: string) => `hash-${otp}`);
     });
@@ -217,5 +219,88 @@ describe('driver booking service', () => {
                 data: { otpAttemptCount: { increment: 1 } },
             })
         );
+    });
+
+    it('reject in bypass mode does not call Stripe refund and still marks refund fields', async () => {
+        process.env.BOOKING_PAYMENT_MODE = 'bypass';
+
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            id: 'booking-bypass-reject',
+            rideId: 'ride-2',
+            passengerId: 'passenger-2',
+            status: BookingStatus.DRIVER_PENDING,
+            paymentCapturedAt: new Date(),
+            paymentAmount: 500,
+            totalPrice: 500,
+            stripePaymentIntentId: null,
+            driverDecisionDeadlineAt: new Date(Date.now() + 60_000), // Avoid BOOKING_DECISION_DEADLINE_PASSED
+            passenger: { id: 'passenger-2', name: 'Rider', avatarUrl: null },
+            ride: { id: 'ride-2', driverId: 'driver-2', originAddress: 'A', destinationAddress: 'B' },
+        });
+
+        const tx = {
+            rideBooking: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 'booking-bypass-reject',
+                    status: BookingStatus.DRIVER_PENDING,
+                    rideId: 'ride-2',
+                    passengerId: 'passenger-2',
+                    seatsBooked: 1,
+                }),
+                update: jest.fn().mockResolvedValue({}),
+            },
+            ride: { update: jest.fn().mockResolvedValue({}) },
+        };
+        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+
+        await rejectBooking('driver-2', 'booking-bypass-reject');
+
+        expect(mockRefundPaymentIntent).not.toHaveBeenCalled();
+        expect(tx.rideBooking.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    refundPercent: 100,
+                    refundAmount: 500,
+                }),
+            })
+        );
+    });
+
+    it('cancel-after-accept in bypass mode does not call Stripe refund', async () => {
+        process.env.BOOKING_PAYMENT_MODE = 'bypass';
+
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            id: 'booking-bypass-cancel',
+            rideId: 'ride-3',
+            passengerId: 'passenger-3',
+            status: BookingStatus.CONFIRMED,
+            paymentCapturedAt: new Date(),
+            paymentAmount: 900,
+            totalPrice: 900,
+            stripePaymentIntentId: null,
+            passenger: { id: 'passenger-3', name: 'Rider', avatarUrl: null },
+            ride: { id: 'ride-3', driverId: 'driver-3', originAddress: 'A', destinationAddress: 'B' },
+        });
+
+        const tx = {
+            rideBooking: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 'booking-bypass-cancel',
+                    status: BookingStatus.CONFIRMED,
+                    rideId: 'ride-3',
+                    passengerId: 'passenger-3',
+                    seatsBooked: 1,
+                }),
+                update: jest.fn().mockResolvedValue({}),
+            },
+            ride: { update: jest.fn().mockResolvedValue({}) },
+            driverPenaltyEvent: { create: jest.fn().mockResolvedValue({}) },
+        };
+        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+
+        await cancelAfterAccept('driver-3', 'booking-bypass-cancel');
+
+        expect(mockRefundPaymentIntent).not.toHaveBeenCalled();
+        expect(tx.driverPenaltyEvent.create).toHaveBeenCalled();
     });
 });

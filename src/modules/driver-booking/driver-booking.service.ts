@@ -4,6 +4,7 @@ import { createNotification } from '../notification/notification.service.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { generateBookingOtp, hashOtp, isOtpValid } from '../ride-booking/booking-otp.utils.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
+import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
 
 const PICKUP_OTP_TTL_MS = 6 * 60 * 60 * 1000;
 const DROP_OTP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -121,16 +122,20 @@ export const rejectBooking = async (driverId: string, bookingId: string): Promis
 
     assertDecisionWindowOpen(booking.driverDecisionDeadlineAt);
 
+    const bypassPayment = isBypassBookingPaymentMode();
     const fullRefundAmount = booking.paymentAmount ?? booking.totalPrice;
     let refundId: string | null = null;
     let refundInitiated = false;
 
-    if (booking.paymentCapturedAt && booking.stripePaymentIntentId) {
+    if (!bypassPayment && booking.paymentCapturedAt && booking.stripePaymentIntentId) {
         const refund = await refundPaymentIntent(
             booking.stripePaymentIntentId,
             toMinorCurrencyUnits(fullRefundAmount)
         );
         refundId = refund.id;
+        refundInitiated = true;
+    }
+    if (bypassPayment && fullRefundAmount > 0) {
         refundInitiated = true;
     }
 
@@ -161,7 +166,7 @@ export const rejectBooking = async (driverId: string, bookingId: string): Promis
                 cancellationReason: 'DRIVER_REJECTED',
                 refundPercent: 100,
                 refundAmount: fullRefundAmount,
-                refundId: refundId ?? undefined,
+                refundId: refundId ?? null,
                 refundedAt: refundInitiated ? new Date() : undefined,
             },
         });
@@ -205,16 +210,20 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string): Pr
         throw new Error('BOOKING_NOT_CONFIRMED');
     }
 
+    const bypassPayment = isBypassBookingPaymentMode();
     const fullRefundAmount = booking.paymentAmount ?? booking.totalPrice;
     let refundId: string | null = null;
     let refundInitiated = false;
 
-    if (booking.paymentCapturedAt && booking.stripePaymentIntentId) {
+    if (!bypassPayment && booking.paymentCapturedAt && booking.stripePaymentIntentId) {
         const refund = await refundPaymentIntent(
             booking.stripePaymentIntentId,
             toMinorCurrencyUnits(fullRefundAmount)
         );
         refundId = refund.id;
+        refundInitiated = true;
+    }
+    if (bypassPayment && fullRefundAmount > 0) {
         refundInitiated = true;
     }
 
@@ -244,7 +253,7 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string): Pr
                 cancellationReason: 'DRIVER_CANCELLED_AFTER_ACCEPT',
                 refundPercent: 100,
                 refundAmount: fullRefundAmount,
-                refundId: refundId ?? undefined,
+                refundId: refundId ?? null,
                 refundedAt: refundInitiated ? new Date() : undefined,
                 driverPenaltyAppliedAt: new Date(),
                 driverPenaltyValue: DRIVER_PENALTY_PERCENT,
