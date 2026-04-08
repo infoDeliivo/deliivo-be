@@ -76,6 +76,9 @@ model User {
   refreshTokens    RefreshToken[]
   rides            Ride[]
   bookings         RideBooking[]     @relation("PassengerBookings")
+  ratingsGiven     RideRating[]      @relation("RatingsGiven")
+  ratingsReceived  RideRating[]      @relation("RatingsReceived")
+  ratingStats      UserRatingStats?
 
   // Chat relations
   conversationsAsA Conversation[] @relation("ConversationUserA")
@@ -243,6 +246,7 @@ model Ride {
   // Relations
   waypoints RideWaypoint[]
   bookings  RideBooking[]
+  ratings   RideRating[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -316,6 +320,8 @@ model RideBooking {
   dropOtpVerifiedAt       DateTime?
   otpAttemptCount         Int       @default(0)
 
+  ratings RideRating[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -323,6 +329,48 @@ model RideBooking {
   @@index([passengerId])
   @@index([status])
   @@index([driverDecisionDeadlineAt])
+}
+
+model RideRating {
+  id String @id @default(uuid())
+
+  bookingId String
+  booking   RideBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  rideId String
+  ride   Ride @relation(fields: [rideId], references: [id], onDelete: Cascade)
+
+  raterId String
+  rater   User @relation("RatingsGiven", fields: [raterId], references: [id], onDelete: Cascade)
+
+  rateeId String
+  ratee   User @relation("RatingsReceived", fields: [rateeId], references: [id], onDelete: Cascade)
+
+  stars      Int
+  reviewText String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([bookingId, raterId])
+  @@index([bookingId])
+  @@index([rateeId, createdAt])
+}
+
+model UserRatingStats {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  totalRatings  Int   @default(0)
+  totalStars    Int   @default(0)
+  averageRating Float @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([averageRating])
 }
 
 model StripeWebhookEvent {
