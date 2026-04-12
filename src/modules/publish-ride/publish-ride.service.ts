@@ -22,7 +22,34 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
     const [rides, total] = await Promise.all([
         prisma.ride.findMany({
             where,
-            include: { waypoints: { orderBy: { orderIndex: 'asc' } } },
+            include: { 
+                waypoints: { orderBy: { orderIndex: 'asc' } },
+                bookings: {
+                    where: {
+                        status: {
+                            in: [
+                                'PAYMENT_PENDING',
+                                'DRIVER_PENDING',
+                                'CONFIRMED',
+                                'IN_PROGRESS',
+                                'COMPLETED',
+                            ],
+                        },
+                    },
+                    orderBy: { createdAt: 'desc' },
+                    include: {
+                        passenger: {
+                            select: {
+                                id: true,
+                                name: true,
+                                nickName: true,
+                                phone: true,
+                                avatarUrl: true,
+                            },
+                        },
+                    },
+                },
+            },
             orderBy: { createdAt: 'desc' },
             skip,
             take: limit,
@@ -45,7 +72,34 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
 export const getRideById = async (driverId: string, rideId: string) => {
     const ride = await prisma.ride.findFirst({
         where: { id: rideId, driverId },
-        include: { waypoints: { orderBy: { orderIndex: 'asc' } } },
+        include: { 
+            waypoints: { orderBy: { orderIndex: 'asc' } },
+            bookings: {
+                where: {
+                    status: {
+                        in: [
+                            'PAYMENT_PENDING',
+                            'DRIVER_PENDING',
+                            'CONFIRMED',
+                            'IN_PROGRESS',
+                            'COMPLETED',
+                        ],
+                    },
+                },
+                orderBy: { createdAt: 'desc' },
+                include: {
+                    passenger: {
+                        select: {
+                            id: true,
+                            name: true,
+                            nickName: true,
+                            phone: true,
+                            avatarUrl: true,
+                        },
+                    },
+                },
+            },
+        },
     });
 
     if (!ride) {

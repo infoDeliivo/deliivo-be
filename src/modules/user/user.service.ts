@@ -57,7 +57,7 @@ export const getFullProfileService = async (
   try {
     // Single query with includes - no N+1 problem
     // Plus parallel stats aggregation
-    const [userWithRelations, totalRides, totalBookings] = await Promise.all([
+    const [userWithRelations, totalRides, totalBookings, ratingStats] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
         include: {
@@ -69,6 +69,7 @@ export const getFullProfileService = async (
       }),
       prisma.ride.count({ where: { driverId: userId } }),
       prisma.rideBooking.count({ where: { passengerId: userId } }),
+      prisma.userRatingStats.findUnique({ where: { userId } }),
     ]);
 
     if (!userWithRelations) {
@@ -125,11 +126,25 @@ export const getFullProfileService = async (
       memberSince: userWithRelations.createdAt,
     };
 
+    // Build rating summary
+    const rating = !ratingStats || ratingStats.totalRatings === 0
+      ? {
+        average: null,
+        total: 0,
+        label: 'No ratings yet',
+      }
+      : {
+        average: Number(ratingStats.averageRating.toFixed(2)),
+        total: ratingStats.totalRatings,
+        label: null,
+      };
+
     const profileData: FullProfileResponse = {
       user: userBasicInfo,
       travelPreference,
       vehicle,
       stats,
+      rating,
     };
 
     return { success: true, data: profileData };

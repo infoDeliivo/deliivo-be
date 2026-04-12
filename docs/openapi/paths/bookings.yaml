@@ -1,5 +1,98 @@
 {
   "paths": {
+    "/api/v1/bookings/price-preview": {
+      "post": {
+        "operationId": "bookingsPostPricePreview",
+        "summary": "POST bookings/price-preview",
+        "description": "Calculate price breakdown for a booking before creating it",
+        "tags": [
+          "Bookings"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "../components/examples/common.yaml#/BookingPricePreviewSuccess"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "rideId",
+                  "seatsBooked"
+                ],
+                "properties": {
+                  "rideId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "segmentId": {
+                    "type": "string"
+                  },
+                  "seatsBooked": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4
+                  },
+                  "luggageCount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "default": 0
+                  },
+                  "pickupWaypointId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "dropoffWaypointId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/bookings": {
       "post": {
         "operationId": "bookingsPost",
@@ -69,7 +162,7 @@
                   "seatsBooked": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 10
+                    "maximum": 4
                   },
                   "luggageCount": {
                     "type": "integer",
@@ -152,7 +245,8 @@
     "/api/v1/bookings/{id}": {
       "get": {
         "operationId": "bookingsGetById",
-        "summary": "GET bookings/:id",
+        "summary": "GET bookings/:id - Get booking details with OTPs",
+        "description": "Retrieve booking details. If booking is CONFIRMED or IN_PROGRESS, includes pickup and drop OTPs that passenger should show to driver.",
         "tags": [
           "Bookings"
         ],
@@ -163,14 +257,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Success",
+            "description": "Success - Returns booking with OTPs if confirmed",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
                 },
                 "examples": {
-                  "default": {
+                  "confirmed": {
+                    "$ref": "../components/examples/common.yaml#/BookingConfirmedWithOtp"
+                  },
+                  "pending": {
                     "$ref": "../components/examples/common.yaml#/BookingSuccess"
                   }
                 }

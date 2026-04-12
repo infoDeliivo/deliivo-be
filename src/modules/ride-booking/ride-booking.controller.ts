@@ -42,6 +42,14 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 status = HttpStatus.BAD_REQUEST;
                 message = 'Not enough seats available';
                 break;
+            case 'MINIMUM_ONE_SEAT_REQUIRED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'At least one seat must be booked';
+                break;
+            case 'MAXIMUM_SEATS_EXCEEDED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Maximum 4 seats per booking';
+                break;
             case 'BOOKING_ALREADY_EXISTS':
                 status = HttpStatus.CONFLICT;
                 message = 'You already have an active booking for this ride';
@@ -179,5 +187,49 @@ export const listUserBookings = async (req: AuthRequest, res: Response) => {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to fetch bookings',
         });
+    }
+};
+
+/* ================= PRICE PREVIEW ================= */
+export const getBookingPricePreview = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await BookingService.getBookingPricePreview(req.user.id, req.body);
+
+        return sendSuccess(res, {
+            message: 'Price preview calculated successfully',
+            data: result,
+        });
+    } catch (error: any) {
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to calculate price preview';
+
+        switch (error.message) {
+            case 'RIDE_NOT_FOUND':
+                status = HttpStatus.NOT_FOUND;
+                message = 'Ride not found or not available';
+                break;
+            case 'CANNOT_BOOK_OWN_RIDE':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'You cannot book your own ride';
+                break;
+            case 'INSUFFICIENT_SEATS':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Not enough seats available';
+                break;
+            case 'MINIMUM_ONE_SEAT_REQUIRED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'At least one seat must be booked';
+                break;
+            case 'MAXIMUM_SEATS_EXCEEDED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Maximum 4 seats per booking';
+                break;
+            case 'INVALID_BOOKING_SEGMENT':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Selected ride segment is invalid';
+                break;
+        }
+
+        return sendError(res, { status, message });
     }
 };

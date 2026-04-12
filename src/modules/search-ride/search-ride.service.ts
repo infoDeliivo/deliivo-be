@@ -247,6 +247,13 @@ export const searchRides = async (
 
   if (excludeDriverId) {
     whereClause.driverId = { not: excludeDriverId };
+    // Also exclude rides where user already has an active booking as passenger
+    whereClause.bookings = {
+      none: {
+        passengerId: excludeDriverId,
+        status: { in: activeBookingStatuses },
+      },
+    };
   }
 
   // Add price filter if specified
@@ -346,6 +353,11 @@ export const searchRides = async (
         { lat: ride.destinationLat, lng: ride.destinationLng },
       );
 
+      // Check if the searching user has an active booking for this ride
+      const hasActiveBooking = excludeDriverId
+        ? ride.bookings.some((booking) => booking.passengerId === excludeDriverId)
+        : false;
+
       return {
         id: ride.id,
         driverId: ride.driverId,
@@ -379,6 +391,7 @@ export const searchRides = async (
         status: ride.status,
         distanceFromOrigin,
         distanceFromDestination,
+        hasActiveBooking,
       };
     })
     .filter(
@@ -780,6 +793,13 @@ export const searchRidesAdvanced = async (
 
   if (excludeDriverId) {
     whereClause.driverId = { not: excludeDriverId };
+    // Also exclude rides where user already has an active booking as passenger
+    whereClause.bookings = {
+      none: {
+        passengerId: excludeDriverId,
+        status: { in: activeBookingStatuses },
+      },
+    };
   }
 
   const candidateRides = await prisma.ride.findMany({
@@ -997,6 +1017,11 @@ export const searchRidesAdvanced = async (
       continue;
     }
 
+    // Check if the searching user has an active booking for this ride
+    const hasActiveBooking = excludeDriverId
+      ? ride.bookings.some((booking) => booking.passengerId === excludeDriverId)
+      : false;
+
     // Build enhanced result (Spec §10)
     evaluatedRides.push({
       id: ride.id,
@@ -1044,6 +1069,7 @@ export const searchRidesAdvanced = async (
       isSegmentView: Boolean(riderView),
       segmentId,
       segment: riderView?.segment,
+      hasActiveBooking,
     });
   }
 

@@ -17,6 +17,9 @@ import {
     BookingPaymentInfo,
     BookingResponse,
     ListBookingsQuery,
+    PriceBreakdown,
+    PricePreviewInput,
+    PricePreviewResponse,
 } from './ride-booking.types.js';
 import {
     getRiderRefundAmount,
@@ -92,6 +95,47 @@ const CANCELLABLE_BOOKING_STATUSES: BookingStatus[] = [
     BookingStatus.DRIVER_PENDING,
     BookingStatus.CONFIRMED,
 ];
+
+// Pricing configuration
+const LUGGAGE_FEE_PER_ITEM = 5.00; // £5 per luggage item
+const MAX_SEATS_PER_BOOKING = 4;
+
+/* ================= PRICE CALCULATION UTILITIES ================= */
+const calculateBookingPrice = (
+    basePricePerSeat: number,
+    seatsBooked: number,
+    luggageCount: number = 0,
+    currency: string = 'GBP'
+): PriceBreakdown => {
+    const subtotal = basePricePerSeat * seatsBooked;
+    const luggageFee = luggageCount * LUGGAGE_FEE_PER_ITEM;
+    const serviceFee = 0; // No service fee for now
+    const totalPrice = subtotal + luggageFee + serviceFee;
+
+    return {
+        basePricePerSeat,
+        seatsBooked,
+        subtotal,
+        luggageFee,
+        serviceFee,
+        totalPrice,
+        currency,
+    };
+};
+
+const validateBookingSeats = (seatsBooked: number, availableSeats: number) => {
+    if (seatsBooked < 1) {
+        throw new Error('MINIMUM_ONE_SEAT_REQUIRED');
+    }
+
+    if (seatsBooked > MAX_SEATS_PER_BOOKING) {
+        throw new Error('MAXIMUM_SEATS_EXCEEDED');
+    }
+
+    if (seatsBooked > availableSeats) {
+        throw new Error('INSUFFICIENT_SEATS');
+    }
+};
 
 const mapRideInfo = (ride: RideWithDetails) => ({
     id: ride.id,
@@ -174,6 +218,7 @@ const mapBookingResponse = (
         luggageCount?: number;
         notes?: string | null;
         payment?: BookingPaymentInfo | null;
+        priceBreakdown?: PriceBreakdown;
     }
 ): BookingResponse => ({
     id: booking.id,
@@ -182,6 +227,7 @@ const mapBookingResponse = (
     seatsBooked: booking.seatsBooked,
     luggageCount: options?.luggageCount ?? 0,
     totalPrice: booking.totalPrice,
+    priceBreakdown: options?.priceBreakdown,
     status: booking.status,
     pickupWaypointId: booking.pickupWaypointId,
     dropoffWaypointId: booking.dropoffWaypointId,
@@ -288,9 +334,8 @@ export const createBooking = async (
             throw new Error('CANNOT_BOOK_OWN_RIDE');
         }
 
-        if (ride.availableSeats < seatsBooked) {
-            throw new Error('INSUFFICIENT_SEATS');
-        }
+        // Validate seat booking
+        validateBookingSeats(seatsBooked, ride.availableSeats);
 
         const existingBooking = await tx.rideBooking.findFirst({
             where: {
@@ -344,20 +389,27 @@ export const createBooking = async (
 
         const resolvedPickupWaypointId = riderView.bookingContext.pickupWaypointId;
         const resolvedDropoffWaypointId = riderView.bookingContext.dropoffWaypointId;
-        const totalPrice = riderView.basePricePerSeat * seatsBooked;
+        
+        // Calculate price with breakdown
+        const priceBreakdown = calculateBookingPrice(
+            riderView.basePricePerSeat,
+            seatsBooked,
+            luggageCount,
+            ride.currency
+        );
 
         const booking = await tx.rideBooking.create({
             data: {
                 rideId,
                 passengerId,
                 seatsBooked,
-                totalPrice,
+                totalPrice: priceBreakdown.totalPrice,
                 pickupWaypointId: resolvedPickupWaypointId,
                 dropoffWaypointId: resolvedDropoffWaypointId,
                 status: bypassBookingPaymentMode
                     ? BookingStatus.DRIVER_PENDING
                     : BookingStatus.PAYMENT_PENDING,
-                paymentAmount: bypassBookingPaymentMode ? totalPrice : undefined,
+                paymentAmount: bypassBookingPaymentMode ? priceBreakdown.totalPrice : undefined,
                 paymentCurrency: ride.currency,
                 paymentCapturedAt: paymentCapturedAt ?? undefined,
             },
@@ -389,7 +441,7 @@ export const createBooking = async (
         return {
             booking,
             ride,
-            totalPrice,
+            priceBreakdown,
             resolvedPickupWaypointId,
             resolvedDropoffWaypointId,
             passenger,
@@ -432,6 +484,7 @@ export const createBooking = async (
         return mapBookingResponse(bookingSeed.booking as unknown as BookingWithRideDetails, {
             luggageCount,
             notes: notes ?? null,
+            priceBreakdown: bookingSeed.priceBreakdown,
         });
     }
 
@@ -441,7 +494,7 @@ export const createBooking = async (
             bookingId: bookingSeed.booking.id,
             rideId: bookingSeed.booking.rideId,
             passengerId,
-            amountMajor: bookingSeed.totalPrice,
+            amountMajor: bookingSeed.priceBreakdown.totalPrice,
             currency: bookingSeed.ride.currency,
         });
     } catch {
@@ -480,7 +533,7 @@ export const createBooking = async (
         where: { id: bookingSeed.booking.id },
         data: {
             stripePaymentIntentId: paymentIntent.paymentIntentId,
-            paymentAmount: bookingSeed.totalPrice,
+            paymentAmount: bookingSeed.priceBreakdown.totalPrice,
             paymentCurrency: paymentIntent.currency,
         },
         include: {
@@ -504,6 +557,7 @@ export const createBooking = async (
     return mapBookingResponse(booking as unknown as BookingWithRideDetails, {
         luggageCount,
         notes: notes ?? null,
+        priceBreakdown: bookingSeed.priceBreakdown,
         payment: {
             provider: 'stripe',
             paymentIntentId: paymentIntent.paymentIntentId,
@@ -641,7 +695,42 @@ export const getBookingById = async (
 
     if (!booking) return null;
 
-    return mapBookingResponse(booking as unknown as BookingWithRideDetails);
+    // Get OTPs from notification if booking is confirmed
+    let pickupOtp: string | null = null;
+    let dropOtp: string | null = null;
+
+    if (booking.status === BookingStatus.CONFIRMED || booking.status === BookingStatus.IN_PROGRESS) {
+        const notification = await prisma.notification.findFirst({
+            where: {
+                userId: passengerId,
+                type: 'booking.driver.accepted',
+                data: {
+                    path: ['bookingId'],
+                    equals: bookingId,
+                },
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
+
+        if (notification && notification.data) {
+            const data = notification.data as any;
+            pickupOtp = data.pickupOtp || null;
+            dropOtp = data.dropOtp || null;
+        }
+    }
+
+    const response = mapBookingResponse(booking as unknown as BookingWithRideDetails);
+    
+    // Add OTPs to response
+    return {
+        ...response,
+        pickupOtp,
+        dropOtp,
+        pickupOtpVerifiedAt: booking.pickupOtpVerifiedAt,
+        dropOtpVerifiedAt: booking.dropOtpVerifiedAt,
+    };
 };
 
 export const getBookingPaymentStatus = async (
@@ -700,5 +789,104 @@ export const listUserBookings = async (
             total,
             totalPages: Math.ceil(total / limit),
         },
+    };
+};
+
+/* ================= PRICE PREVIEW ================= */
+export const getBookingPricePreview = async (
+    passengerId: string,
+    input: PricePreviewInput
+): Promise<PricePreviewResponse> => {
+    const {
+        rideId,
+        segmentId,
+        seatsBooked,
+        luggageCount = 0,
+        pickupWaypointId,
+        dropoffWaypointId,
+    } = input;
+
+    const ride = await prisma.ride.findFirst({
+        where: {
+            id: rideId,
+            status: RideStatus.PUBLISHED,
+        },
+        include: {
+            waypoints: {
+                orderBy: { orderIndex: 'asc' },
+            },
+        },
+    });
+
+    if (!ride) {
+        throw new Error('RIDE_NOT_FOUND');
+    }
+
+    if (ride.driverId === passengerId) {
+        throw new Error('CANNOT_BOOK_OWN_RIDE');
+    }
+
+    // Validate seat booking
+    validateBookingSeats(seatsBooked, ride.availableSeats);
+
+    let pickupRef: SegmentPointRef;
+    let dropRef: SegmentPointRef;
+    let segmentRide: { originAddress: string; destinationAddress: string; basePricePerSeat: number } | null = null;
+
+    if (segmentId) {
+        try {
+            const payload = decodeViewToken(segmentId);
+            if (payload.rideId !== rideId) {
+                throw new Error('INVALID_BOOKING_SEGMENT');
+            }
+
+            pickupRef = payload.pickupRef;
+            dropRef = payload.dropRef;
+        } catch {
+            throw new Error('INVALID_BOOKING_SEGMENT');
+        }
+    } else {
+        pickupRef = pickupWaypointId
+            ? `waypoint:${pickupWaypointId}`
+            : 'origin';
+        dropRef = dropoffWaypointId
+            ? `waypoint:${dropoffWaypointId}`
+            : 'destination';
+    }
+
+    const points = buildSegmentPoints(ride);
+    const riderView = resolveSegmentView(ride, points, pickupRef, dropRef);
+    if (!riderView) {
+        throw new Error('INVALID_BOOKING_SEGMENT');
+    }
+
+    // Calculate price breakdown
+    const priceBreakdown = calculateBookingPrice(
+        riderView.basePricePerSeat,
+        seatsBooked,
+        luggageCount,
+        ride.currency
+    );
+
+    // If it's a segment booking, provide segment details
+    if (riderView.basePricePerSeat !== ride.basePricePerSeat) {
+        segmentRide = {
+            originAddress: riderView.originAddress,
+            destinationAddress: riderView.destinationAddress,
+            basePricePerSeat: riderView.basePricePerSeat,
+        };
+    }
+
+    return {
+        priceBreakdown,
+        ride: {
+            id: ride.id,
+            originAddress: ride.originAddress,
+            destinationAddress: ride.destinationAddress,
+            basePricePerSeat: ride.basePricePerSeat,
+            currency: ride.currency,
+            availableSeats: ride.availableSeats,
+        },
+        segmentRide,
     };
 };

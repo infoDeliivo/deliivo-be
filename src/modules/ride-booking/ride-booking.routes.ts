@@ -5,9 +5,17 @@ import {
     createBookingSchema,
     bookingIdParamSchema,
     listBookingsQuerySchema,
+    pricePreviewSchema,
 } from './ride-booking.validator.js';
 
 const router = Router();
+
+// Price preview (before booking)
+router.post(
+    '/price-preview',
+    validate({ body: pricePreviewSchema }),
+    controller.getBookingPricePreview
+);
 
 // Create new booking
 router.post(

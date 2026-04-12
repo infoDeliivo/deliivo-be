@@ -57,12 +57,20 @@ export interface UserStats {
   memberSince: Date;
 }
 
+// User rating summary
+export interface UserRatingSummary {
+  average: number | null;  // Null if no ratings
+  total: number;           // Count of ratings received
+  label: string | null;    // "No ratings yet" if total = 0, else null
+}
+
 // Complete profile response
 export interface FullProfileResponse {
   user: UserBasicInfo;
   travelPreference: TravelPreferenceData | null;
   vehicle: VehicleSummary | null;  // Single vehicle (users can only have one)
   stats: UserStats;
+  rating: UserRatingSummary;
 }
 
 // ====================== UPDATE PROFILE INPUT TYPES ======================

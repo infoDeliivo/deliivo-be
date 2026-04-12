@@ -91,6 +91,9 @@ export interface SearchRideResult {
     // Distance from search origin/destination (km)
     distanceFromOrigin?: number;
     distanceFromDestination?: number;
+
+    // User booking status
+    hasActiveBooking?: boolean; // True if the searching user already has an active booking for this ride
 }
 
 export interface SearchRideBookedRider {

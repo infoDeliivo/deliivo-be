@@ -228,6 +228,11 @@
           "totalRides": 8,
           "totalBookings": 13,
           "memberSince": "2026-01-01T00:00:00.000Z"
+        },
+        "rating": {
+          "average": 4.67,
+          "total": 12,
+          "label": null
         }
       }
     }
@@ -516,6 +521,37 @@
       "notes": "Window seat if possible."
     }
   },
+  "BookingPricePreviewSuccess": {
+    "summary": "Booking price preview calculated successfully",
+    "value": {
+      "success": true,
+      "message": "Price preview calculated successfully",
+      "data": {
+        "priceBreakdown": {
+          "basePricePerSeat": 25.00,
+          "seatsBooked": 3,
+          "subtotal": 75.00,
+          "luggageFee": 10.00,
+          "serviceFee": 0.00,
+          "totalPrice": 85.00,
+          "currency": "GBP"
+        },
+        "ride": {
+          "id": "ride-123",
+          "originAddress": "London, UK",
+          "destinationAddress": "Manchester, UK",
+          "basePricePerSeat": 25.00,
+          "currency": "GBP",
+          "availableSeats": 3
+        },
+        "segmentRide": {
+          "originAddress": "London, UK",
+          "destinationAddress": "Birmingham, UK",
+          "basePricePerSeat": 20.00
+        }
+      }
+    }
+  },
   "BookingSuccess": {
     "summary": "Booking response",
     "value": {
@@ -529,7 +565,44 @@
         "seatsBooked": 1,
         "luggageCount": 1,
         "totalPrice": 499,
-        "status": "PAYMENT_PENDING"
+        "status": "PAYMENT_PENDING",
+        "pickupOtp": null,
+        "dropOtp": null,
+        "pickupOtpVerifiedAt": null,
+        "dropOtpVerifiedAt": null
+      }
+    }
+  },
+  "BookingConfirmedWithOtp": {
+    "summary": "Booking response with OTPs (after driver accepts)",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Booking details retrieved",
+      "data": {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "rideId": "44444444-4444-4444-4444-444444444444",
+        "passengerId": "11111111-1111-1111-1111-111111111111",
+        "seatsBooked": 1,
+        "luggageCount": 1,
+        "totalPrice": 499,
+        "status": "CONFIRMED",
+        "pickupOtp": "123456",
+        "dropOtp": "789012",
+        "pickupOtpVerifiedAt": null,
+        "dropOtpVerifiedAt": null,
+        "ride": {
+          "id": "44444444-4444-4444-4444-444444444444",
+          "originAddress": "London, UK",
+          "destinationAddress": "Manchester, UK",
+          "departureDate": "2026-04-15",
+          "departureTime": "10:00",
+          "driver": {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "name": "John Driver",
+            "avatarUrl": "https://example.com/avatar.jpg"
+          }
+        }
       }
     }
   },
@@ -847,6 +920,24 @@
     "value": {
       "received": true,
       "duplicate": true
+    }
+  },
+  "RatingSubmitSuccess": {
+    "summary": "Rating submitted response",
+    "value": {
+      "success": true,
+      "status": "CREATED",
+      "message": "Rating submitted successfully",
+      "data": {
+        "id": "44444444-4444-4444-4444-444444444444",
+        "bookingId": "55555555-5555-5555-5555-555555555555",
+        "rideId": "66666666-6666-6666-6666-666666666666",
+        "raterId": "77777777-7777-7777-7777-777777777777",
+        "rateeId": "88888888-8888-8888-8888-888888888888",
+        "stars": 5,
+        "reviewText": "Smooth and safe ride",
+        "createdAt": "2026-04-08T12:00:00.000Z"
+      }
     }
   }
 }

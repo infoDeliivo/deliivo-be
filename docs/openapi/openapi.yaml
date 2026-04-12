@@ -49,6 +49,10 @@
       "description": "Publish Ride endpoints"
     },
     {
+      "name": "Ratings",
+      "description": "Trip completion ratings"
+    },
+    {
       "name": "Search Rides",
       "description": "Search Rides endpoints"
     },
@@ -166,6 +170,9 @@
     "/api/v1/search-rides/notify": {
       "$ref": "./paths/search-rides.yaml#/paths/~1api~1v1~1search-rides~1notify"
     },
+    "/api/v1/bookings/price-preview": {
+      "$ref": "./paths/bookings.yaml#/paths/~1api~1v1~1bookings~1price-preview"
+    },
     "/api/v1/bookings": {
       "$ref": "./paths/bookings.yaml#/paths/~1api~1v1~1bookings"
     },
@@ -267,6 +274,9 @@
     },
     "/api/v1/notifications/devices/{tokenId}": {
       "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1devices~1{tokenId}"
+    },
+    "/api/v1/ratings/bookings/{bookingId}": {
+      "$ref": "./paths/ratings.yaml#/paths/~1api~1v1~1ratings~1bookings~1{bookingId}"
     },
     "/api/v1/payments/stripe/webhook": {
       "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1stripe~1webhook"

@@ -10,6 +10,7 @@ import driverBookingRouter from './driver-booking/driver-booking.routes.js';
 import chatRouter from './chat/chat.routes.js';
 import notificationRouter from './notification/notification.routes.js';
 import paymentsWebhookRouter from './payments/stripe.webhook.routes.js';
+import ratingsRouter from './ratings/ratings.routes.js';
 
 export {
     authRouter,
@@ -24,4 +25,5 @@ export {
     chatRouter,
     notificationRouter,
     paymentsWebhookRouter,
+    ratingsRouter,
 };
