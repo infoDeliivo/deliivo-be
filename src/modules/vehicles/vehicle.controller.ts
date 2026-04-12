@@ -188,24 +188,31 @@ export const uploadVehicleImageOnly = async (req: AuthRequest, res: Response) =>
 export const getVehicle = async (req: AuthRequest, res: Response) => {
   try {
     const vehicleId = req.params.id as string | undefined;
+    const page = req.query.page ? Number(req.query.page) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    
     const cacheKey = vehicleId
       ? cacheKeys.vehicle(vehicleId)
       : cacheKeys.userVehicles(req.user.id);
 
-    // Try cache first
-    const cached = await getCache(cacheKey);
-    if (cached) {
-      return sendSuccess(res, {
-        message: vehicleId ? 'Vehicle fetched successfully' : 'Vehicles fetched successfully',
-        data: cached,
-      });
+    // Try cache first (only for single vehicle or default list without pagination params)
+    if (!page && !limit) {
+      const cached = await getCache(cacheKey);
+      if (cached) {
+        return sendSuccess(res, {
+          message: vehicleId ? 'Vehicle fetched successfully' : 'Vehicles fetched successfully',
+          data: cached,
+        });
+      }
     }
 
-    // Cache miss - fetch from DB
-    const data = await VehicleService.getVehicle(req.user.id, vehicleId);
+    // Cache miss or pagination requested - fetch from DB
+    const data = await VehicleService.getVehicle(req.user.id, vehicleId, page, limit);
 
-    // Cache the result
-    await setCache(cacheKey, data);
+    // Cache the result (only for non-paginated requests)
+    if (!page && !limit) {
+      await setCache(cacheKey, data);
+    }
 
     return sendSuccess(res, {
       message: vehicleId ? 'Vehicle fetched successfully' : 'Vehicles fetched successfully',

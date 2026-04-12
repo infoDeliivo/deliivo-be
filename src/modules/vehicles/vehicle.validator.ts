@@ -89,6 +89,14 @@ export const imageUploadSchema = z
   })
   .strict();
 
+/**
+ * Get vehicles list query parameters
+ */
+export const getVehiclesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
 /* ================= DRAFT STEP SCHEMAS ================= */
 
 /**

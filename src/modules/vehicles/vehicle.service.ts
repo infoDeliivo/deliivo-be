@@ -121,7 +121,12 @@ export const updateVehicle = async (
 };
 
 /* ================= GET VEHICLE ================= */
-export const getVehicle = async (userId: string, vehicleId?: string) => {
+export const getVehicle = async (
+  userId: string,
+  vehicleId?: string,
+  page?: number,
+  limit?: number,
+) => {
   if (vehicleId) {
     const vehicle = await prisma.vehicle.findFirst({
       where: {
@@ -138,16 +143,38 @@ export const getVehicle = async (userId: string, vehicleId?: string) => {
     return vehicle;
   }
 
-  // No vehicleId — return all vehicles for the user
-  const vehicles = await prisma.vehicle.findMany({
-    where: {
-      userId,
-      deletedAt: null,
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  // No vehicleId — return all vehicles for the user with pagination
+  const actualPage = page || 1;
+  const actualLimit = limit || 10;
+  const skip = (actualPage - 1) * actualLimit;
 
-  return vehicles;
+  const [vehicles, total] = await Promise.all([
+    prisma.vehicle.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: actualLimit,
+    }),
+    prisma.vehicle.count({
+      where: {
+        userId,
+        deletedAt: null,
+      },
+    }),
+  ]);
+
+  return {
+    vehicles,
+    pagination: {
+      page: actualPage,
+      limit: actualLimit,
+      total,
+      totalPages: Math.ceil(total / actualLimit),
+    },
+  };
 };
 
 /* ================= DELETE (SOFT) ================= */

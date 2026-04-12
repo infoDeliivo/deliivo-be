@@ -8,6 +8,7 @@ import {
   imageUploadSchema,
   draftLicenseSchema,
   draftVehicleDetailsSchema,
+  getVehiclesQuerySchema,
 } from './vehicle.validator.js';
 
 const router = Router();
@@ -43,7 +44,7 @@ router.post(
   controller.uploadImage,
 );
 
-router.get('/', controller.getVehicle);
+router.get('/', validate({ query: getVehiclesQuerySchema }), controller.getVehicle);
 router.get('/:id', controller.getVehicle);
 router.delete('/:id', controller.deleteVehicle);
 
