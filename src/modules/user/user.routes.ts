@@ -34,4 +34,7 @@ router.post(
   userController.uploadAvatar as unknown as express.RequestHandler,
 );
 
+// Get public profile of another user
+router.get('/:userId/profile', userController.getPublicProfile as unknown as express.RequestHandler);
+
 export default router;

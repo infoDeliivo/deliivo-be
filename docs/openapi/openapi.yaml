@@ -107,6 +107,9 @@
     "/api/v1/users/me/avatar": {
       "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1avatar"
     },
+    "/api/v1/users/{userId}/profile": {
+      "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1{userId}~1profile"
+    },
     "/api/v1/publish-ride/draft/origin": {
       "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1origin"
     },

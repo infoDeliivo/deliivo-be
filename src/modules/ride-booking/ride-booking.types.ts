@@ -5,6 +5,19 @@ import {
     WaypointInfo,
 } from '../search-ride/search-ride.types.js';
 
+/* ================= VEHICLE INFO ================= */
+export interface VehicleInfo {
+    id: string;
+    brand: string | null;
+    model_num: string | null;
+    model_name: string | null;
+    type: string | null;
+    color: string | null;
+    year: number | null;
+    imageUrl: string | null;
+    isVerified: boolean;
+}
+
 /* ================= PRICE BREAKDOWN ================= */
 export interface PriceBreakdown {
     basePricePerSeat: number;
@@ -59,6 +72,7 @@ export interface BookingRideInfo {
         name: string | null;
         avatarUrl: string | null;
     };
+    vehicle?: VehicleInfo | null;
 }
 
 export interface BookingSegmentRideInfo extends BookingRideInfo {

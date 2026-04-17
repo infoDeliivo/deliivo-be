@@ -8,6 +8,8 @@ import type {
   UserStats,
   UpdateProfileInput,
   ServiceResult,
+  PublicProfileResponse,
+  PublicUserInfo,
 } from './user.types.js';
 
 // ====================== GET ME SERVICE (Basic) ======================
@@ -331,5 +333,114 @@ export const updateAvatarService = async (userId: string, avatarUrl: string) => 
   } catch (error) {
     console.error('updateAvatarService error:', error);
     return { success: false, reason: 'Internal server error' };
+  }
+};
+
+// ====================== GET PUBLIC PROFILE SERVICE ======================
+/**
+ * Fetches public profile of another user with:
+ * - Public user info (excludes email, phone, dob, salutation)
+ * - Travel preferences
+ * - Vehicle details
+ * - User stats (rides as driver, bookings as passenger)
+ * - Rating summary
+ * 
+ * Uses single optimized query with includes + parallel stats aggregation
+ */
+export const getPublicProfileService = async (
+  userId: string
+): Promise<ServiceResult<PublicProfileResponse>> => {
+  try {
+    // Single query with includes - no N+1 problem
+    // Plus parallel stats aggregation
+    const [userWithRelations, totalRides, totalBookings, ratingStats] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          name: true,
+          nickName: true,
+          avatarUrl: true,
+          isVerified: true,
+          createdAt: true,
+          travelPreference: true,
+          vehicles: {
+            where: { deletedAt: null },
+          },
+        },
+      }),
+      prisma.ride.count({ where: { driverId: userId } }),
+      prisma.rideBooking.count({ where: { passengerId: userId } }),
+      prisma.userRatingStats.findUnique({ where: { userId } }),
+    ]);
+
+    if (!userWithRelations) {
+      return { success: false, reason: 'USER_NOT_FOUND' };
+    }
+
+    // Transform user to public info (exclude sensitive data)
+    const publicUserInfo: PublicUserInfo = {
+      id: userWithRelations.id,
+      name: userWithRelations.name,
+      nickName: userWithRelations.nickName,
+      avatarUrl: userWithRelations.avatarUrl,
+      isVerified: userWithRelations.isVerified,
+      memberSince: userWithRelations.createdAt,
+    };
+
+    // Transform travel preference
+    const travelPreference: TravelPreferenceData | null = userWithRelations.travelPreference
+      ? {
+        id: userWithRelations.travelPreference.id,
+        chattiness: userWithRelations.travelPreference.chattiness,
+        pets: userWithRelations.travelPreference.pets,
+      }
+      : null;
+
+    // Get single vehicle (users can only have one)
+    const vehicle: VehicleSummary | null = userWithRelations.vehicles.length > 0
+      ? {
+        id: userWithRelations.vehicles[0].id,
+        brand: userWithRelations.vehicles[0].brand,
+        model_num: userWithRelations.vehicles[0].model_num,
+        type: userWithRelations.vehicles[0].type,
+        color: userWithRelations.vehicles[0].color,
+        imageUrl: userWithRelations.vehicles[0].imageUrl,
+        isVerified: userWithRelations.vehicles[0].isVerified,
+      }
+      : null;
+
+    // Build stats
+    const stats: UserStats = {
+      totalRides,
+      totalBookings,
+      memberSince: userWithRelations.createdAt,
+    };
+
+    // Build rating summary
+    const rating = !ratingStats || ratingStats.totalRatings === 0
+      ? {
+        average: null,
+        total: 0,
+        label: 'No ratings yet',
+      }
+      : {
+        average: Number(ratingStats.averageRating.toFixed(2)),
+        total: ratingStats.totalRatings,
+        label: null,
+      };
+
+    const profileData: PublicProfileResponse = {
+      user: publicUserInfo,
+      travelPreference,
+      vehicle,
+      stats,
+      rating,
+    };
+
+    return { success: true, data: profileData };
+  } catch (error) {
+    console.error('getPublicProfileService error:', error);
+    return { success: false, reason: 'INTERNAL_SERVER_ERROR' };
   }
 };

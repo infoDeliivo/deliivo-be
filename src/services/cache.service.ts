@@ -61,6 +61,7 @@ export const deleteCachePattern = async (pattern: string): Promise<void> => {
 export const cacheKeys = {
     user: (userId: string) => `user:${userId}`,
     userProfile: (userId: string) => `user:${userId}:profile`,
+    publicProfile: (userId: string) => `user:${userId}:public-profile`,
     vehicle: (vehicleId: string) => `vehicle:${vehicleId}`,
     userVehicles: (userId: string) => `user:${userId}:vehicles`,
     vehicleDraft: (userId: string) => `vehicleDraft:${userId}`,

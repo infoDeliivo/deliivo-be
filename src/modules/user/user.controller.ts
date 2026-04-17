@@ -3,11 +3,12 @@ import { AuthRequest } from '../../types/auth.js';
 import { HttpStatus, sendSuccess, sendError } from '../../utils/index.js';
 import { uploadToS3 } from '../../services/s3.service.js';
 import { getCache, setCache, deleteCache, cacheKeys } from '../../services/cache.service.js';
-import type { FullProfileResponse } from './user.types.js';
+import type { FullProfileResponse, PublicProfileResponse } from './user.types.js';
 
 import {
   getMeService,
   getFullProfileService,
+  getPublicProfileService,
   updateFullProfileService,
   completeOnBoardingStep1Service,
   updateProfileService,
@@ -16,6 +17,7 @@ import {
 
 // Cache TTL constants
 const PROFILE_CACHE_TTL = 300; // 5 minutes
+const PUBLIC_PROFILE_CACHE_TTL = 300; // 5 minutes
 
 // ====================== GET ME (Basic) ======================
 export const getMe = async (req: AuthRequest, res: Response) => {
@@ -142,10 +144,11 @@ export const updateFullProfile = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Invalidate all related caches
+    // Invalidate all related caches (including public profile)
     await Promise.all([
       deleteCache(cacheKeys.user(userId)),
       deleteCache(cacheKeys.userProfile(userId)),
+      deleteCache(cacheKeys.publicProfile(userId)),
     ]);
 
     return sendSuccess(res, {
@@ -180,6 +183,7 @@ export const completeOnBoardingStep1 = async (req: AuthRequest, res: Response) =
     await Promise.all([
       deleteCache(cacheKeys.user(userId)),
       deleteCache(cacheKeys.userProfile(userId)),
+      deleteCache(cacheKeys.publicProfile(userId)),
     ]);
 
     return sendSuccess(res, {
@@ -221,6 +225,7 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
     await Promise.all([
       deleteCache(cacheKeys.user(userId)),
       deleteCache(cacheKeys.userProfile(userId)),
+      deleteCache(cacheKeys.publicProfile(userId)),
     ]);
 
     return sendSuccess(res, {
@@ -276,6 +281,7 @@ export const uploadAvatar = async (req: AuthRequest, res: Response) => {
     await Promise.all([
       deleteCache(cacheKeys.user(userId)),
       deleteCache(cacheKeys.userProfile(userId)),
+      deleteCache(cacheKeys.publicProfile(userId)),
     ]);
 
     return sendSuccess(res, {
@@ -285,6 +291,73 @@ export const uploadAvatar = async (req: AuthRequest, res: Response) => {
     });
   } catch (error) {
     console.error('uploadAvatar controller error:', error);
+    return sendError(res, {
+      status: HttpStatus.INTERNAL_ERROR,
+      message: 'Server error',
+      error,
+    });
+  }
+};
+
+// ====================== GET PUBLIC PROFILE ======================
+/**
+ * GET /api/v1/users/:userId/profile
+ * Returns public profile of another user with:
+ * - Public user info (excludes email, phone, dob, salutation)
+ * - Travel preferences
+ * - Vehicle details
+ * - User stats
+ * - Rating summary
+ * 
+ * Features:
+ * - Redis caching with 5-min TTL
+ * - Single optimized DB query
+ * - Parallel stats aggregation
+ */
+export const getPublicProfile = async (req: AuthRequest, res: Response) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId || Array.isArray(userId)) {
+      return sendError(res, {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'User ID is required',
+      });
+    }
+
+    const cacheKey = cacheKeys.publicProfile(userId);
+
+    // Try cache first
+    const cachedProfile = await getCache<PublicProfileResponse>(cacheKey);
+    if (cachedProfile) {
+      return sendSuccess(res, {
+        status: HttpStatus.OK,
+        message: 'User profile fetched successfully (cached)',
+        data: cachedProfile,
+      });
+    }
+
+    // Cache miss - fetch from DB
+    const { success, data, reason } = await getPublicProfileService(userId);
+
+    if (!success || !data) {
+      const status = reason === 'USER_NOT_FOUND' ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_ERROR;
+      return sendError(res, {
+        status,
+        message: reason === 'USER_NOT_FOUND' ? 'User not found' : 'Failed to fetch profile',
+      });
+    }
+
+    // Cache the result
+    await setCache(cacheKey, data, PUBLIC_PROFILE_CACHE_TTL);
+
+    return sendSuccess(res, {
+      status: HttpStatus.OK,
+      message: 'User profile fetched successfully',
+      data,
+    });
+  } catch (error) {
+    console.error('getPublicProfile controller error:', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Server error',

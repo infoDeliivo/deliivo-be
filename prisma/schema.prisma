@@ -128,6 +128,7 @@ model Vehicle {
   deletedAt  DateTime?
 
   documents VehicleDocument[]
+  rides     Ride[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -204,8 +205,9 @@ model Ride {
   id String @id @default(uuid())
 
   driverId  String
-  driver    User    @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  driver    User     @relation(fields: [driverId], references: [id], onDelete: Cascade)
   vehicleId String?
+  vehicle   Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
 
   // Origin city details
   originPlaceId  String
@@ -252,6 +254,7 @@ model Ride {
   updatedAt DateTime @updatedAt
 
   @@index([driverId])
+  @@index([vehicleId])
   @@index([status])
   @@index([departureDate])
 }

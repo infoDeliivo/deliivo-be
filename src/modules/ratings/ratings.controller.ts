@@ -46,6 +46,7 @@ export const submitRating = async (req: AuthRequest, res: Response) => {
     // Invalidate ratee's profile cache
     try {
       await deleteCache(cacheKeys.userProfile(rating.rateeId));
+      await deleteCache(cacheKeys.publicProfile(rating.rateeId));
     } catch (cacheError) {
       console.error('Cache invalidation failed:', cacheError);
       // Continue - rating was successfully saved

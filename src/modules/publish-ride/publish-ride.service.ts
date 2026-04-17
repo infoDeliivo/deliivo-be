@@ -24,6 +24,20 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
             where,
             include: { 
                 waypoints: { orderBy: { orderIndex: 'asc' } },
+                // @ts-ignore - vehicle relation exists in schema but Prisma types not updated
+                vehicle: {
+                    select: {
+                        id: true,
+                        brand: true,
+                        model_num: true,
+                        model_name: true,
+                        type: true,
+                        color: true,
+                        year: true,
+                        imageUrl: true,
+                        isVerified: true,
+                    },
+                },
                 bookings: {
                     where: {
                         status: {
@@ -74,6 +88,20 @@ export const getRideById = async (driverId: string, rideId: string) => {
         where: { id: rideId, driverId },
         include: { 
             waypoints: { orderBy: { orderIndex: 'asc' } },
+            // @ts-ignore - vehicle relation exists in schema but Prisma types not updated
+            vehicle: {
+                select: {
+                    id: true,
+                    brand: true,
+                    model_num: true,
+                    model_name: true,
+                    type: true,
+                    color: true,
+                    year: true,
+                    imageUrl: true,
+                    isVerified: true,
+                },
+            },
             bookings: {
                 where: {
                     status: {

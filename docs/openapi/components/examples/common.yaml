@@ -939,5 +939,47 @@
         "createdAt": "2026-04-08T12:00:00.000Z"
       }
     }
+  },
+  "PublicProfileSuccess": {
+    "summary": "Public profile response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "User profile fetched successfully",
+      "data": {
+        "user": {
+          "id": "22222222-2222-2222-2222-222222222222",
+          "name": "John Driver",
+          "nickName": "johnd",
+          "avatarUrl": "https://cdn.example.com/avatar-john.jpg",
+          "isVerified": true,
+          "memberSince": "2025-01-15T10:30:00.000Z"
+        },
+        "travelPreference": {
+          "id": "33333333-3333-3333-3333-333333333333",
+          "chattiness": "MEDIUM",
+          "pets": "YES"
+        },
+        "vehicle": {
+          "id": "44444444-4444-4444-4444-444444444444",
+          "brand": "Toyota",
+          "model_num": "Camry",
+          "type": "sedan",
+          "color": "Silver",
+          "imageUrl": "https://cdn.example.com/vehicle-camry.jpg",
+          "isVerified": true
+        },
+        "stats": {
+          "totalRides": 45,
+          "totalBookings": 23,
+          "memberSince": "2025-01-15T10:30:00.000Z"
+        },
+        "rating": {
+          "average": 4.75,
+          "total": 68,
+          "label": null
+        }
+      }
+    }
   }
 }

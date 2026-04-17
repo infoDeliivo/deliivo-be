@@ -73,6 +73,25 @@ export interface FullProfileResponse {
   rating: UserRatingSummary;
 }
 
+// Public user info (for viewing other users' profiles)
+export interface PublicUserInfo {
+  id: string;
+  name: string | null;
+  nickName: string | null;
+  avatarUrl: string | null;
+  isVerified: boolean;
+  memberSince: Date;
+}
+
+// Public profile response (excludes sensitive data)
+export interface PublicProfileResponse {
+  user: PublicUserInfo;
+  travelPreference: TravelPreferenceData | null;
+  vehicle: VehicleSummary | null;
+  stats: UserStats;
+  rating: UserRatingSummary;
+}
+
 // ====================== UPDATE PROFILE INPUT TYPES ======================
 
 // Travel preference update input

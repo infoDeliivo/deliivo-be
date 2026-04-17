@@ -64,6 +64,17 @@ type RideWithDetails = {
         name: string | null;
         avatarUrl: string | null;
     };
+    vehicle?: {
+        id: string;
+        brand: string | null;
+        model_num: string | null;
+        model_name: string | null;
+        type: string | null;
+        color: string | null;
+        year: number | null;
+        imageUrl: string | null;
+        isVerified: boolean;
+    } | null;
     waypoints?: RideWaypointDetails[];
 };
 
@@ -167,6 +178,17 @@ const mapRideInfo = (ride: RideWithDetails) => ({
         pricePerSeat: waypoint.pricePerSeat,
     })),
     driver: ride.driver,
+    vehicle: ride.vehicle ? {
+        id: ride.vehicle.id,
+        brand: ride.vehicle.brand,
+        model_num: ride.vehicle.model_num,
+        model_name: ride.vehicle.model_name,
+        type: ride.vehicle.type,
+        color: ride.vehicle.color,
+        year: ride.vehicle.year,
+        imageUrl: ride.vehicle.imageUrl,
+        isVerified: ride.vehicle.isVerified,
+    } : null,
 });
 
 const mapSegmentRideInfo = (
@@ -685,6 +707,20 @@ export const getBookingById = async (
                             avatarUrl: true,
                         },
                     },
+                    // @ts-ignore - vehicle relation exists in schema but Prisma types not updated
+                    vehicle: {
+                        select: {
+                            id: true,
+                            brand: true,
+                            model_num: true,
+                            model_name: true,
+                            type: true,
+                            color: true,
+                            year: true,
+                            imageUrl: true,
+                            isVerified: true,
+                        },
+                    },
                     waypoints: {
                         orderBy: { orderIndex: 'asc' },
                     },
@@ -764,6 +800,20 @@ export const listUserBookings = async (
                                 id: true,
                                 name: true,
                                 avatarUrl: true,
+                            },
+                        },
+                        // @ts-ignore - vehicle relation exists in schema but Prisma types not updated
+                        vehicle: {
+                            select: {
+                                id: true,
+                                brand: true,
+                                model_num: true,
+                                model_name: true,
+                                type: true,
+                                color: true,
+                                year: true,
+                                imageUrl: true,
+                                isVerified: true,
                             },
                         },
                         waypoints: {

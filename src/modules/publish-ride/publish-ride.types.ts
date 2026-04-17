@@ -108,6 +108,19 @@ export interface UpdateCapacityInput {
     backSeatOnly?: boolean;
 }
 
+/* ================= VEHICLE INFO ================= */
+export interface VehicleInfo {
+    id: string;
+    brand: string | null;
+    model_num: string | null;
+    model_name: string | null;
+    type: string | null;
+    color: string | null;
+    year: number | null;
+    imageUrl: string | null;
+    isVerified: boolean;
+}
+
 /* ================= RIDE RESPONSE ================= */
 export interface RideResponse {
     id: string;
@@ -140,6 +153,7 @@ export interface RideResponse {
     status: RideStatus;
 
     waypoints?: WaypointResponse[];
+    vehicle?: VehicleInfo | null;
 
     createdAt: Date;
     updatedAt: Date;

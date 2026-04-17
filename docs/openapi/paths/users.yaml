@@ -338,6 +338,62 @@
           }
         }
       }
+    },
+    "/api/v1/users/{userId}/profile": {
+      "get": {
+        "operationId": "usersGetUserProfile",
+        "summary": "GET users/{userId}/profile",
+        "description": "View public profile of another user including ratings, travel preferences, and statistics",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the user whose profile to view"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "../components/examples/common.yaml#/PublicProfileSuccess"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
     }
   }
 }
