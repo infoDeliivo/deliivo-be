@@ -11,6 +11,7 @@ import chatRouter from './chat/chat.routes.js';
 import notificationRouter from './notification/notification.routes.js';
 import paymentsWebhookRouter from './payments/stripe.webhook.routes.js';
 import ratingsRouter from './ratings/ratings.routes.js';
+import dlVerificationRouter from './dl-verification/dl-verification.routes.js';
 
 export {
     authRouter,
@@ -26,4 +27,5 @@ export {
     notificationRouter,
     paymentsWebhookRouter,
     ratingsRouter,
+    dlVerificationRouter,
 };

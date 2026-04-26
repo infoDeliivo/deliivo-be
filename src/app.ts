@@ -16,6 +16,7 @@ import {
   chatRouter,
   notificationRouter,
   ratingsRouter,
+  dlVerificationRouter,
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
@@ -46,6 +47,7 @@ app.use('/api/v1/maps', protect, mapRouter);
 app.use('/api/v1/chat', protect, chatRouter);
 app.use('/api/v1/notifications', protect, notificationRouter);
 app.use('/api/v1/ratings', protect, ratingsRouter);
+app.use('/api/v1/dl-verification', dlVerificationRouter);
 
 app.use(errorHandler);
 

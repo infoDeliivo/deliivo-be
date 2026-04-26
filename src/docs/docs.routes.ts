@@ -74,7 +74,7 @@ const getDocs: RequestHandler = (_req, res) => {
     <script>
       window.onload = function () {
         window.ui = SwaggerUIBundle({
-          url: '/openapi.json',
+          url: '/openapi.json?v=' + Date.now(),
           dom_id: '#swagger-ui',
           deepLinking: true,
           displayRequestDuration: true,

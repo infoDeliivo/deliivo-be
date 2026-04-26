@@ -1,0 +1,164 @@
+paths:
+  /api/v1/dl-verification:
+    post:
+      tags:
+        - "DL Verification"
+      summary: "Create a Veriff session for DL verification"
+      operationId: createDlVerificationSession
+      description: "Creates a new verification session via the Veriff API. Returns the session tracking ID and URL which are required by the frontend/SDK to complete the process."
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - firstName
+                - lastName
+              properties:
+                firstName:
+                  type: string
+                  example: "John"
+                  description: "User's first name, exactly as displayed on their document."
+                lastName:
+                  type: string
+                  example: "Doe"
+                  description: "User's last name, exactly as displayed on their document."
+      responses:
+        '201':
+          description: "Veriff session created successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  status:
+                    type: integer
+                    example: 201
+                  message:
+                    type: string
+                    example: "Veriff session created successfully"
+                  data:
+                    type: object
+                    properties:
+                      verificationId:
+                        type: string
+                        format: uuid
+                        description: "Internal database ID tracking the verification session."
+                      sessionId:
+                        type: string
+                        format: uuid
+                        description: "Veriff API Session ID"
+                      sessionUrl:
+                        type: string
+                        format: uri
+                        description: "The verification URL to load in the Web flow or pass to the Mobile SDKs."
+        '409':
+          description: "User is already verified"
+        '500':
+          description: "Internal Server Error or Veriff API Error"
+
+  /api/v1/dl-verification/status:
+    get:
+      tags:
+        - "DL Verification"
+      summary: "Get current DL verification status"
+      operationId: getDlVerificationStatus
+      description: "Returns the latest driving license verification attempt for the authenticated user and its outcome."
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: "Verification status retrieved successfully"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "DL verification status retrieved"
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [PENDING, APPROVED, DECLINED, RESUBMISSION_REQUESTED, EXPIRED, NOT_STARTED]
+                      verificationId:
+                        type: string
+                        format: uuid
+                      sessionId:
+                        type: string
+                        format: uuid
+                      sessionUrl:
+                        type: string
+                        format: uri
+                      createdAt:
+                        type: string
+                        format: date-time
+                      updatedAt:
+                        type: string
+                        format: date-time
+
+  /api/v1/dl-verification/webhook:
+    post:
+      tags:
+        - "DL Verification"
+      summary: "Veriff decision webhook"
+      operationId: handleDlVerificationWebhook
+      description: "Public endpoint where Veriff sends session decision updates. Validated securely using HMAC-SHA256."
+      security: []
+      parameters:
+        - in: header
+          name: x-hmac-signature
+          required: true
+          schema:
+            type: string
+          description: "Hex encoded HMAC-SHA256 signature computed over the raw request payload using the Veriff Shared Secret"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                verification:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                      description: "The Veriff session ID"
+                    status:
+                      type: string
+                      description: "The decision result (approved, declined, resubmission_requested, expired)"
+                    code:
+                      type: integer
+                      description: "Decision code corresponding to the status"
+                    reasonCode:
+                      type: integer
+                      description: "Decline reason code (e.g. poor image quality, expired document)"
+      responses:
+        '200':
+          description: "Webhook processed, successfully updated DB or ignored deliberately. Veriff expects 200 OK."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                    example: true
+                  status:
+                    type: string
+                    example: "APPROVED"
+        '401':
+          description: "HMAC validation failed or header missing"

@@ -21,6 +21,10 @@
       "description": "Auth endpoints"
     },
     {
+      "name": "DL Verification",
+      "description": "Veriff Driving License Verification endpoints"
+    },
+    {
       "name": "Bookings",
       "description": "Bookings endpoints"
     },
@@ -74,6 +78,15 @@
     }
   ],
   "paths": {
+    "/api/v1/dl-verification": {
+      "$ref": "./paths/dl-verification.yaml#/paths/~1api~1v1~1dl-verification"
+    },
+    "/api/v1/dl-verification/status": {
+      "$ref": "./paths/dl-verification.yaml#/paths/~1api~1v1~1dl-verification~1status"
+    },
+    "/api/v1/dl-verification/webhook": {
+      "$ref": "./paths/dl-verification.yaml#/paths/~1api~1v1~1dl-verification~1webhook"
+    },
     "/api/v1/auth/signup": {
       "$ref": "./paths/auth.yaml#/paths/~1api~1v1~1auth~1signup"
     },

@@ -51,6 +51,14 @@ enum DocumentType {
   INSURANCE_DOCUMENT
 }
 
+enum DlVerificationStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  RESUBMISSION_REQUESTED
+  EXPIRED
+}
+
 model User {
   id String @id @default(uuid())
 
@@ -68,6 +76,7 @@ model User {
 
   onboardingStatus OnboardingStatus @default(PENDING)
   isVerified       Boolean          @default(false)
+  dlVerified       Boolean          @default(false)
 
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
@@ -89,6 +98,9 @@ model User {
 
   // Notification relations
   notifications Notification[]
+
+  // DL Verification relations
+  dlVerifications DlVerification[]
 
   @@index([id])
 }
@@ -477,4 +489,24 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([userId, isRead])
+}
+
+// ============ DL VERIFICATION MODELS ============
+model DlVerification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  veriffSessionId  String               @unique
+  veriffSessionUrl String
+  status           DlVerificationStatus @default(PENDING)
+  decisionCode     Int?
+  reasonCode       String?
+  decisionPayload  Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([veriffSessionId])
 }
