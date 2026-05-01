@@ -7,12 +7,55 @@ const VERIFF_API_KEY = process.env.VERIFF_API_KEY || '';
 const VERIFF_SHARED_SECRET = process.env.VERIFF_SHARED_SECRET || '';
 const VERIFF_CALLBACK_URL = process.env.VERIFF_CALLBACK_URL || '';
 
+interface CreateVeriffSessionOptions {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  email?: string;
+  phoneNumber?: string;
+  dateOfBirth?: string; // Format: YYYY-MM-DD
+  gender?: 'M' | 'MALE' | 'F' | 'FEMALE';
+  idNumber?: string;
+  fullName?: string;
+  documentNumber?: string;
+  documentCountry?: string; // ISO 3166-1 Alpha-2
+  documentValidFrom?: string; // Format: YYYY-MM-DD
+  documentValidUntil?: string; // Format: YYYY-MM-DD
+  fullAddress?: string;
+  callback?: string;
+  endUserId?: string; // UUID
+  consents?: Array<{
+    type: 'ine' | 'bipa' | 'aadhaar' | 'general' | 'dvs';
+    approved: boolean;
+  }>;
+  tag?: string; // Max 64 characters
+}
+
 // ─── Create a Veriff session for DL verification ───────────────────
 export const createVeriffSession = async (
-  userId: string,
-  firstName: string,
-  lastName: string,
+  options: CreateVeriffSessionOptions
 ) => {
+  const {
+    userId,
+    firstName,
+    lastName,
+    email,
+    phoneNumber,
+    dateOfBirth,
+    gender,
+    idNumber,
+    fullName,
+    documentNumber,
+    documentCountry = 'IN',
+    documentValidFrom,
+    documentValidUntil,
+    fullAddress,
+    callback,
+    endUserId,
+    consents,
+    tag,
+  } = options;
+
   // Check if user already has an approved verification
   const existing = await prisma.dlVerification.findFirst({
     where: { userId, status: 'APPROVED' },
@@ -22,22 +65,38 @@ export const createVeriffSession = async (
     return { success: false, reason: 'ALREADY_VERIFIED' };
   }
 
-  const payload = {
+  const payload: any = {
     verification: {
-      callback: VERIFF_CALLBACK_URL,
+      callback: callback || VERIFF_CALLBACK_URL,
       person: {
         firstName,
         lastName,
+        ...(idNumber && { idNumber }),
+        ...(phoneNumber && { phoneNumber }),
+        ...(gender && { gender }),
+        ...(dateOfBirth && { dateOfBirth }),
+        ...(email && { email }),
+        ...(fullName && { fullName }),
       },
       document: {
         type: 'DRIVERS_LICENSE',
-        country: 'GB',
+        country: documentCountry,
+        ...(documentNumber && { number: documentNumber }),
+        ...(documentValidFrom && { validFrom: documentValidFrom }),
+        ...(documentValidUntil && { validUntil: documentValidUntil }),
       },
+      ...(fullAddress && {
+        address: {
+          fullAddress,
+        },
+      }),
       vendorData: userId,
+      ...(endUserId && { endUserId }),
+      ...(consents && consents.length > 0 && { consents }),
+      ...(tag && { tag }),
     },
-    timestamp: new Date().toISOString(),
   };
-
+  console.log("1jhhguffiu")
   try {
     const payloadString = JSON.stringify(payload);
     const signature = crypto
@@ -52,6 +111,7 @@ export const createVeriffSession = async (
         'Content-Type': 'application/json',
       },
     });
+   console.log(response,"jhhguffiu")
 
     const { id: sessionId, url: sessionUrl } = response.data.verification;
 
@@ -74,6 +134,8 @@ export const createVeriffSession = async (
       },
     };
   } catch (error: any) {
+    console.log(error,"jhg");
+    
     console.error('Veriff createSession error:', error?.response?.data || error.message);
     return {
       success: false,

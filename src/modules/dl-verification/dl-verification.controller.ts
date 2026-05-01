@@ -13,9 +13,48 @@ export const createSession = async (req: Request, res: Response) => {
   try {
     const authReq = req as AuthRequest;
     const userId = authReq.user.id;
-    const { firstName, lastName } = req.body;
+    const {
+      firstName,
+      lastName,
+      email,
+      phoneNumber,
+      dateOfBirth,
+      gender,
+      idNumber,
+      fullName,
+      documentNumber,
+      documentCountry,
+      documentValidFrom,
+      documentValidUntil,
+      fullAddress,
+      callback,
+      endUserId,
+      consents,
+      tag,
+    } = req.body;
+    console.log(req.body);
+    
 
-    const result = await createVeriffSession(userId, firstName, lastName);
+    const result = await createVeriffSession({
+      userId,
+      firstName,
+      lastName,
+      email,
+      phoneNumber,
+      dateOfBirth,
+      gender,
+      idNumber,
+      fullName,
+      documentNumber,
+      documentCountry,
+      documentValidFrom,
+      documentValidUntil,
+      fullAddress,
+      callback,
+      endUserId,
+      consents,
+      tag,
+    });
 
     if (!result.success) {
       const statusCode =
