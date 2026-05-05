@@ -25,9 +25,14 @@ const app = express();
 
 app.use(cors());
 app.use(helmet());
+
+// ⚠️ IMPORTANT: Webhook route MUST come BEFORE express.json()
+// Stripe needs the raw body for signature verification
+app.use('/api/v1/payments', express.raw({ type: 'application/json' }), paymentsWebhookRouter);
+
+// Now apply JSON parsing for all other routes
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use('/api/v1/payments', express.raw({ type: 'application/json' }), paymentsWebhookRouter);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });

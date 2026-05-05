@@ -214,19 +214,33 @@ const processStripeEvent = async (event: Stripe.Event) => {
 };
 
 export const handleStripeWebhook = async (req: Request, res: Response) => {
+    console.log('🔔 Webhook received');
+    
     const signature = getHeaderValue(req.headers['stripe-signature']);
     if (!signature) {
+        console.log('❌ Missing stripe signature');
         return res.status(400).send('Missing stripe signature');
+    }
+
+    // Check if body is already parsed (wrong middleware order)
+    if (typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+        console.log('❌ Body already parsed as JSON - check middleware order in app.ts');
+        return res.status(500).send('Server configuration error: body must be raw');
     }
 
     const rawPayload = Buffer.isBuffer(req.body)
         ? req.body
-        : Buffer.from(req.body ?? '');
+        : Buffer.from(req.body ?? '', 'utf8');
+
+    console.log('📦 Payload size:', rawPayload.length, 'bytes');
+    console.log('🔐 Signature present:', signature.substring(0, 20) + '...');
 
     let event: Stripe.Event;
     try {
         event = constructStripeEvent(rawPayload, signature);
-    } catch {
+        console.log('✅ Signature verified, event type:', event.type);
+    } catch (error: any) {
+        console.log('❌ Signature verification failed:', error.message);
         return res.status(400).send('Invalid stripe signature');
     }
 
