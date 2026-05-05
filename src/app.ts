@@ -25,9 +25,13 @@ const app = express();
 
 app.use(cors());
 app.use(helmet());
-app.use('/api/v1/payments', express.raw({ type: 'application/json' }), paymentsWebhookRouter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(
+  '/api/v1/payments/stripe/webhook',
+  express.raw({ type: 'application/json' }),
+  paymentsWebhookRouter,
+);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
