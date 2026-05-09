@@ -108,6 +108,10 @@ export const initSocket = async (server: http.Server) => {
 
         // Register user-socket mapping
         addUserSocket(userId, socket.id);
+        
+        // Log current active connections for this user
+        const allUserSockets = getUserSocketIds(userId);
+        logger.info(`👤 User ${userId} now has ${allUserSockets.length} active connection(s)`);
 
         // Set presence in Redis
         await PresenceService.setOnline(userId, socket.id);
@@ -349,8 +353,11 @@ export const initSocket = async (server: http.Server) => {
             if (disconnectedUserId) {
                 // Only set offline if no other sockets remain for this user
                 const remainingSockets = getUserSocketIds(disconnectedUserId);
+                logger.info(`👤 User ${disconnectedUserId} has ${remainingSockets.length} remaining connection(s)`);
+                
                 if (remainingSockets.length === 0) {
                     await PresenceService.setOffline(disconnectedUserId);
+                    logger.info(`📴 User ${disconnectedUserId} is now OFFLINE`);
                 }
             }
         });

@@ -56,7 +56,12 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
         },
     });
 
-    if (updateResult.count === 0) return;
+    if (updateResult.count === 0) {
+        console.log('⚠️ No booking updated - booking may not be in PAYMENT_PENDING status');
+        return;
+    }
+
+    console.log(`✅ Booking ${bookingId} updated to DRIVER_PENDING`);
 
     const booking = await prisma.rideBooking.findUnique({
         where: { id: bookingId },
@@ -85,7 +90,12 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
         },
     });
 
-    if (!booking) return;
+    if (!booking) {
+        console.log('❌ Booking not found after update');
+        return;
+    }
+
+    console.log(`📋 Booking details: driverId=${booking.ride.driverId}, passengerId=${booking.passengerId}`);
 
     const originAddress = resolveSegmentAddress(
         booking.ride.originAddress,
@@ -98,25 +108,35 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
         booking.ride.waypoints
     );
 
-    await createNotification({
-        userId: booking.ride.driverId,
-        type: DRIVER_DECISION_NOTIFICATION_TYPE,
-        title: 'New ride request',
-        body: `${booking.passenger.name ?? 'Rider'} wants ${originAddress} to ${destinationAddress}`,
-        data: {
-            bookingId: booking.id,
-            rideId: booking.ride.id,
-            passengerName: booking.passenger.name ?? 'Rider',
-            passengerAvatarUrl: booking.passenger.avatarUrl ?? '',
-            originAddress,
-            destinationAddress,
-            seatsBooked: String(booking.seatsBooked),
-            totalPrice: String(booking.totalPrice),
-            currency: booking.paymentCurrency ?? booking.ride.currency,
-            decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
-            deepLink: `app://driver/booking-request/${booking.id}`,
-        },
-    });
+    console.log(`🔔 Sending notification to driver ${booking.ride.driverId}`);
+    console.log(`   Route: ${originAddress} → ${destinationAddress}`);
+    console.log(`   Passenger: ${booking.passenger.name ?? 'Rider'}`);
+
+    try {
+        await createNotification({
+            userId: booking.ride.driverId,
+            type: DRIVER_DECISION_NOTIFICATION_TYPE,
+            title: 'New ride request',
+            body: `${booking.passenger.name ?? 'Rider'} wants ${originAddress} to ${destinationAddress}`,
+            data: {
+                bookingId: booking.id,
+                rideId: booking.ride.id,
+                passengerName: booking.passenger.name ?? 'Rider',
+                passengerAvatarUrl: booking.passenger.avatarUrl ?? '',
+                originAddress,
+                destinationAddress,
+                seatsBooked: String(booking.seatsBooked),
+                totalPrice: String(booking.totalPrice),
+                currency: booking.paymentCurrency ?? booking.ride.currency,
+                decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
+                deepLink: `app://driver/booking-request/${booking.id}`,
+            },
+        });
+        console.log(`✅ Notification sent successfully to driver ${booking.ride.driverId}`);
+    } catch (error) {
+        console.error('❌ Failed to send notification to driver:', error);
+        throw error;
+    }
 };
 
 const applyPaymentIntentFailed = async (intent: Stripe.PaymentIntent) => {

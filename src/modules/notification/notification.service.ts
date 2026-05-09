@@ -27,6 +27,8 @@ export const createNotification = async (input: CreateNotificationInput) => {
     const { userId, type, title, body, data } = input;
     const normalizedData = normalizeNotificationDataForTransport(data);
 
+    logger.info(`📬 Creating notification for user ${userId}, type: ${type}`);
+
     const notification = await prisma.notification.create({
         data: {
             userId,
@@ -36,6 +38,8 @@ export const createNotification = async (input: CreateNotificationInput) => {
             data: data ? (data as any) : undefined,
         },
     });
+
+    logger.info(`✅ Notification ${notification.id} created in database`);
 
     // Increment cached unread count
     try {
@@ -51,10 +55,18 @@ export const createNotification = async (input: CreateNotificationInput) => {
     // Try real-time delivery via WebSocket
     let deliveredViaSocket = false;
     try {
+        logger.info(`🔍 Attempting WebSocket delivery for user ${userId}, notification type: ${type}`);
+        
         const { getIO, getUserSocketIds } = await import('../../socket/index.js');
         const io = getIO();
-        if (io) {
+        
+        if (!io) {
+            logger.warn(`⚠️ Socket.IO instance not available for user ${userId}`);
+            logger.warn(`⚠️ This means WebSocket server may not be initialized`);
+        } else {
+            logger.info(`✅ Socket.IO instance is available`);
             const socketIds = getUserSocketIds(userId);
+            logger.info(`📡 User ${userId} has ${socketIds.length} active socket(s): ${socketIds.join(', ')}`);
 
             if (socketIds.length > 0) {
                 // User is ONLINE — deliver via WebSocket
@@ -71,19 +83,28 @@ export const createNotification = async (input: CreateNotificationInput) => {
                     },
                 };
 
+                logger.info(`📤 Emitting notification to ${socketIds.length} socket(s)`);
+                logger.info(`📦 Payload:`, JSON.stringify(payload, null, 2));
+
                 socketIds.forEach((sid: string) => {
                     io.to(sid).emit('notification:new', payload);
+                    logger.info(`✅ Emitted 'notification:new' event to socket ${sid}`);
                 });
 
                 deliveredViaSocket = true;
+                logger.info(`✅ WebSocket delivery successful for user ${userId}`);
+            } else {
+                logger.info(`📴 User ${userId} is OFFLINE - will send push notification`);
             }
         }
     } catch (error) {
-        logger.error('WebSocket notification emit error:', error);
+        logger.error('❌ WebSocket notification emit error:', error);
+        logger.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
     }
 
     // User is OFFLINE — send push notification via FCM/APNs
     if (!deliveredViaSocket) {
+        logger.info(`📲 Sending push notification to user ${userId} (deliveredViaSocket=${deliveredViaSocket})`);
         try {
             await sendPushToUser(userId, {
                 title,
@@ -94,6 +115,7 @@ export const createNotification = async (input: CreateNotificationInput) => {
                     ...normalizedData,
                 },
             });
+            logger.info(`✅ Push notification sent to user ${userId}`);
         } catch (error) {
             logger.error('Push notification error:', error);
         }
