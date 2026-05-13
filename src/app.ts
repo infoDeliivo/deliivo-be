@@ -21,6 +21,8 @@ import {
 import docsRouter from './docs/docs.routes.js';
 
 import { protect, errorHandler } from './middlewares/index.js';
+import { startBookingDeadlineChecker } from './jobs/booking-deadline-checker.job.js';
+
 const app = express();
 
 app.use(cors());
@@ -55,5 +57,8 @@ app.use('/api/v1/ratings', protect, ratingsRouter);
 app.use('/api/v1/dl-verification', dlVerificationRouter);
 
 app.use(errorHandler);
+
+// Start background jobs
+startBookingDeadlineChecker();
 
 export default app;

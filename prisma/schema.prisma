@@ -320,11 +320,16 @@ model RideBooking {
   refundedAt              DateTime?
   refundAmount            Float?
   refundPercent           Float?
-  driverDecisionDeadlineAt DateTime?
+  driverDecisionDeadlineAt  DateTime?
   driverDecisionAt        DateTime?
+  deadlineExpiredNotifiedAt DateTime?
+  deadlineExtendedAt      DateTime?
+  autoCancelledAt         DateTime?
   cancelledAt             DateTime?
   cancelledByRole         String?
   cancellationReason      String?
+  driverRejectionReason   String?
+  driverCancellationReason String?
   driverPenaltyAppliedAt  DateTime?
   driverPenaltyValue      Float?
   pickupOtpHash           String?

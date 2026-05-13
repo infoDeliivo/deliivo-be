@@ -113,7 +113,7 @@ export const acceptBooking = async (driverId: string, bookingId: string): Promis
     };
 };
 
-export const rejectBooking = async (driverId: string, bookingId: string): Promise<DriverBookingResult> => {
+export const rejectBooking = async (driverId: string, bookingId: string, reason: string): Promise<DriverBookingResult> => {
     const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
 
     if (booking.status !== BookingStatus.DRIVER_PENDING) {
@@ -164,6 +164,7 @@ export const rejectBooking = async (driverId: string, bookingId: string): Promis
                 cancelledAt: new Date(),
                 cancelledByRole: 'DRIVER',
                 cancellationReason: 'DRIVER_REJECTED',
+                driverRejectionReason: reason,
                 refundPercent: 100,
                 refundAmount: fullRefundAmount,
                 refundId: refundId ?? null,
@@ -185,10 +186,11 @@ export const rejectBooking = async (driverId: string, bookingId: string): Promis
         userId: booking.passengerId,
         type: 'booking.driver.rejected',
         title: 'Booking declined',
-        body: `${booking.passenger.name ?? 'Passenger'}, the driver declined this ride request`,
+        body: `The driver declined this ride request: ${reason}`,
         data: {
             bookingId: booking.id,
             rideId: booking.ride.id,
+            rejectionReason: reason,
             refundInitiated: refundInitiated ? 'true' : 'false',
             refundPercent: '100',
             deepLink: `app://booking/${booking.id}`,
@@ -203,7 +205,7 @@ export const rejectBooking = async (driverId: string, bookingId: string): Promis
     };
 };
 
-export const cancelAfterAccept = async (driverId: string, bookingId: string): Promise<DriverBookingResult> => {
+export const cancelAfterAccept = async (driverId: string, bookingId: string, reason: string): Promise<DriverBookingResult> => {
     const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
 
     if (booking.status !== BookingStatus.CONFIRMED) {
@@ -251,6 +253,7 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string): Pr
                 cancelledAt: new Date(),
                 cancelledByRole: 'DRIVER',
                 cancellationReason: 'DRIVER_CANCELLED_AFTER_ACCEPT',
+                driverCancellationReason: reason,
                 refundPercent: 100,
                 refundAmount: fullRefundAmount,
                 refundId: refundId ?? null,
@@ -283,10 +286,11 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string): Pr
         userId: booking.passengerId,
         type: 'booking.driver.cancelled',
         title: 'Ride cancelled by driver',
-        body: 'Your driver cancelled this ride. Refund has been initiated.',
+        body: `Your driver cancelled this ride: ${reason}. Refund has been initiated.`,
         data: {
             bookingId: booking.id,
             rideId: booking.ride.id,
+            cancellationReason: reason,
             refundInitiated: refundInitiated ? 'true' : 'false',
             refundPercent: '100',
             deepLink: `app://booking/${booking.id}`,

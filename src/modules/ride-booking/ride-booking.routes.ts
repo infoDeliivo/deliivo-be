@@ -45,6 +45,13 @@ router.post(
     controller.confirmBookingPaymentStatus
 );
 
+// Extend wait for driver response
+router.post(
+    '/:id/extend-wait',
+    validate({ params: bookingIdParamSchema }),
+    controller.extendWaitForDriver
+);
+
 // Cancel booking
 router.post(
     '/:id/cancel',

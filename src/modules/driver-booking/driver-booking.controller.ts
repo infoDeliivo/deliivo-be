@@ -67,7 +67,8 @@ export const acceptBooking = async (req: AuthRequest, res: Response) => {
 export const rejectBooking = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        const result = await DriverBookingService.rejectBooking(req.user.id, bookingId);
+        const { reason } = req.body as { reason: string };
+        const result = await DriverBookingService.rejectBooking(req.user.id, bookingId, reason);
         await invalidateBookingCaches(result.bookingId, result.rideId, result.passengerId);
 
         return sendSuccess(res, {
@@ -83,7 +84,8 @@ export const rejectBooking = async (req: AuthRequest, res: Response) => {
 export const cancelAfterAccept = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        const result = await DriverBookingService.cancelAfterAccept(req.user.id, bookingId);
+        const { reason } = req.body as { reason: string };
+        const result = await DriverBookingService.cancelAfterAccept(req.user.id, bookingId, reason);
         await invalidateBookingCaches(result.bookingId, result.rideId, result.passengerId);
 
         return sendSuccess(res, {

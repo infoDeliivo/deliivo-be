@@ -363,7 +363,8 @@
     "/api/v1/bookings/{id}/cancel": {
       "post": {
         "operationId": "bookingsPostByIdCancel",
-        "summary": "POST bookings/:id/cancel",
+        "summary": "POST bookings/:id/cancel - Cancel booking with refund",
+        "description": "Cancel a booking. If driver decision deadline has expired, rider gets 100% refund. Otherwise, refund is based on time-based cancellation policy.",
         "tags": [
           "Bookings"
         ],
@@ -374,15 +375,38 @@
         ],
         "responses": {
           "200": {
-            "description": "Success",
+            "description": "Success - Booking cancelled with refund details",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
                 },
                 "examples": {
-                  "default": {
-                    "$ref": "../components/examples/common.yaml#/AuthLogoutSuccess"
+                  "deadlineExpired": {
+                    "value": {
+                      "success": true,
+                      "message": "Booking cancelled successfully",
+                      "data": {
+                        "bookingId": "booking-uuid",
+                        "rideId": "ride-uuid",
+                        "refundPercent": 100,
+                        "refundAmount": 20.00,
+                        "refundInitiated": true
+                      }
+                    }
+                  },
+                  "normalCancel": {
+                    "value": {
+                      "success": true,
+                      "message": "Booking cancelled successfully",
+                      "data": {
+                        "bookingId": "booking-uuid",
+                        "rideId": "ride-uuid",
+                        "refundPercent": 80,
+                        "refundAmount": 16.00,
+                        "refundInitiated": true
+                      }
+                    }
                   }
                 }
               }
@@ -402,6 +426,118 @@
           },
           "409": {
             "$ref": "../components/responses/errors.yaml#/Conflict"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ]
+      }
+    },
+    "/api/v1/bookings/{id}/extend-wait": {
+      "post": {
+        "operationId": "bookingsPostByIdExtendWait",
+        "summary": "POST bookings/:id/extend-wait - Extend driver response deadline",
+        "description": "Extend the driver decision deadline by 1 hour when the initial deadline has expired. Can only be used once per booking. Driver will be notified of the extension.",
+        "tags": [
+          "Bookings"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success - Waiting period extended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                },
+                "examples": {
+                  "default": {
+                    "value": {
+                      "success": true,
+                      "message": "Waiting period extended successfully",
+                      "data": {
+                        "bookingId": "booking-uuid",
+                        "status": "DRIVER_PENDING",
+                        "newDeadline": "2026-05-13T11:00:00.000Z",
+                        "extendedBy": "rider"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request - Deadline has not expired yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                },
+                "examples": {
+                  "deadlineNotExpired": {
+                    "value": {
+                      "success": false,
+                      "message": "Deadline has not expired yet"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "404": {
+            "description": "Not Found - Booking not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                },
+                "examples": {
+                  "notFound": {
+                    "value": {
+                      "success": false,
+                      "message": "Booking not found"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict - Cannot extend wait",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                },
+                "examples": {
+                  "notDriverPending": {
+                    "value": {
+                      "success": false,
+                      "message": "Booking is not waiting for driver confirmation"
+                    }
+                  },
+                  "alreadyExtended": {
+                    "value": {
+                      "success": false,
+                      "message": "Waiting period already extended"
+                    }
+                  }
+                }
+              }
+            }
           },
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"

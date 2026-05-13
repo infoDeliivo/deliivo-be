@@ -589,6 +589,86 @@ export const createBooking = async (
     });
 };
 
+/* ================= EXTEND WAIT FOR DRIVER ================= */
+const EXTENDED_DEADLINE_MS = 60 * 60 * 1000; // 1 hour
+
+export const extendWaitForDriver = async (
+    passengerId: string,
+    bookingId: string
+) => {
+    const booking = await prisma.rideBooking.findFirst({
+        where: {
+            id: bookingId,
+            passengerId,
+            status: BookingStatus.DRIVER_PENDING,
+        },
+        include: {
+            ride: {
+                select: {
+                    id: true,
+                    driverId: true,
+                    originAddress: true,
+                    destinationAddress: true,
+                },
+            },
+        },
+    });
+
+    if (!booking) {
+        throw new Error('BOOKING_NOT_FOUND');
+    }
+
+    if (booking.status !== BookingStatus.DRIVER_PENDING) {
+        throw new Error('BOOKING_NOT_DRIVER_PENDING');
+    }
+
+    // Check if deadline has expired
+    if (!booking.driverDecisionDeadlineAt || booking.driverDecisionDeadlineAt > new Date()) {
+        throw new Error('DEADLINE_NOT_EXPIRED');
+    }
+
+    // Check if already extended
+    if (booking.deadlineExtendedAt) {
+        throw new Error('ALREADY_EXTENDED');
+    }
+
+    const newDeadline = new Date(Date.now() + EXTENDED_DEADLINE_MS);
+
+    const updated = await prisma.rideBooking.update({
+        where: { id: bookingId },
+        data: {
+            driverDecisionDeadlineAt: newDeadline,
+            deadlineExtendedAt: new Date(),
+        },
+        select: {
+            id: true,
+            driverDecisionDeadlineAt: true,
+            status: true,
+        },
+    });
+
+    // Notify driver again
+    await createNotification({
+        userId: booking.ride.driverId,
+        type: 'booking.rider.extended_wait',
+        title: 'Rider is still waiting',
+        body: 'The rider extended the waiting period. Please respond within 1 hour.',
+        data: {
+            bookingId: booking.id,
+            rideId: booking.ride.id,
+            newDeadline: newDeadline.toISOString(),
+            deepLink: `app://driver/booking-request/${booking.id}`,
+        },
+    });
+
+    return {
+        bookingId: updated.id,
+        status: updated.status,
+        newDeadline: updated.driverDecisionDeadlineAt,
+        extendedBy: 'rider',
+    };
+};
+
 /* ================= RIDER CANCEL BOOKING ================= */
 export const cancelBooking = async (
     passengerId: string,
@@ -620,10 +700,18 @@ export const cancelBooking = async (
         booking.ride.departureTime
     );
 
+    // Check if deadline expired (driver didn't respond)
+    const isDeadlineExpired = booking.driverDecisionDeadlineAt 
+        && booking.driverDecisionDeadlineAt < new Date()
+        && booking.status === BookingStatus.DRIVER_PENDING;
+
     const isPaymentCaptured = Boolean(booking.paymentCapturedAt && booking.stripePaymentIntentId);
-    const refundPercent = isPaymentCaptured
-        ? getRiderRefundPercent(departureAt, new Date())
-        : 0;
+    
+    // If deadline expired, give 100% refund regardless of time
+    const refundPercent = isDeadlineExpired 
+        ? 100 
+        : (isPaymentCaptured ? getRiderRefundPercent(departureAt, new Date()) : 0);
+    
     const refundAmount = isPaymentCaptured
         ? getRiderRefundAmount(booking.paymentAmount ?? booking.totalPrice, refundPercent)
         : 0;
@@ -636,6 +724,10 @@ export const cancelBooking = async (
         );
         refundInitiated = true;
     }
+
+    const cancellationReason = isDeadlineExpired 
+        ? 'DRIVER_NO_RESPONSE' 
+        : 'PASSENGER_CANCELLED';
 
     const updated = await prisma.$transaction(async (tx) => {
         const current = await tx.rideBooking.findFirst({
@@ -661,7 +753,7 @@ export const cancelBooking = async (
                 status: BookingStatus.CANCELLED,
                 cancelledAt: new Date(),
                 cancelledByRole: 'PASSENGER',
-                cancellationReason: 'PASSENGER_CANCELLED',
+                cancellationReason,
                 refundPercent,
                 refundAmount,
                 refundedAt: refundInitiated ? new Date() : undefined,

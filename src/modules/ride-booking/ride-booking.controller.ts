@@ -95,6 +95,45 @@ export const confirmBookingPaymentStatus = async (req: AuthRequest, res: Respons
     }
 };
 
+/* ================= EXTEND WAIT FOR DRIVER ================= */
+export const extendWaitForDriver = async (req: AuthRequest, res: Response) => {
+    try {
+        const bookingId = req.params.id as string;
+        const result = await BookingService.extendWaitForDriver(req.user.id, bookingId);
+
+        await deleteCache(cacheKeys.booking(bookingId));
+
+        return sendSuccess(res, {
+            message: 'Waiting period extended successfully',
+            data: result,
+        });
+    } catch (error: any) {
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to extend waiting period';
+
+        switch (error.message) {
+            case 'BOOKING_NOT_FOUND':
+                status = HttpStatus.NOT_FOUND;
+                message = 'Booking not found';
+                break;
+            case 'BOOKING_NOT_DRIVER_PENDING':
+                status = HttpStatus.CONFLICT;
+                message = 'Booking is not waiting for driver confirmation';
+                break;
+            case 'DEADLINE_NOT_EXPIRED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Deadline has not expired yet';
+                break;
+            case 'ALREADY_EXTENDED':
+                status = HttpStatus.CONFLICT;
+                message = 'Waiting period already extended';
+                break;
+        }
+
+        return sendError(res, { status, message });
+    }
+};
+
 /* ================= CANCEL BOOKING ================= */
 export const cancelBooking = async (req: AuthRequest, res: Response) => {
     try {

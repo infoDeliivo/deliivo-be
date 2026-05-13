@@ -71,8 +71,68 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
         prisma.ride.count({ where }),
     ]);
 
+    // Enhance bookings with decision deadline info
+    const now = new Date();
+    const enhancedRides = rides.map((ride: any) => {
+        const enhancedBookings = ride.bookings.map((booking: any) => {
+            const enhanced: any = { ...booking };
+
+            // Add decision deadline info for DRIVER_PENDING bookings
+            if (booking.status === 'DRIVER_PENDING' && booking.driverDecisionDeadlineAt) {
+                const deadlineTime = new Date(booking.driverDecisionDeadlineAt).getTime();
+                const currentTime = now.getTime();
+                const timeRemainingMs = deadlineTime - currentTime;
+                
+                enhanced.decisionDeadline = {
+                    deadlineAt: booking.driverDecisionDeadlineAt,
+                    timeRemainingMs: Math.max(0, timeRemainingMs),
+                    timeRemainingSeconds: Math.max(0, Math.floor(timeRemainingMs / 1000)),
+                    isExpired: timeRemainingMs <= 0,
+                };
+            }
+
+            // Add pickup/dropoff location info
+            if (booking.pickupWaypointId || booking.dropoffWaypointId) {
+                const pickupWaypoint = ride.waypoints.find((w: any) => w.id === booking.pickupWaypointId);
+                const dropoffWaypoint = ride.waypoints.find((w: any) => w.id === booking.dropoffWaypointId);
+
+                enhanced.pickupLocation = pickupWaypoint ? {
+                    address: pickupWaypoint.address,
+                    placeId: pickupWaypoint.placeId,
+                } : {
+                    address: ride.originAddress,
+                    placeId: ride.originPlaceId,
+                };
+
+                enhanced.dropoffLocation = dropoffWaypoint ? {
+                    address: dropoffWaypoint.address,
+                    placeId: dropoffWaypoint.placeId,
+                } : {
+                    address: ride.destinationAddress,
+                    placeId: ride.destinationPlaceId,
+                };
+            } else {
+                enhanced.pickupLocation = {
+                    address: ride.originAddress,
+                    placeId: ride.originPlaceId,
+                };
+                enhanced.dropoffLocation = {
+                    address: ride.destinationAddress,
+                    placeId: ride.destinationPlaceId,
+                };
+            }
+
+            return enhanced;
+        });
+
+        return {
+            ...ride,
+            bookings: enhancedBookings,
+        };
+    });
+
     return {
-        rides,
+        rides: enhancedRides,
         pagination: {
             page,
             limit,
@@ -134,7 +194,63 @@ export const getRideById = async (driverId: string, rideId: string) => {
         throw new Error('RIDE_NOT_FOUND');
     }
 
-    return ride;
+    // Enhance bookings with decision deadline info
+    const now = new Date();
+    const enhancedBookings = ride.bookings.map((booking: any) => {
+        const enhanced: any = { ...booking };
+
+        // Add decision deadline info for DRIVER_PENDING bookings
+        if (booking.status === 'DRIVER_PENDING' && booking.driverDecisionDeadlineAt) {
+            const deadlineTime = new Date(booking.driverDecisionDeadlineAt).getTime();
+            const currentTime = now.getTime();
+            const timeRemainingMs = deadlineTime - currentTime;
+            
+            enhanced.decisionDeadline = {
+                deadlineAt: booking.driverDecisionDeadlineAt,
+                timeRemainingMs: Math.max(0, timeRemainingMs),
+                timeRemainingSeconds: Math.max(0, Math.floor(timeRemainingMs / 1000)),
+                isExpired: timeRemainingMs <= 0,
+            };
+        }
+
+        // Add pickup/dropoff location info
+        if (booking.pickupWaypointId || booking.dropoffWaypointId) {
+            const pickupWaypoint = ride.waypoints.find((w: any) => w.id === booking.pickupWaypointId);
+            const dropoffWaypoint = ride.waypoints.find((w: any) => w.id === booking.dropoffWaypointId);
+
+            enhanced.pickupLocation = pickupWaypoint ? {
+                address: pickupWaypoint.address,
+                placeId: pickupWaypoint.placeId,
+            } : {
+                address: ride.originAddress,
+                placeId: ride.originPlaceId,
+            };
+
+            enhanced.dropoffLocation = dropoffWaypoint ? {
+                address: dropoffWaypoint.address,
+                placeId: dropoffWaypoint.placeId,
+            } : {
+                address: ride.destinationAddress,
+                placeId: ride.destinationPlaceId,
+            };
+        } else {
+            enhanced.pickupLocation = {
+                address: ride.originAddress,
+                placeId: ride.originPlaceId,
+            };
+            enhanced.dropoffLocation = {
+                address: ride.destinationAddress,
+                placeId: ride.destinationPlaceId,
+            };
+        }
+
+        return enhanced;
+    });
+
+    return {
+        ...ride,
+        bookings: enhancedBookings,
+    };
 };
 
 /* ================= CANCEL RIDE ================= */

@@ -58,6 +58,7 @@
       "post": {
         "operationId": "driverBookingsPostByIdReject",
         "summary": "POST driver-bookings/:id/reject",
+        "description": "Driver rejects a booking request. Requires a reason for rejection.",
         "tags": [
           "Driver Bookings"
         ],
@@ -101,6 +102,29 @@
             "$ref": "../components/responses/errors.yaml#/ServerError"
           }
         },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "description": "Reason for rejecting the booking (required, 1-500 characters)",
+                    "example": "I have an emergency and cannot drive today"
+                  }
+                }
+              }
+            }
+          }
+        },
         "parameters": [
           {
             "$ref": "../components/parameters/common.yaml#/IdPath"
@@ -112,6 +136,7 @@
       "post": {
         "operationId": "driverBookingsPostByIdCancel",
         "summary": "POST driver-bookings/:id/cancel",
+        "description": "Driver cancels a confirmed booking. Requires a reason for cancellation. Driver penalty may apply.",
         "tags": [
           "Driver Bookings"
         ],
@@ -153,6 +178,29 @@
           },
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "description": "Reason for cancelling the booking (required, 1-500 characters)",
+                    "example": "Vehicle broke down, cannot complete the trip"
+                  }
+                }
+              }
+            }
           }
         },
         "parameters": [
