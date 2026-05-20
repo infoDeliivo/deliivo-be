@@ -566,10 +566,68 @@
         "luggageCount": 1,
         "totalPrice": 499,
         "status": "PAYMENT_PENDING",
+        "decisionDeadline": null,
         "pickupOtp": null,
         "dropOtp": null,
         "pickupOtpVerifiedAt": null,
-        "dropOtpVerifiedAt": null
+        "dropOtpVerifiedAt": null,
+        "ride": {
+          "id": "44444444-4444-4444-4444-444444444444",
+          "status": "PUBLISHED",
+          "originAddress": "London, UK",
+          "destinationAddress": "Manchester, UK",
+          "departureDate": "2026-04-15",
+          "departureTime": "10:00",
+          "basePricePerSeat": 499,
+          "currency": "GBP",
+          "driver": {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "name": "John Driver",
+            "avatarUrl": "https://example.com/avatar.jpg"
+          }
+        }
+      }
+    }
+  },
+  "BookingDriverPending": {
+    "summary": "Booking response when waiting for driver confirmation",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Booking details retrieved",
+      "data": {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "rideId": "44444444-4444-4444-4444-444444444444",
+        "passengerId": "11111111-1111-1111-1111-111111111111",
+        "seatsBooked": 1,
+        "luggageCount": 1,
+        "totalPrice": 499,
+        "status": "DRIVER_PENDING",
+        "decisionDeadline": {
+          "deadlineAt": "2026-05-20T12:00:00.000Z",
+          "timeRemainingMs": 3600000,
+          "timeRemainingSeconds": 3600,
+          "isExpired": false
+        },
+        "pickupOtp": null,
+        "dropOtp": null,
+        "pickupOtpVerifiedAt": null,
+        "dropOtpVerifiedAt": null,
+        "ride": {
+          "id": "44444444-4444-4444-4444-444444444444",
+          "status": "PUBLISHED",
+          "originAddress": "London, UK",
+          "destinationAddress": "Manchester, UK",
+          "departureDate": "2026-04-15",
+          "departureTime": "10:00",
+          "basePricePerSeat": 499,
+          "currency": "GBP",
+          "driver": {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "name": "John Driver",
+            "avatarUrl": "https://example.com/avatar.jpg"
+          }
+        }
       }
     }
   },
@@ -587,16 +645,20 @@
         "luggageCount": 1,
         "totalPrice": 499,
         "status": "CONFIRMED",
+        "decisionDeadline": null,
         "pickupOtp": "123456",
         "dropOtp": "789012",
         "pickupOtpVerifiedAt": null,
         "dropOtpVerifiedAt": null,
         "ride": {
           "id": "44444444-4444-4444-4444-444444444444",
+          "status": "PUBLISHED",
           "originAddress": "London, UK",
           "destinationAddress": "Manchester, UK",
           "departureDate": "2026-04-15",
           "departureTime": "10:00",
+          "basePricePerSeat": 499,
+          "currency": "GBP",
           "driver": {
             "id": "22222222-2222-2222-2222-222222222222",
             "name": "John Driver",

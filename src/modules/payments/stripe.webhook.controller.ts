@@ -129,6 +129,9 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
                 totalPrice: String(booking.totalPrice),
                 currency: booking.paymentCurrency ?? booking.ride.currency,
                 decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
+                decisionTimeRemainingSeconds: booking.driverDecisionDeadlineAt 
+                    ? String(Math.max(0, Math.floor((booking.driverDecisionDeadlineAt.getTime() - Date.now()) / 1000)))
+                    : '0',
                 deepLink: `app://driver/booking-request/${booking.id}`,
             },
         });

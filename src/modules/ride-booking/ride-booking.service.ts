@@ -9,7 +9,7 @@ import {
 import { decodeViewToken } from '../search-ride/view-token.utils.js';
 import { createBookingPaymentIntent, refundPaymentIntent } from '../payments/stripe.service.js';
 import { createNotification } from '../notification/notification.service.js';
-import { DRIVER_DECISION_NOTIFICATION_TYPE } from '../payments/stripe.constants.js';
+import { DRIVER_DECISION_NOTIFICATION_TYPE, DRIVER_DECISION_WINDOW_MS } from '../payments/stripe.constants.js';
 import {
     CancelBookingResult,
     CreateBookingInput,
@@ -42,6 +42,7 @@ type RideWaypointDetails = {
 type RideWithDetails = {
     id: string;
     driverId: string;
+    status?: RideStatus;
     originPlaceId: string;
     originAddress: string;
     originLat: number;
@@ -150,6 +151,7 @@ const validateBookingSeats = (seatsBooked: number, availableSeats: number) => {
 
 const mapRideInfo = (ride: RideWithDetails) => ({
     id: ride.id,
+    status: ride.status,
     originPlaceId: ride.originPlaceId,
     originAddress: ride.originAddress,
     originLat: ride.originLat,
@@ -235,43 +237,104 @@ const mapSegmentRideInfo = (
 };
 
 const mapBookingResponse = (
-    booking: BookingWithRideDetails,
+    booking: BookingWithRideDetails & { 
+        driverDecisionDeadlineAt?: Date | null;
+        deadlineExtendedAt?: Date | null;
+    },
     options?: {
         luggageCount?: number;
         notes?: string | null;
         payment?: BookingPaymentInfo | null;
         priceBreakdown?: PriceBreakdown;
     }
-): BookingResponse => ({
-    id: booking.id,
-    rideId: booking.rideId,
-    passengerId: booking.passengerId,
-    seatsBooked: booking.seatsBooked,
-    luggageCount: options?.luggageCount ?? 0,
-    totalPrice: booking.totalPrice,
-    priceBreakdown: options?.priceBreakdown,
-    status: booking.status,
-    pickupWaypointId: booking.pickupWaypointId,
-    dropoffWaypointId: booking.dropoffWaypointId,
-    notes: options?.notes ?? null,
-    createdAt: booking.createdAt,
-    updatedAt: booking.updatedAt,
-    payment: options?.payment
-        ?? (booking.stripePaymentIntentId
-            ? {
-                provider: 'stripe',
-                paymentIntentId: booking.stripePaymentIntentId,
-                currency: booking.paymentCurrency ?? booking.ride.currency,
-            }
-            : null),
-    ride: mapRideInfo(booking.ride),
-    fullRide: mapRideInfo(booking.ride),
-    segmentRide: mapSegmentRideInfo(
-        booking.ride,
-        booking.pickupWaypointId,
-        booking.dropoffWaypointId
-    ),
-});
+): BookingResponse => {
+    const now = new Date();
+    let decisionDeadline = null;
+
+    // Add decision deadline info for DRIVER_PENDING bookings
+    if (booking.status === BookingStatus.DRIVER_PENDING && booking.driverDecisionDeadlineAt) {
+        const deadlineTime = new Date(booking.driverDecisionDeadlineAt).getTime();
+        const currentTime = now.getTime();
+        const timeRemainingMs = deadlineTime - currentTime;
+        const isExpired = timeRemainingMs <= 0;
+        
+        // Calculate auto-cancel time (1 hour after initial deadline if extended, or at deadline if not extended)
+        const hasBeenExtended = booking.deadlineExtendedAt !== null && booking.deadlineExtendedAt !== undefined;
+        const autoCancelAt = hasBeenExtended 
+            ? booking.driverDecisionDeadlineAt  // If extended, auto-cancel at the extended deadline
+            : null;  // If not extended, no auto-cancel yet (rider can extend)
+        
+        const autoCancelTimeRemainingMs = autoCancelAt 
+            ? Math.max(0, autoCancelAt.getTime() - currentTime)
+            : null;
+        
+        decisionDeadline = {
+            deadlineAt: booking.driverDecisionDeadlineAt,
+            timeRemainingMs: Math.max(0, timeRemainingMs),
+            timeRemainingSeconds: Math.max(0, Math.floor(timeRemainingMs / 1000)),
+            isExpired,
+            canExtend: isExpired && !hasBeenExtended,  // Can extend only if expired and not yet extended
+            hasBeenExtended,
+            autoCancelAt,
+            autoCancelTimeRemainingMs,
+            autoCancelTimeRemainingSeconds: autoCancelTimeRemainingMs !== null 
+                ? Math.floor(autoCancelTimeRemainingMs / 1000) 
+                : null,
+        };
+    }
+
+    // Calculate display status for RIDER perspective
+    let displayStatus: string | undefined;
+    
+    if (booking.status === BookingStatus.DRIVER_PENDING) {
+        displayStatus = 'PENDING_DRIVER_DECISION';  // Rider is waiting for driver decision
+    } else if (booking.status === BookingStatus.CONFIRMED) {
+        displayStatus = 'UPCOMING';
+    } else if (booking.status === BookingStatus.IN_PROGRESS) {
+        displayStatus = 'ONGOING';
+    } else if (booking.status === BookingStatus.COMPLETED) {
+        displayStatus = 'COMPLETED';
+    } else if (booking.status === BookingStatus.CANCELLED) {
+        displayStatus = 'CANCELLED';
+    } else if (booking.status === BookingStatus.PAYMENT_PENDING) {
+        displayStatus = 'PAYMENT_PENDING';
+    } else if (booking.status === BookingStatus.PAYMENT_FAILED) {
+        displayStatus = 'PAYMENT_FAILED';
+    }
+
+    return {
+        id: booking.id,
+        rideId: booking.rideId,
+        passengerId: booking.passengerId,
+        seatsBooked: booking.seatsBooked,
+        luggageCount: options?.luggageCount ?? 0,
+        totalPrice: booking.totalPrice,
+        priceBreakdown: options?.priceBreakdown,
+        status: booking.status,
+        displayStatus,
+        pickupWaypointId: booking.pickupWaypointId,
+        dropoffWaypointId: booking.dropoffWaypointId,
+        notes: options?.notes ?? null,
+        createdAt: booking.createdAt,
+        updatedAt: booking.updatedAt,
+        decisionDeadline,
+        payment: options?.payment
+            ?? (booking.stripePaymentIntentId
+                ? {
+                    provider: 'stripe',
+                    paymentIntentId: booking.stripePaymentIntentId,
+                    currency: booking.paymentCurrency ?? booking.ride.currency,
+                }
+                : null),
+        ride: mapRideInfo(booking.ride),
+        fullRide: mapRideInfo(booking.ride),
+        segmentRide: mapSegmentRideInfo(
+            booking.ride,
+            booking.pickupWaypointId,
+            booking.dropoffWaypointId
+        ),
+    };
+};
 
 const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date => {
     const [hoursRaw, minutesRaw] = departureTime.split(':');
@@ -317,7 +380,11 @@ export const createBooking = async (
     input: CreateBookingInput
 ): Promise<BookingResponse> => {
     const bypassBookingPaymentMode = isBypassBookingPaymentMode();
-    const paymentCapturedAt = bypassBookingPaymentMode ? new Date() : null;
+    const now = new Date();
+    const paymentCapturedAt = bypassBookingPaymentMode ? now : null;
+    const driverDecisionDeadlineAt = bypassBookingPaymentMode 
+        ? new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS) 
+        : null;
     const {
         rideId,
         segmentId,
@@ -434,6 +501,7 @@ export const createBooking = async (
                 paymentAmount: bypassBookingPaymentMode ? priceBreakdown.totalPrice : undefined,
                 paymentCurrency: ride.currency,
                 paymentCapturedAt: paymentCapturedAt ?? undefined,
+                driverDecisionDeadlineAt: driverDecisionDeadlineAt ?? undefined,
             },
             include: {
                 ride: {
@@ -498,7 +566,10 @@ export const createBooking = async (
                 seatsBooked: String(bookingSeed.booking.seatsBooked),
                 totalPrice: String(bookingSeed.booking.totalPrice),
                 currency: bookingSeed.booking.paymentCurrency ?? bookingSeed.ride.currency,
-                decisionDeadlineAt: '',
+                decisionDeadlineAt: driverDecisionDeadlineAt?.toISOString() ?? '',
+                decisionTimeRemainingSeconds: driverDecisionDeadlineAt 
+                    ? String(Math.max(0, Math.floor((driverDecisionDeadlineAt.getTime() - Date.now()) / 1000)))
+                    : '0',
                 deepLink: `app://driver/booking-request/${bookingSeed.booking.id}`,
             },
         });
@@ -914,7 +985,10 @@ export const listUserBookings = async (
                     },
                 },
             },
-            orderBy: { createdAt: 'desc' },
+            orderBy: [
+                { ride: { departureDate: 'asc' } },  // Sort by departure date first (upcoming rides first)
+                { createdAt: 'desc' },  // Then by creation date
+            ],
             skip,
             take: limit,
         }),

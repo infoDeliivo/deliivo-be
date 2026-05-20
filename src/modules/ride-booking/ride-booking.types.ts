@@ -66,6 +66,7 @@ export interface BookingRideInfo {
     availableSeats?: number;
     basePricePerSeat: number;
     currency: string;
+    status?: string; // Ride status
     waypoints?: WaypointInfo[];
     driver: {
         id: string;
@@ -90,11 +91,23 @@ export interface BookingResponse {
     totalPrice: number;
     priceBreakdown?: PriceBreakdown;
     status: BookingStatus;
+    displayStatus?: string;
     pickupWaypointId: string | null;
     dropoffWaypointId: string | null;
     notes: string | null;
     createdAt: Date;
     updatedAt: Date;
+    decisionDeadline?: {
+        deadlineAt: Date;
+        timeRemainingMs: number;
+        timeRemainingSeconds: number;
+        isExpired: boolean;
+        canExtend?: boolean;
+        hasBeenExtended?: boolean;
+        autoCancelAt?: Date | null;
+        autoCancelTimeRemainingMs?: number | null;
+        autoCancelTimeRemainingSeconds?: number | null;
+    } | null;
     payment?: BookingPaymentInfo | null;
     ride?: BookingRideInfo;
     fullRide?: BookingRideInfo;
