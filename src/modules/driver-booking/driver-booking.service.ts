@@ -30,15 +30,6 @@ const fetchDriverBooking = async (bookingId: string) => {
                 },
             },
             ride: {
-                select: {
-                    id: true,
-                    driverId: true,
-                    originAddress: true,
-                    destinationAddress: true,
-                    departureDate: true,
-                    departureTime: true,
-                    routeDurationSeconds: true,
-                },
                 include: {
                     driver: {
                         select: {
