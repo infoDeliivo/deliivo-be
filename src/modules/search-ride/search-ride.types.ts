@@ -152,6 +152,7 @@ export interface WaypointInfo {
     waypointType: string;
     orderIndex: number;
     pricePerSeat: number | null;
+    estimatedArrivalTime?: string | null;
 }
 
 export interface RideSnapshot {

@@ -177,6 +177,7 @@ const mapWaypoints = (waypoints: RideWaypointLike[]): WaypointInfo[] =>
     waypointType: waypoint.waypointType,
     orderIndex: waypoint.orderIndex,
     pricePerSeat: waypoint.pricePerSeat,
+    estimatedArrivalTime: (waypoint as any).estimatedArrivalTime,
   }));
 
 const buildFullRideSnapshot = (ride: RideCoreLike, waypoints?: WaypointInfo[]): RideSnapshot => ({

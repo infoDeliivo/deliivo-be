@@ -22,6 +22,7 @@ import {
 } from './publish-ride.types.js';
 import { getFuelPriceForCurrency } from '../../services/fuel-price.service.js';
 import { buildStopoverPricingByPlaceId, getStopoverPriceByPlaceId } from './stopover-pricing.utils.js';
+import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
 
 // ============================================================
 //  CONSTANTS
@@ -764,8 +765,22 @@ export const publishRide = async (driverId: string) => {
             pricePerSeat: getStopoverPriceByPlaceId(draft.stopoverPricingByPlaceId, s.placeId),
         }));
 
-        const allWaypoints = [...pickups, ...dropoffs, ...stopovers];
-        if (allWaypoints.length > 0) {
+        // Sort all waypoints by orderIndex
+        const allWaypoints = [...pickups, ...dropoffs, ...stopovers].sort((a, b) => a.orderIndex - b.orderIndex);
+        
+        // Calculate arrival times for each waypoint
+        if (allWaypoints.length > 0 && newRide.routeDurationSeconds) {
+            const arrivalTimes = calculateWaypointArrivalTimes(
+                newRide.departureTime,
+                newRide.routeDurationSeconds,
+                allWaypoints.length
+            );
+            
+            // Add estimated arrival time to each waypoint
+            allWaypoints.forEach((waypoint, index) => {
+                (waypoint as any).estimatedArrivalTime = arrivalTimes[index] || null;
+            });
+            
             await tx.rideWaypoint.createMany({ data: allWaypoints });
         }
 
