@@ -24,6 +24,8 @@ const mapDriverActionError = (error: Error) => {
             return { status: HttpStatus.NOT_FOUND, message: 'Booking not found' };
         case 'FORBIDDEN_DRIVER':
             return { status: HttpStatus.FORBIDDEN, message: 'Only the assigned driver can perform this action' };
+        case 'DRIVER_NOT_VERIFIED':
+            return { status: HttpStatus.FORBIDDEN, message: 'Your driving licence must be verified before accepting bookings' };
         case 'BOOKING_NOT_DRIVER_PENDING':
             return { status: HttpStatus.CONFLICT, message: 'Booking is not waiting for driver decision' };
         case 'BOOKING_DECISION_DEADLINE_PASSED':

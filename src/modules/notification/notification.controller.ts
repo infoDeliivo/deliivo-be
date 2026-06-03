@@ -6,7 +6,8 @@ import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
 /* ================= LIST NOTIFICATIONS ================= */
 export const getNotifications = async (req: AuthRequest, res: Response) => {
     try {
-        const { cursor, limit } = req.query as { cursor?: string; limit?: number };
+        const cursor = req.query.cursor as string | undefined;
+        const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
         const result = await NotificationService.getNotifications(req.user.id, cursor, limit);
 
         return sendSuccess(res, {

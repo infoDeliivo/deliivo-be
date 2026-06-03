@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../types/auth.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
+import { logError, logWarn, logDebug } from '../../utils/logger.js';
 import {
   createVeriffSession,
   handleWebhookDecision,
@@ -32,8 +33,6 @@ export const createSession = async (req: Request, res: Response) => {
       consents,
       tag,
     } = req.body;
-    console.log(req.body);
-    
 
     const result = await createVeriffSession({
       userId,
@@ -71,7 +70,7 @@ export const createSession = async (req: Request, res: Response) => {
       data: result.data,
     });
   } catch (err: any) {
-    console.error('createSession error:', err);
+    logError('DL verification createSession error', err);
     return sendError(res, { message: err.message || 'Server error' });
   }
 };
@@ -93,7 +92,7 @@ export const webhook = async (req: Request, res: Response) => {
     const isValid = validateWebhookSignature(rawBody, signature);
 
     if (!isValid) {
-      console.warn('Veriff webhook: invalid HMAC signature');
+      logWarn('Veriff webhook: invalid HMAC signature');
       return sendError(res, {
         message: 'Invalid webhook signature',
         status: HttpStatus.UNAUTHORIZED,
@@ -103,14 +102,14 @@ export const webhook = async (req: Request, res: Response) => {
     const result = await handleWebhookDecision(req.body);
 
     if (!result.success) {
-      console.warn('Veriff webhook processing failed:', result.reason);
+      logWarn('Veriff webhook processing failed', { reason: result.reason });
       // Still return 200 to prevent Veriff from retrying
       return res.status(200).json({ received: true, warning: result.reason });
     }
 
     return res.status(200).json({ received: true, status: result.status });
   } catch (err: any) {
-    console.error('Veriff webhook error:', err);
+    logError('Veriff webhook error', err);
     // Return 200 even on error to prevent Veriff retry loops
     return res.status(200).json({ received: true, error: 'Internal processing error' });
   }
@@ -129,7 +128,7 @@ export const status = async (req: Request, res: Response) => {
       data: result.data,
     });
   } catch (err: any) {
-    console.error('getStatus error:', err);
+    logError('DL verification getStatus error', err);
     return sendError(res, { message: err.message || 'Server error' });
   }
 };

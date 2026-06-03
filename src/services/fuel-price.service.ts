@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
 import redis from '../cache/redis.js';
+import { logInfo, logError, logWarn } from '../utils/logger.js';
 
 type FuelCountryCode = 'GB' | 'IN';
 type FuelCurrency = 'GBP' | 'INR';
@@ -292,7 +293,7 @@ export const getFuelPriceForCurrency = async (currency?: string): Promise<FuelPr
         return live;
     } catch (error) {
         const fallback = fallbackContext(countryCode);
-        console.error('Fuel price live fetch failed, using fallback:', {
+        logWarn('Fuel price live fetch failed, using fallback', {
             countryCode,
             error: error instanceof Error ? error.message : String(error),
         });
@@ -308,10 +309,11 @@ export const refreshFuelPrice = async (countryCode: FuelCountryCode = 'GB'): Pro
     try {
         const live = await fetchLiveFuelPriceByCountry(countryCode);
         await writeToCache(live);
-        console.log(`Fuel price refreshed for ${countryCode}: ${live.pricePerLiter} ${live.currency}`);
+        logInfo('Fuel price refreshed', { countryCode, price: live.pricePerLiter, currency: live.currency });
         return live;
     } catch (error) {
-        console.error(`Fuel price refresh failed for ${countryCode}:`, {
+        logError('Fuel price refresh failed', undefined, {
+            countryCode,
             error: error instanceof Error ? error.message : String(error),
         });
         throw error;

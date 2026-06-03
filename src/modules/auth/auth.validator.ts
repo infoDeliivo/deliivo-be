@@ -44,3 +44,8 @@ export const loginSchema = z.object({
 export const refreshTokenSchema = z.object({
   refreshToken: z.string(),
 });
+
+export const acceptTosSchema = z.object({
+  tosVersion: z.string().min(1),
+  privacyVersion: z.string().min(1),
+});

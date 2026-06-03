@@ -7,39 +7,30 @@ import logger from '../utils/logger.js';
 import * as ChatService from '../modules/chat/chat.service.js';
 import * as PresenceService from '../services/presence.service.js';
 import { ACCESS_TOKEN_SECRET } from '../modules/token/tokens.constants.js';
+import redis from '../cache/redis.js';
 
-// ============ USER-SOCKET MAPPING ============
-// Map userId -> Set<socketId> (user can have multiple devices/tabs)
-const userSockets = new Map<string, Set<string>>();
-// Map socketId -> userId (reverse lookup)
-const socketUsers = new Map<string, string>();
+// ============ USER-SOCKET MAPPING (Redis-backed) ============
+// sockets:{userId}  -> Redis SET of socketIds  (forward lookup)
+// socket:{socketId} -> Redis STRING of userId   (reverse lookup)
+const SOCKET_SET_TTL = 3600; // 1 hour
 
-const addUserSocket = (userId: string, socketId: string) => {
-    if (!userSockets.has(userId)) {
-        userSockets.set(userId, new Set());
-    }
-    userSockets.get(userId)!.add(socketId);
-    socketUsers.set(socketId, userId);
+const addUserSocket = async (userId: string, socketId: string) => {
+    await redis.sadd(`sockets:${userId}`, socketId);
+    await redis.expire(`sockets:${userId}`, SOCKET_SET_TTL);
+    await redis.set(`socket:${socketId}`, userId, 'EX', SOCKET_SET_TTL);
 };
 
-const removeUserSocket = (socketId: string) => {
-    const userId = socketUsers.get(socketId);
+const removeUserSocket = async (socketId: string): Promise<string | null> => {
+    const userId = await redis.get(`socket:${socketId}`);
     if (userId) {
-        const sockets = userSockets.get(userId);
-        if (sockets) {
-            sockets.delete(socketId);
-            if (sockets.size === 0) {
-                userSockets.delete(userId);
-            }
-        }
-        socketUsers.delete(socketId);
+        await redis.srem(`sockets:${userId}`, socketId);
+        await redis.del(`socket:${socketId}`);
     }
     return userId;
 };
 
-export const getUserSocketIds = (userId: string): string[] => {
-    const sockets = userSockets.get(userId);
-    return sockets ? Array.from(sockets) : [];
+export const getUserSocketIds = async (userId: string): Promise<string[]> => {
+    return redis.smembers(`sockets:${userId}`);
 };
 
 // Module-level io reference for external access
@@ -50,10 +41,15 @@ export const getIO = (): Server | null => ioInstance;
 // ============ SOCKET.IO INITIALIZATION ============
 
 export const initSocket = async (server: http.Server) => {
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+        ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+        : [];
+
     const io = new Server(server, {
         cors: {
-            origin: '*',
+            origin: allowedOrigins.length > 0 ? allowedOrigins : false,
             methods: ['GET', 'POST'],
+            credentials: true,
         },
         pingInterval: 25000,
         pingTimeout: 60000,
@@ -107,10 +103,10 @@ export const initSocket = async (server: http.Server) => {
         logger.info(`🔌 User ${userId} connected (socket: ${socket.id})`);
 
         // Register user-socket mapping
-        addUserSocket(userId, socket.id);
-        
+        await addUserSocket(userId, socket.id);
+
         // Log current active connections for this user
-        const allUserSockets = getUserSocketIds(userId);
+        const allUserSockets = await getUserSocketIds(userId);
         logger.info(`👤 User ${userId} now has ${allUserSockets.length} active connection(s)`);
 
         // Set presence in Redis
@@ -181,7 +177,7 @@ export const initSocket = async (server: http.Server) => {
                 });
 
                 // Deliver to receiver if online
-                const receiverSocketIds = getUserSocketIds(receiverId);
+                const receiverSocketIds = await getUserSocketIds(receiverId);
                 if (receiverSocketIds.length > 0) {
                     const payload = {
                         id: message.id,
@@ -225,11 +221,11 @@ export const initSocket = async (server: http.Server) => {
         });
 
         // ============ CHAT: TYPING INDICATOR ============
-        socket.on('chat:typing', (data) => {
+        socket.on('chat:typing', async (data) => {
             const { conversationId, receiverId } = data;
             if (!conversationId || !receiverId) return;
 
-            const receiverSocketIds = getUserSocketIds(receiverId);
+            const receiverSocketIds = await getUserSocketIds(receiverId);
             receiverSocketIds.forEach((sid) => {
                 io.to(sid).emit('chat:typing', {
                     conversationId,
@@ -239,11 +235,11 @@ export const initSocket = async (server: http.Server) => {
         });
 
         // ============ CHAT: STOP TYPING ============
-        socket.on('chat:stopTyping', (data) => {
+        socket.on('chat:stopTyping', async (data) => {
             const { conversationId, receiverId } = data;
             if (!conversationId || !receiverId) return;
 
-            const receiverSocketIds = getUserSocketIds(receiverId);
+            const receiverSocketIds = await getUserSocketIds(receiverId);
             receiverSocketIds.forEach((sid) => {
                 io.to(sid).emit('chat:stopTyping', {
                     conversationId,
@@ -285,7 +281,7 @@ export const initSocket = async (server: http.Server) => {
                         ? messages.messages[0].receiverId
                         : messages.messages[0].senderId;
 
-                    const peerSocketIds = getUserSocketIds(peerId);
+                    const peerSocketIds = await getUserSocketIds(peerId);
                     peerSocketIds.forEach((sid) => {
                         io.to(sid).emit('chat:read', {
                             conversationId,
@@ -347,12 +343,12 @@ export const initSocket = async (server: http.Server) => {
 
         // ============ DISCONNECT ============
         socket.on('disconnect', async (reason) => {
-            const disconnectedUserId = removeUserSocket(socket.id);
+            const disconnectedUserId = await removeUserSocket(socket.id);
             logger.info(`🔌 User ${disconnectedUserId} disconnected (socket: ${socket.id}, reason: ${reason})`);
 
             if (disconnectedUserId) {
                 // Only set offline if no other sockets remain for this user
-                const remainingSockets = getUserSocketIds(disconnectedUserId);
+                const remainingSockets = await getUserSocketIds(disconnectedUserId);
                 logger.info(`👤 User ${disconnectedUserId} has ${remainingSockets.length} remaining connection(s)`);
                 
                 if (remainingSockets.length === 0) {

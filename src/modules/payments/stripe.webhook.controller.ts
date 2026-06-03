@@ -1,3 +1,4 @@
+// @ts-ignore — stripe v21 types bundled via package exports; not resolved by "Node" moduleResolution
 import Stripe from 'stripe';
 import { BookingStatus, Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
@@ -9,6 +10,7 @@ import {
     STRIPE_METADATA_KEYS,
 } from './stripe.constants.js';
 import { constructStripeEvent } from './stripe.service.js';
+import { logInfo, logError, logWarn, logDebug } from '../../utils/logger.js';
 
 const getHeaderValue = (value: string | string[] | undefined): string | null => {
     if (!value) return null;
@@ -57,11 +59,11 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
     });
 
     if (updateResult.count === 0) {
-        console.log('⚠️ No booking updated - booking may not be in PAYMENT_PENDING status');
+        logWarn('No booking updated - booking may not be in PAYMENT_PENDING status');
         return;
     }
 
-    console.log(`✅ Booking ${bookingId} updated to DRIVER_PENDING`);
+    logInfo('Booking updated to DRIVER_PENDING', { bookingId });
 
     const booking = await prisma.rideBooking.findUnique({
         where: { id: bookingId },
@@ -91,11 +93,11 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
     });
 
     if (!booking) {
-        console.log('❌ Booking not found after update');
+        logError('Booking not found after update');
         return;
     }
 
-    console.log(`📋 Booking details: driverId=${booking.ride.driverId}, passengerId=${booking.passengerId}`);
+    logDebug('Booking details', { driverId: booking.ride.driverId, passengerId: booking.passengerId });
 
     const originAddress = resolveSegmentAddress(
         booking.ride.originAddress,
@@ -108,9 +110,7 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
         booking.ride.waypoints
     );
 
-    console.log(`🔔 Sending notification to driver ${booking.ride.driverId}`);
-    console.log(`   Route: ${originAddress} → ${destinationAddress}`);
-    console.log(`   Passenger: ${booking.passenger.name ?? 'Rider'}`);
+    logDebug('Sending notification to driver', { driverId: booking.ride.driverId });
 
     try {
         await createNotification({
@@ -135,9 +135,9 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
                 deepLink: `app://driver/booking-request/${booking.id}`,
             },
         });
-        console.log(`✅ Notification sent successfully to driver ${booking.ride.driverId}`);
+        logInfo('Notification sent to driver', { driverId: booking.ride.driverId });
     } catch (error) {
-        console.error('❌ Failed to send notification to driver:', error);
+        logError('Failed to send notification to driver', error);
         throw error;
     }
 };
@@ -237,17 +237,17 @@ const processStripeEvent = async (event: Stripe.Event) => {
 };
 
 export const handleStripeWebhook = async (req: Request, res: Response) => {
-    console.log('🔔 Webhook received');
-    
+    logDebug('Stripe webhook received');
+
     const signature = getHeaderValue(req.headers['stripe-signature']);
     if (!signature) {
-        console.log('❌ Missing stripe signature');
+        logWarn('Webhook missing stripe-signature header');
         return res.status(400).send('Missing stripe signature');
     }
 
     // Check if body is already parsed (wrong middleware order)
     if (typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
-        console.log('❌ Body already parsed as JSON - check middleware order in app.ts');
+        logError('Webhook body already parsed as JSON - check middleware order');
         return res.status(500).send('Server configuration error: body must be raw');
     }
 
@@ -255,15 +255,15 @@ export const handleStripeWebhook = async (req: Request, res: Response) => {
         ? req.body
         : Buffer.from(req.body ?? '', 'utf8');
 
-    console.log('📦 Payload size:', rawPayload.length, 'bytes');
-    console.log('🔐 Signature present:', signature.substring(0, 20) + '...');
+    logDebug('Webhook payload received', { size: rawPayload.length });
+    logDebug('Webhook signature present');
 
     let event: Stripe.Event;
     try {
         event = constructStripeEvent(rawPayload, signature);
-        console.log('✅ Signature verified, event type:', event.type);
+        logInfo('Webhook signature verified', { eventType: event.type });
     } catch (error: any) {
-        console.log('❌ Signature verification failed:', error.message);
+        logError('Webhook signature verification failed', error);
         return res.status(400).send('Invalid stripe signature');
     }
 

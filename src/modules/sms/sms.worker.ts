@@ -30,7 +30,7 @@ const client =
 
 const worker = new Worker(
   'sms-queue',
-  async (job) => {
+  async (job: any) => {
     logger.info('[SMS] Job received', { jobId: job.id });
 
     const { to, body } = job.data as SendSmsPayload;
@@ -105,7 +105,7 @@ worker.on('ready', () => {
   logger.info('[SMS] Worker ready');
 });
 
-worker.on('failed', (job, err) => {
+worker.on('failed', (job: any, err: any) => {
   const to = (job?.data as Partial<SendSmsPayload> | undefined)?.to;
   logger.error('[SMS] Job failed', {
     jobId: job?.id,

@@ -1,4 +1,7 @@
 import { Request, Response } from 'express';
+import { prisma } from '../../config/index.js';
+import { logError } from '../../utils/logger.js';
+import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
 import {
   signupService,
@@ -163,7 +166,7 @@ export const requestOtp = async (req: Request, res: Response) => {
       },
     });
   } catch (err) {
-    console.error('Request OTP error:', err);
+    logError('Request OTP error', err);
     return sendError(res, { message: 'Server error' });
   }
 };
@@ -275,7 +278,7 @@ export const login = async (req: Request, res: Response) => {
       },
     });
   } catch (err) {
-    console.error('Login error:', err);
+    logError('Login error', err);
     return sendError(res, { message: 'Server error' });
   }
 };
@@ -291,7 +294,7 @@ export const refreshToken = async (req: Request, res: Response) => {
     }
     return sendSuccess(res, { data: tokens.tokens });
   } catch (err) {
-    console.error('Refresh token error:', err);
+    logError('Refresh token error', err);
     return sendError(res, {
       status: HttpStatus.UNAUTHORIZED,
       message: 'Invalid refresh token',
@@ -362,4 +365,25 @@ export const logout = async (req: Request, res: Response) => {
     });
   }
   return sendSuccess(res, { message: 'Logged out successfully' });
+};
+
+export const acceptTos = async (req: AuthRequest, res: Response) => {
+  const { tosVersion, privacyVersion } = req.body as {
+    tosVersion: string;
+    privacyVersion: string;
+  };
+
+  const now = new Date();
+
+  await prisma.user.update({
+    where: { id: req.user.id },
+    data: {
+      tosAcceptedAt: now,
+      tosVersion,
+      privacyAcceptedAt: now,
+      privacyVersion,
+    },
+  });
+
+  return sendSuccess(res, { message: 'Terms of Service accepted' });
 };

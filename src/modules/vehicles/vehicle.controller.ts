@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { logError } from '../../utils/logger.js';
 import * as VehicleService from './vehicle.service.js';
 import * as DraftVehicleService from './draft-vehicle.service.js';
 import { formatDraftResponse } from './draft-vehicle.service.js';
@@ -44,7 +45,7 @@ export const createVehicle = async (req: AuthRequest, res: Response) => {
       data: { vehicleId: vehicle.id },
     });
   } catch (error: any) {
-    console.log(error);
+    logError('Vehicle controller error', error);
 
     return sendError(res, {
       status:
@@ -137,7 +138,7 @@ export const uploadImage = async (req: AuthRequest, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('uploadImage error:', error);
+    logError('Vehicle uploadImage error', error);
     return sendError(res, {
       message: 'Failed to upload vehicle image',
     });
@@ -176,7 +177,7 @@ export const uploadVehicleImageOnly = async (req: AuthRequest, res: Response) =>
       },
     });
   } catch (error) {
-    console.error('uploadVehicleImageOnly error:', error);
+    logError('Vehicle uploadVehicleImageOnly error', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Server error during image upload',
@@ -268,7 +269,7 @@ export const createDraftWithLicense = async (req: AuthRequest, res: Response) =>
       data: formatDraftResponse(draft),
     });
   } catch (error: any) {
-    console.error('createDraftWithLicense error:', error);
+    logError('Vehicle createDraftWithLicense error', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Failed to create vehicle draft',
@@ -351,7 +352,7 @@ export const uploadDraftDocument = async (req: AuthRequest, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('uploadDraftDocument error:', error);
+    logError('Vehicle uploadDraftDocument error', error);
     return sendError(res, {
       status:
         error.message === 'DRAFT_NOT_FOUND' ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_ERROR,
@@ -375,7 +376,7 @@ export const saveVehicleFromDraft = async (req: AuthRequest, res: Response) => {
       data: vehicle,
     });
   } catch (error: any) {
-    console.error('saveVehicleFromDraft error:', error);
+    logError('Vehicle saveVehicleFromDraft error', error);
 
     const statusMap: Record<string, HttpStatus> = {
       DRAFT_NOT_FOUND: HttpStatus.NOT_FOUND,

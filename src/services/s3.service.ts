@@ -1,6 +1,7 @@
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
 import s3 from "../config/s3.config.js";
+import { logError } from '../utils/logger.js';
 
 export interface S3UploadResult {
     success: boolean;
@@ -62,7 +63,7 @@ export const uploadToS3 = async (options: S3UploadOptions): Promise<S3UploadResu
             key,
         };
     } catch (error) {
-        console.error("S3 upload error:", error);
+        logError('S3 upload error', error);
 
         const errorMessage = error instanceof Error ? error.message : "Unknown S3 upload error";
 

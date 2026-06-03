@@ -25,9 +25,9 @@ notificationRouter.get(
     getNotifications,
 );
 
-// POST /notifications/read — mark notifications as read
+// POST /notifications/mark-read — mark notifications as read
 notificationRouter.post(
-    '/read',
+    '/mark-read',
     validate({ body: markReadSchema }),
     markAsRead,
 );
@@ -37,9 +37,9 @@ notificationRouter.get('/unread-count', getUnreadCount);
 
 // ============ Device Token Routes ============
 
-// POST /notifications/devices/register — register device for push
+// POST /notifications/device-token — register device for push
 notificationRouter.post(
-    '/devices/register',
+    '/device-token',
     validate({ body: registerDeviceSchema }),
     registerDevice,
 );

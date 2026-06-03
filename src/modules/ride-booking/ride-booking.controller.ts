@@ -54,6 +54,22 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 status = HttpStatus.CONFLICT;
                 message = 'You already have an active booking for this ride';
                 break;
+            case 'TOS_NOT_ACCEPTED':
+                status = HttpStatus.FORBIDDEN;
+                message = 'You must accept the Terms of Service before booking a ride';
+                break;
+            case 'USER_BANNED':
+                status = HttpStatus.FORBIDDEN;
+                message = 'Your account has been suspended';
+                break;
+            case 'USER_BLOCKED':
+                status = HttpStatus.FORBIDDEN;
+                message = 'You cannot book this ride';
+                break;
+            case 'FEMALE_ONLY_RIDE':
+                status = HttpStatus.FORBIDDEN;
+                message = 'This ride is for female passengers only';
+                break;
             case 'INVALID_BOOKING_SEGMENT':
                 status = HttpStatus.BAD_REQUEST;
                 message = 'Selected ride segment is invalid';
@@ -179,7 +195,7 @@ export const cancelBooking = async (req: AuthRequest, res: Response) => {
 export const getBookingById = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        const cacheKey = cacheKeys.booking(bookingId);
+        const cacheKey = `${cacheKeys.booking(bookingId)}:user:${req.user.id}`;
 
         const cachedBooking = await getCache(cacheKey);
         if (cachedBooking) {

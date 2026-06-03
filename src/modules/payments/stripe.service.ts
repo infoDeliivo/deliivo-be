@@ -1,6 +1,7 @@
+// @ts-ignore — stripe v21 types bundled via package exports; not resolved by "Node" moduleResolution
 import Stripe from 'stripe';
 import { STRIPE_CURRENCY_DEFAULT, STRIPE_METADATA_KEYS } from './stripe.constants.js';
-import { CreatePaymentIntentInput, CreatePaymentIntentResult } from './stripe.types.js';
+import { ConnectAccountStatus, CreatePaymentIntentInput, CreatePaymentIntentResult } from './stripe.types.js';
 
 let stripeClient: Stripe | null = null;
 
@@ -38,10 +39,56 @@ export const getStripeClient = (): Stripe => {
     return stripeClient;
 };
 
+export const createConnectOnboardingLink = async (
+    userId: string,
+    stripeAccountId: string | null,
+    returnUrl: string,
+    refreshUrl: string
+): Promise<{ accountId: string; onboardingUrl: string }> => {
+    const stripe = getStripeClient();
+
+    let accountId = stripeAccountId;
+    if (!accountId) {
+        const account = await stripe.accounts.create({
+            type: 'express',
+            metadata: { userId },
+        });
+        accountId = account.id;
+    }
+
+    const accountLink = await stripe.accountLinks.create({
+        account: accountId,
+        return_url: returnUrl,
+        refresh_url: refreshUrl,
+        type: 'account_onboarding',
+    });
+
+    return { accountId: accountId as string, onboardingUrl: accountLink.url ?? '' };
+};
+
+export const getConnectAccountStatus = async (
+    stripeAccountId: string
+): Promise<ConnectAccountStatus> => {
+    const stripe = getStripeClient();
+    const account = await stripe.accounts.retrieve(stripeAccountId);
+    return {
+        accountId: account.id,
+        chargesEnabled: account.charges_enabled,
+        payoutsEnabled: account.payouts_enabled,
+        detailsSubmitted: account.details_submitted,
+    };
+};
+
 export const createBookingPaymentIntent = async (
     input: CreatePaymentIntentInput
 ): Promise<CreatePaymentIntentResult> => {
     const stripe = getStripeClient();
+
+    const platformFeePct = parseFloat(process.env.PLATFORM_FEE_PERCENT ?? '0');
+    const applicationFeeAmount =
+        input.driverStripeAccountId && platformFeePct > 0
+            ? Math.round(toMinorUnits(input.amountMajor) * (platformFeePct / 100))
+            : undefined;
 
     const paymentIntent = await stripe.paymentIntents.create(
         {
@@ -53,6 +100,12 @@ export const createBookingPaymentIntent = async (
                 [STRIPE_METADATA_KEYS.passengerId]: input.passengerId,
             },
             automatic_payment_methods: { enabled: true },
+            ...(input.driverStripeAccountId
+                ? {
+                      transfer_data: { destination: input.driverStripeAccountId },
+                      application_fee_amount: applicationFeeAmount,
+                  }
+                : {}),
         },
         { idempotencyKey: `booking-payment-intent:${input.bookingId}` }
     );

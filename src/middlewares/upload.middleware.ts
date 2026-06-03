@@ -20,7 +20,6 @@ const fileFilter = (
     'image/png',
     'image/webp',
   ];
-  console.log(file.mimetype);
   if (!allowedMimeTypes.includes(file.mimetype)) {
     return cb(new Error('Only JPG, PNG, and WEBP images are allowed'));
   }

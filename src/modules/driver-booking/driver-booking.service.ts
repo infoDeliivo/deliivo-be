@@ -30,21 +30,13 @@ const fetchDriverBooking = async (bookingId: string) => {
                 },
             },
             ride: {
-                select: {
-                    id: true,
-                    driverId: true,
-                    originAddress: true,
-                    destinationAddress: true,
-                    departureDate: true,
-                    departureTime: true,
-                    routeDurationSeconds: true,
-                },
                 include: {
                     driver: {
                         select: {
                             id: true,
                             name: true,
                             avatarUrl: true,
+                            dlVerified: true,
                         },
                     },
                 },
@@ -74,6 +66,10 @@ const assertDecisionWindowOpen = (deadlineAt: Date | null) => {
 export const acceptBooking = async (driverId: string, bookingId: string): Promise<DriverBookingResult> => {
     const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
 
+    if (!(booking.ride.driver as any).dlVerified) {
+        throw new Error('DRIVER_NOT_VERIFIED');
+    }
+
     if (booking.status !== BookingStatus.DRIVER_PENDING) {
         throw new Error('BOOKING_NOT_DRIVER_PENDING');
     }
@@ -89,6 +85,8 @@ export const acceptBooking = async (driverId: string, bookingId: string): Promis
         data: {
             status: BookingStatus.CONFIRMED,
             driverDecisionAt: now,
+            pickupOtp,
+            dropOtp,
             pickupOtpHash: hashOtp(pickupOtp),
             pickupOtpExpiresAt: new Date(now.getTime() + PICKUP_OTP_TTL_MS),
             dropOtpHash: hashOtp(dropOtp),
@@ -111,8 +109,6 @@ export const acceptBooking = async (driverId: string, bookingId: string): Promis
         data: {
             bookingId: booking.id,
             rideId: booking.ride.id,
-            pickupOtp,
-            dropOtp,
             deepLink: `app://booking/${booking.id}`,
         },
     });

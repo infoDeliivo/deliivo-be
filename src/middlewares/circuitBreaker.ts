@@ -1,4 +1,5 @@
 import CircuitBreaker from 'opossum';
+import { logError, logWarn, logInfo } from '../utils/logger.js';
 
 export function createCircuitBreaker(action: (...args: unknown[]) => Promise<unknown>) {
   const breaker = new CircuitBreaker(action, {
@@ -11,15 +12,15 @@ export function createCircuitBreaker(action: (...args: unknown[]) => Promise<unk
   });
 
   breaker.on('open', () => {
-    console.error('🚨 Google Routes circuit OPEN');
+    logError('Google Routes circuit OPEN');
   });
 
   breaker.on('halfOpen', () => {
-    console.warn('🟡 Google Routes circuit HALF-OPEN');
+    logWarn('Google Routes circuit HALF-OPEN');
   });
 
   breaker.on('close', () => {
-    console.log('✅ Google Routes circuit CLOSED');
+    logInfo('Google Routes circuit CLOSED');
   });
 
   return breaker;

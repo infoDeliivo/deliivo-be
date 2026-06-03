@@ -1,5 +1,6 @@
 import { prisma } from '../../config/index.js';
 import * as enums from './user.constants.js';
+import { logError } from '../../utils/logger.js';
 import type {
   FullProfileResponse,
   UserBasicInfo,
@@ -28,6 +29,7 @@ export const getMeService = async (userId: string) => {
         avatarUrl: true,
         onboardingStatus: true,
         isVerified: true,
+        isBanned: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -36,9 +38,13 @@ export const getMeService = async (userId: string) => {
     if (!user) {
       return { success: false, user: null, reason: 'User not found' };
     }
+    // GDPR-deleted accounts are anonymized: isBanned=true and email=null
+    if (user.isBanned && !user.email) {
+      return { success: false, user: null, reason: 'Account has been deleted' };
+    }
     return { success: true, user };
   } catch (error) {
-    console.error('getMeService error:', error);
+    logError('getMeService error', error);
     return { success: false, user: null, reason: 'Internal server error' };
   }
 };
@@ -151,7 +157,7 @@ export const getFullProfileService = async (
 
     return { success: true, data: profileData };
   } catch (error) {
-    console.error('getFullProfileService error:', error);
+    logError('getFullProfileService error', error);
     return { success: false, reason: 'INTERNAL_SERVER_ERROR' };
   }
 };
@@ -233,7 +239,7 @@ export const updateFullProfileService = async (
     // Return updated profile
     return getFullProfileService(userId);
   } catch (error) {
-    console.error('updateFullProfileService error:', error);
+    logError('updateFullProfileService error', error);
     return { success: false, reason: 'INTERNAL_SERVER_ERROR' };
   }
 };
@@ -268,7 +274,7 @@ export const completeOnBoardingStep1Service = async (
 
     return { success: true, user };
   } catch (error) {
-    console.error('completeOnBoardingStep1Service error:', error);
+    logError('completeOnBoardingStep1Service error', error);
     return { success: false, user: null, reason: 'Internal server error' };
   }
 };
@@ -302,7 +308,7 @@ export const updateProfileService = async (userId: string, payload: Record<strin
 
     return { success: true, user: updatedUser };
   } catch (error) {
-    console.error('updateProfileService error:', error);
+    logError('updateProfileService error', error);
     return { success: false, reason: 'Internal server error' };
   }
 };
@@ -331,7 +337,7 @@ export const updateAvatarService = async (userId: string, avatarUrl: string) => 
 
     return { success: true, user: updatedUser };
   } catch (error) {
-    console.error('updateAvatarService error:', error);
+    logError('updateAvatarService error', error);
     return { success: false, reason: 'Internal server error' };
   }
 };
@@ -440,7 +446,7 @@ export const getPublicProfileService = async (
 
     return { success: true, data: profileData };
   } catch (error) {
-    console.error('getPublicProfileService error:', error);
+    logError('getPublicProfileService error', error);
     return { success: false, reason: 'INTERNAL_SERVER_ERROR' };
   }
 };

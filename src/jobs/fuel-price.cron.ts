@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { refreshFuelPrice } from '../services/fuel-price.service.js';
+import { logInfo, logError, logDebug } from '../utils/logger.js';
 
 /**
  * Weekly UK fuel price refresh cron job.
@@ -11,18 +12,19 @@ import { refreshFuelPrice } from '../services/fuel-price.service.js';
  */
 export const startFuelPriceCron = () => {
     cron.schedule('0 6 * * 1', async () => {
-        console.log('[CRON] Refreshing UK fuel price...');
+        logDebug('Refreshing UK fuel price');
         try {
             const result = await refreshFuelPrice('GB');
-            console.log(
-                `[CRON] UK fuel price refreshed: £${result.pricePerLiter}/L (effective: ${result.effectiveDate || 'unknown'})`
-            );
+            logInfo('UK fuel price refreshed', {
+                pricePerLiter: result.pricePerLiter,
+                effectiveDate: result.effectiveDate || 'unknown',
+            });
         } catch (error) {
-            console.error('[CRON] UK fuel price refresh failed:', error instanceof Error ? error.message : error);
+            logError('UK fuel price refresh failed', error instanceof Error ? error : undefined);
         }
     }, {
         timezone: 'Europe/London',
     });
 
-    console.log('[CRON] Fuel price refresh scheduled: every Monday at 06:00 UTC');
+    logInfo('Fuel price refresh scheduled: every Monday at 06:00 UTC');
 };

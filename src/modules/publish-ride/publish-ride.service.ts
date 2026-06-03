@@ -1,6 +1,10 @@
 import { prisma } from '../../config/index.js';
-import { RideStatus } from '@prisma/client';
+import { BookingStatus, RideStatus } from '@prisma/client';
 import { ListRidesQuery } from './publish-ride.types.js';
+import { refundPaymentIntent } from '../payments/stripe.service.js';
+import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
+import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
+import { createNotification } from '../notification/notification.service.js';
 
 /* ============================================================
    PUBLISHED RIDE OPERATIONS — DB ONLY
@@ -24,7 +28,6 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
             where,
             include: { 
                 waypoints: { orderBy: { orderIndex: 'asc' } },
-                // @ts-ignore - vehicle relation exists in schema but Prisma types not updated
                 vehicle: {
                     select: {
                         id: true,
@@ -148,7 +151,6 @@ export const getRideById = async (driverId: string, rideId: string) => {
         where: { id: rideId, driverId },
         include: { 
             waypoints: { orderBy: { orderIndex: 'asc' } },
-            // @ts-ignore - vehicle relation exists in schema but Prisma types not updated
             vehicle: {
                 select: {
                     id: true,
@@ -253,7 +255,7 @@ export const getRideById = async (driverId: string, rideId: string) => {
     };
 };
 
-/* ================= CANCEL RIDE ================= */
+/* ================= CANCEL RIDE (with cascade) ================= */
 export const cancelRide = async (driverId: string, rideId: string) => {
     const ride = await prisma.ride.findFirst({
         where: {
@@ -267,8 +269,145 @@ export const cancelRide = async (driverId: string, rideId: string) => {
         throw new Error('RIDE_NOT_FOUND_OR_CANNOT_CANCEL');
     }
 
+    const activeBookings = await prisma.rideBooking.findMany({
+        where: {
+            rideId,
+            status: { in: [BookingStatus.DRIVER_PENDING, BookingStatus.CONFIRMED] },
+        },
+        select: {
+            id: true,
+            passengerId: true,
+            seatsBooked: true,
+            totalPrice: true,
+            paymentAmount: true,
+            paymentCapturedAt: true,
+            stripePaymentIntentId: true,
+        },
+    });
+
+    const bypassPayment = isBypassBookingPaymentMode();
+
+    // Cancel all active bookings, issue refunds, and mark ride cancelled
+    await prisma.$transaction(async (tx) => {
+        await tx.ride.update({
+            where: { id: rideId },
+            data: { status: RideStatus.CANCELLED },
+        });
+
+        for (const booking of activeBookings) {
+            await tx.rideBooking.update({
+                where: { id: booking.id },
+                data: {
+                    status: BookingStatus.CANCELLED,
+                    cancelledAt: new Date(),
+                    cancelledByRole: 'DRIVER',
+                    cancellationReason: 'DRIVER_CANCELLED_RIDE',
+                    refundPercent: 100,
+                    refundAmount: booking.paymentAmount ?? booking.totalPrice,
+                },
+            });
+
+            // Issue Stripe refund last (inside transaction — if this fails, DB rolls back)
+            const isPaymentCaptured = !!(booking.paymentCapturedAt && booking.stripePaymentIntentId);
+            if (!bypassPayment && isPaymentCaptured && booking.stripePaymentIntentId) {
+                const refundAmount = booking.paymentAmount ?? booking.totalPrice;
+                await refundPaymentIntent(
+                    booking.stripePaymentIntentId,
+                    toMinorCurrencyUnits(refundAmount)
+                );
+                await tx.rideBooking.update({
+                    where: { id: booking.id },
+                    data: { refundedAt: new Date() },
+                });
+            }
+        }
+    });
+
+    // Notify all affected passengers (after transaction succeeds)
+    await Promise.all(
+        activeBookings.map((booking) =>
+            createNotification({
+                userId: booking.passengerId,
+                type: 'booking.cancelled.driver_cancelled_ride',
+                title: 'Ride cancelled by driver',
+                body: 'Your driver cancelled the ride. A full refund has been initiated.',
+                data: {
+                    bookingId: booking.id,
+                    rideId,
+                    refundPercent: '100',
+                    deepLink: `app://booking/${booking.id}`,
+                },
+            })
+        )
+    );
+};
+
+/* ================= START RIDE ================= */
+export const startRide = async (driverId: string, rideId: string) => {
+    const ride = await prisma.ride.findFirst({
+        where: { id: rideId, driverId, status: RideStatus.PUBLISHED },
+    });
+
+    if (!ride) {
+        throw new Error('RIDE_NOT_FOUND_OR_CANNOT_START');
+    }
+
     return prisma.ride.update({
         where: { id: rideId },
-        data: { status: RideStatus.CANCELLED },
+        data: { status: RideStatus.IN_PROGRESS },
     });
+};
+
+/* ================= COMPLETE RIDE ================= */
+export const completeRide = async (driverId: string, rideId: string) => {
+    const ride = await prisma.ride.findFirst({
+        where: { id: rideId, driverId, status: RideStatus.IN_PROGRESS },
+    });
+
+    if (!ride) {
+        throw new Error('RIDE_NOT_FOUND_OR_CANNOT_COMPLETE');
+    }
+
+    await prisma.$transaction(async (tx) => {
+        await tx.ride.update({
+            where: { id: rideId },
+            data: { status: RideStatus.COMPLETED },
+        });
+
+        // Auto-complete all bookings still IN_PROGRESS (passenger didn't scan drop OTP)
+        await tx.rideBooking.updateMany({
+            where: {
+                rideId,
+                status: BookingStatus.IN_PROGRESS,
+            },
+            data: {
+                status: BookingStatus.COMPLETED,
+            },
+        });
+    });
+
+    // Notify confirmed passengers to rate the driver
+    const completedBookings = await prisma.rideBooking.findMany({
+        where: {
+            rideId,
+            status: BookingStatus.COMPLETED,
+        },
+        select: { id: true, passengerId: true },
+    });
+
+    await Promise.all(
+        completedBookings.map((booking) =>
+            createNotification({
+                userId: booking.passengerId,
+                type: 'ride.completed',
+                title: 'Ride completed',
+                body: 'Your ride is complete. How was your journey?',
+                data: {
+                    bookingId: booking.id,
+                    rideId,
+                    deepLink: `app://booking/${booking.id}/rate`,
+                },
+            })
+        )
+    );
 };

@@ -53,23 +53,11 @@ interface AdvancedMatchResult extends MatchResult {
 }
 
 type RideBookingWithRider = {
-  id: string;
-  rideId: string;
   passengerId: string;
   seatsBooked: number;
-  totalPrice: number;
   status: BookingStatus;
   pickupWaypointId: string | null;
   dropoffWaypointId: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-  passenger: {
-    id: string;
-    name: string | null;
-    nickName: string | null;
-    phone: string | null;
-    avatarUrl: string | null;
-  };
 };
 
 type RideVehicleDetails = {
@@ -90,33 +78,22 @@ type DriverVehicleDetails = RideVehicleDetails & {
 
 const bookingWithRiderInclude = {
   where: { status: { in: activeBookingStatuses } },
-  orderBy: { createdAt: 'desc' as const },
-  include: {
-    passenger: {
-      select: {
-        id: true,
-        name: true,
-        nickName: true,
-        phone: true,
-        avatarUrl: true,
-      },
-    },
+  select: {
+    passengerId: true,
+    seatsBooked: true,
+    status: true,
+    pickupWaypointId: true,
+    dropoffWaypointId: true,
   },
 };
 
 const mapRideBookings = (bookings: RideBookingWithRider[]) =>
   bookings.map((booking) => ({
-    id: booking.id,
-    rideId: booking.rideId,
     passengerId: booking.passengerId,
     seatsBooked: booking.seatsBooked,
-    totalPrice: booking.totalPrice,
     status: booking.status,
     pickupWaypointId: booking.pickupWaypointId,
     dropoffWaypointId: booking.dropoffWaypointId,
-    createdAt: booking.createdAt,
-    updatedAt: booking.updatedAt,
-    rider: booking.passenger,
   }));
 
 const mapRideVehicle = (vehicle: RideVehicleDetails | null) =>
@@ -526,6 +503,7 @@ export const getRideDetails = async (rideId: string): Promise<RideDetailsRespons
     currency: ride.currency,
     status: ride.status,
     notes: ride.notes,
+    femaleOnly: ride.femaleOnly,
     waypoints,
     isSegmentView: false,
     fullRide,

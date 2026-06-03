@@ -10,6 +10,7 @@ import { decodeViewToken } from '../search-ride/view-token.utils.js';
 import { createBookingPaymentIntent, refundPaymentIntent } from '../payments/stripe.service.js';
 import { createNotification } from '../notification/notification.service.js';
 import { DRIVER_DECISION_NOTIFICATION_TYPE, DRIVER_DECISION_WINDOW_MS } from '../payments/stripe.constants.js';
+import { enqueueDeadlineCheck } from '../../queue/deadline.queue.js';
 import {
     CancelBookingResult,
     CreateBookingInput,
@@ -121,7 +122,8 @@ const calculateBookingPrice = (
 ): PriceBreakdown => {
     const subtotal = basePricePerSeat * seatsBooked;
     const luggageFee = luggageCount * LUGGAGE_FEE_PER_ITEM;
-    const serviceFee = 0; // No service fee for now
+    const platformFeePct = parseFloat(process.env.PLATFORM_FEE_PERCENT ?? '0');
+    const serviceFee = platformFeePct > 0 ? Math.round(subtotal * (platformFeePct / 100) * 100) / 100 : 0;
     const totalPrice = subtotal + luggageFee + serviceFee;
 
     return {
@@ -135,17 +137,13 @@ const calculateBookingPrice = (
     };
 };
 
-const validateBookingSeats = (seatsBooked: number, availableSeats: number) => {
+const validateBookingSeats = (seatsBooked: number) => {
     if (seatsBooked < 1) {
         throw new Error('MINIMUM_ONE_SEAT_REQUIRED');
     }
 
     if (seatsBooked > MAX_SEATS_PER_BOOKING) {
         throw new Error('MAXIMUM_SEATS_EXCEEDED');
-    }
-
-    if (seatsBooked > availableSeats) {
-        throw new Error('INSUFFICIENT_SEATS');
     }
 };
 
@@ -379,11 +377,25 @@ export const createBooking = async (
     passengerId: string,
     input: CreateBookingInput
 ): Promise<BookingResponse> => {
+    // Guard: passenger must have accepted ToS and must not be banned
+    const passenger = await prisma.user.findUnique({
+        where: { id: passengerId },
+        select: { tosAcceptedAt: true, isBanned: true },
+    });
+
+    if (!passenger?.tosAcceptedAt) {
+        throw new Error('TOS_NOT_ACCEPTED');
+    }
+
+    if (passenger.isBanned) {
+        throw new Error('USER_BANNED');
+    }
+
     const bypassBookingPaymentMode = isBypassBookingPaymentMode();
     const now = new Date();
     const paymentCapturedAt = bypassBookingPaymentMode ? now : null;
-    const driverDecisionDeadlineAt = bypassBookingPaymentMode 
-        ? new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS) 
+    const driverDecisionDeadlineAt = bypassBookingPaymentMode
+        ? new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS)
         : null;
     const {
         rideId,
@@ -407,6 +419,8 @@ export const createBooking = async (
                         id: true,
                         name: true,
                         avatarUrl: true,
+                        stripeAccountId: true,
+                        stripeOnboardingComplete: true,
                     },
                 },
                 waypoints: {
@@ -423,8 +437,21 @@ export const createBooking = async (
             throw new Error('CANNOT_BOOK_OWN_RIDE');
         }
 
-        // Validate seat booking
-        validateBookingSeats(seatsBooked, ride.availableSeats);
+        // Check if either party has blocked the other
+        const block = await tx.userBlock.findFirst({
+            where: {
+                OR: [
+                    { blockerId: passengerId, blockedId: ride.driverId },
+                    { blockerId: ride.driverId, blockedId: passengerId },
+                ],
+            },
+        });
+        if (block) {
+            throw new Error('USER_BLOCKED');
+        }
+
+        // Validate seat count (min/max)
+        validateBookingSeats(seatsBooked);
 
         const existingBooking = await tx.rideBooking.findFirst({
             where: {
@@ -443,8 +470,16 @@ export const createBooking = async (
             select: {
                 name: true,
                 avatarUrl: true,
+                salutation: true,
             },
         });
+
+        if ((ride as any).femaleOnly) {
+            const allowed = ['MS', 'MRS', 'MX'];
+            if (!passenger?.salutation || !allowed.includes(passenger.salutation)) {
+                throw new Error('FEMALE_ONLY_RIDE');
+            }
+        }
 
         let pickupRef: SegmentPointRef;
         let dropRef: SegmentPointRef;
@@ -521,12 +556,20 @@ export const createBooking = async (
             },
         });
 
-        await tx.ride.update({
-            where: { id: rideId },
+        const seatUpdate = await tx.ride.updateMany({
+            where: {
+                id: rideId,
+                availableSeats: { gte: seatsBooked },
+                status: RideStatus.PUBLISHED,
+            },
             data: {
                 availableSeats: { decrement: seatsBooked },
             },
         });
+
+        if (seatUpdate.count === 0) {
+            throw new Error('INSUFFICIENT_SEATS');
+        }
 
         return {
             booking,
@@ -567,12 +610,15 @@ export const createBooking = async (
                 totalPrice: String(bookingSeed.booking.totalPrice),
                 currency: bookingSeed.booking.paymentCurrency ?? bookingSeed.ride.currency,
                 decisionDeadlineAt: driverDecisionDeadlineAt?.toISOString() ?? '',
-                decisionTimeRemainingSeconds: driverDecisionDeadlineAt 
+                decisionTimeRemainingSeconds: driverDecisionDeadlineAt
                     ? String(Math.max(0, Math.floor((driverDecisionDeadlineAt.getTime() - Date.now()) / 1000)))
                     : '0',
                 deepLink: `app://driver/booking-request/${bookingSeed.booking.id}`,
             },
         });
+
+        // Enqueue deadline check — replaces the cron job (BullMQ fires once per booking)
+        await enqueueDeadlineCheck(bookingSeed.booking.id, DRIVER_DECISION_WINDOW_MS);
 
         return mapBookingResponse(bookingSeed.booking as unknown as BookingWithRideDetails, {
             luggageCount,
@@ -583,12 +629,18 @@ export const createBooking = async (
 
     let paymentIntent: Awaited<ReturnType<typeof createBookingPaymentIntent>>;
     try {
+        const driverStripeAccountId =
+            (bookingSeed.ride.driver as any).stripeOnboardingComplete
+                ? (bookingSeed.ride.driver as any).stripeAccountId ?? null
+                : null;
+
         paymentIntent = await createBookingPaymentIntent({
             bookingId: bookingSeed.booking.id,
             rideId: bookingSeed.booking.rideId,
             passengerId,
             amountMajor: bookingSeed.priceBreakdown.totalPrice,
             currency: bookingSeed.ride.currency,
+            driverStripeAccountId,
         });
     } catch {
         await prisma.$transaction(async (tx) => {
@@ -787,18 +839,11 @@ export const cancelBooking = async (
         ? getRiderRefundAmount(booking.paymentAmount ?? booking.totalPrice, refundPercent)
         : 0;
 
-    let refundInitiated = false;
-    if (isPaymentCaptured && refundAmount > 0 && booking.stripePaymentIntentId) {
-        await refundPaymentIntent(
-            booking.stripePaymentIntentId,
-            toMinorCurrencyUnits(refundAmount)
-        );
-        refundInitiated = true;
-    }
-
-    const cancellationReason = isDeadlineExpired 
-        ? 'DRIVER_NO_RESPONSE' 
+    const cancellationReason = isDeadlineExpired
+        ? 'DRIVER_NO_RESPONSE'
         : 'PASSENGER_CANCELLED';
+
+    let refundInitiated = false;
 
     const updated = await prisma.$transaction(async (tx) => {
         const current = await tx.rideBooking.findFirst({
@@ -827,7 +872,6 @@ export const cancelBooking = async (
                 cancellationReason,
                 refundPercent,
                 refundAmount,
-                refundedAt: refundInitiated ? new Date() : undefined,
             },
         });
 
@@ -837,6 +881,19 @@ export const cancelBooking = async (
                 availableSeats: { increment: current.seatsBooked },
             },
         });
+
+        // Issue refund last — DB writes above must succeed before we charge Stripe
+        if (isPaymentCaptured && refundAmount > 0 && booking.stripePaymentIntentId) {
+            await refundPaymentIntent(
+                booking.stripePaymentIntentId,
+                toMinorCurrencyUnits(refundAmount)
+            );
+            refundInitiated = true;
+            await tx.rideBooking.update({
+                where: { id: bookingId },
+                data: { refundedAt: new Date() },
+            });
+        }
 
         return current;
     });
@@ -870,7 +927,6 @@ export const getBookingById = async (
                             avatarUrl: true,
                         },
                     },
-                    // @ts-ignore - vehicle relation exists in schema but Prisma types not updated
                     vehicle: {
                         select: {
                             id: true,
@@ -894,39 +950,12 @@ export const getBookingById = async (
 
     if (!booking) return null;
 
-    // Get OTPs from notification if booking is confirmed
-    let pickupOtp: string | null = null;
-    let dropOtp: string | null = null;
-
-    if (booking.status === BookingStatus.CONFIRMED || booking.status === BookingStatus.IN_PROGRESS) {
-        const notification = await prisma.notification.findFirst({
-            where: {
-                userId: passengerId,
-                type: 'booking.driver.accepted',
-                data: {
-                    path: ['bookingId'],
-                    equals: bookingId,
-                },
-            },
-            orderBy: {
-                createdAt: 'desc',
-            },
-        });
-
-        if (notification && notification.data) {
-            const data = notification.data as any;
-            pickupOtp = data.pickupOtp || null;
-            dropOtp = data.dropOtp || null;
-        }
-    }
-
     const response = mapBookingResponse(booking as unknown as BookingWithRideDetails);
-    
-    // Add OTPs to response
+
     return {
         ...response,
-        pickupOtp,
-        dropOtp,
+        pickupOtp: (booking as any).pickupOtp ?? null,
+        dropOtp: (booking as any).dropOtp ?? null,
         pickupOtpVerifiedAt: booking.pickupOtpVerifiedAt,
         dropOtpVerifiedAt: booking.dropOtpVerifiedAt,
     };
@@ -965,7 +994,6 @@ export const listUserBookings = async (
                                 avatarUrl: true,
                             },
                         },
-                        // @ts-ignore - vehicle relation exists in schema but Prisma types not updated
                         vehicle: {
                             select: {
                                 id: true,
@@ -1042,8 +1070,11 @@ export const getBookingPricePreview = async (
         throw new Error('CANNOT_BOOK_OWN_RIDE');
     }
 
-    // Validate seat booking
-    validateBookingSeats(seatsBooked, ride.availableSeats);
+    // Validate seat count (min/max) and availability
+    validateBookingSeats(seatsBooked);
+    if (seatsBooked > ride.availableSeats) {
+        throw new Error('INSUFFICIENT_SEATS');
+    }
 
     let pickupRef: SegmentPointRef;
     let dropRef: SegmentPointRef;

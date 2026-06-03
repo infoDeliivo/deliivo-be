@@ -82,6 +82,7 @@ export const updatePricingSchema = z.object({
 /* ================= UPDATE NOTES SCHEMA ================= */
 export const updateNotesSchema = z.object({
     notes: z.string().max(150, 'Notes must be 150 characters or less'),
+    femaleOnly: z.boolean().optional(),
 });
 
 /* ================= PUBLISH RIDE SCHEMA ================= */

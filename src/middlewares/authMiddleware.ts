@@ -26,6 +26,7 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
           phone: true,
           onboardingStatus: true,
           isVerified: true,
+          isBanned: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -33,6 +34,11 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
 
       if (!req.user) {
         return res.status(401).json({ message: 'Not authorized, user not found' });
+      }
+
+      // GDPR-deleted accounts: isBanned=true with no email (anonymized)
+      if (req.user.isBanned && !req.user.email) {
+        return res.status(401).json({ message: 'Not authorized, account has been deleted' });
       }
 
       return next();

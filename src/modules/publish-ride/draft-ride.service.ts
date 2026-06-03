@@ -1,4 +1,5 @@
 import redis from '../../cache/redis.js';
+import { logWarn } from '../../utils/logger.js';
 import { prisma } from '../../config/index.js';
 import { RideStatus } from '@prisma/client';
 import {
@@ -111,6 +112,9 @@ interface DraftRide {
 
     // Notes (Step 13)
     notes?: string;
+
+    // Preferences
+    femaleOnly?: boolean;
 }
 
 /**
@@ -225,28 +229,55 @@ export const computeRouteOptions = async (
     const origin = { latitude: draft.originLat, longitude: draft.originLng };
     const destination = { latitude: draft.destinationLat, longitude: draft.destinationLng };
 
-    // Build intermediate waypoints from stopovers
-    const intermediateWaypoints = (draft.stopovers || [])
-        .map(wp => ({ latitude: wp.lat, longitude: wp.lng }));
+    let data: any;
 
-    // Call Google Routes API
-    const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': process.env.GOOGLE_MAPS_API_KEY || '',
-            'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
-        },
-        body: JSON.stringify({
-            origin: { location: { latLng: origin } },
-            destination: { location: { latLng: destination } },
-            intermediates: intermediateWaypoints.map(wp => ({ location: { latLng: wp } })),
-            travelMode: 'DRIVE',
-            computeAlternativeRoutes: includeAlternatives,
-        }),
-    });
+    if (process.env.GOOGLE_MAPS_MOCK_MODE === 'true') {
+        // Mock mode: generate a synthetic route based on haversine distance
+        const distMeters = Math.round(
+            haversineDistance(
+                { lat: origin.latitude, lng: origin.longitude! },
+                { lat: destination.latitude, lng: destination.longitude! }
+            )
+        );
+        const durationSeconds = Math.round(distMeters / 25); // ~90 km/h average
+        // Minimal encoded polyline: straight line from origin to destination
+        const encodedPolyline = mockEncodePolyline([
+            [origin.latitude, origin.longitude!],
+            [destination.latitude, destination.longitude!],
+        ]);
+        data = {
+            routes: [
+                {
+                    distanceMeters: distMeters,
+                    duration: `${durationSeconds}s`,
+                    polyline: { encodedPolyline },
+                },
+            ],
+        };
+    } else {
+        // Build intermediate waypoints from stopovers
+        const intermediateWaypoints = (draft.stopovers || [])
+            .map(wp => ({ latitude: wp.lat, longitude: wp.lng }));
 
-    const data = await response.json();
+        // Call Google Routes API
+        const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Goog-Api-Key': process.env.GOOGLE_MAPS_API_KEY || '',
+                'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+            },
+            body: JSON.stringify({
+                origin: { location: { latLng: origin } },
+                destination: { location: { latLng: destination } },
+                intermediates: intermediateWaypoints.map(wp => ({ location: { latLng: wp } })),
+                travelMode: 'DRIVE',
+                computeAlternativeRoutes: includeAlternatives,
+            }),
+        });
+
+        data = await response.json();
+    }
 
     if (!data.routes || data.routes.length === 0) {
         throw new Error('NO_ROUTES_FOUND');
@@ -350,6 +381,45 @@ function decodePolyline(encoded: string): { lat: number; lng: number }[] {
     }
 
     return points;
+}
+
+/**
+ * Encode an array of [lat, lng] pairs into a Google-encoded polyline string.
+ * Used in mock mode to generate synthetic route polylines.
+ */
+function mockEncodePolyline(points: [number, number][]): string {
+    let encoded = '';
+    let prevLat = 0;
+    let prevLng = 0;
+
+    for (const [lat, lng] of points) {
+        const latE5 = Math.round(lat * 1e5);
+        const lngE5 = Math.round(lng * 1e5);
+
+        encoded += encodeSignedNumber(latE5 - prevLat);
+        encoded += encodeSignedNumber(lngE5 - prevLng);
+
+        prevLat = latE5;
+        prevLng = lngE5;
+    }
+
+    return encoded;
+}
+
+function encodeSignedNumber(num: number): string {
+    let sgn_num = num << 1;
+    if (num < 0) sgn_num = ~sgn_num;
+    return encodeUnsignedNumber(sgn_num);
+}
+
+function encodeUnsignedNumber(num: number): string {
+    let encoded = '';
+    while (num >= 0x20) {
+        encoded += String.fromCharCode((0x20 | (num & 0x1f)) + 63);
+        num >>= 5;
+    }
+    encoded += String.fromCharCode(num + 63);
+    return encoded;
 }
 
 /**
@@ -477,7 +547,7 @@ export const getStopoversAlongRoute = async (
             }
         } catch (err) {
             // Skip failed queries silently, continue with other points
-            console.error('Places API error for point:', point, err);
+            logWarn('Places API error for point', { point, error: err instanceof Error ? err.message : err });
         }
     }
 
@@ -651,10 +721,14 @@ export const updatePricing = async (
 
 export const updateNotes = async (
     driverId: string,
-    notes: string
+    notes: string,
+    femaleOnly?: boolean
 ): Promise<DraftRide> => {
     const draft = await getDraft(driverId);
     draft.notes = notes;
+    if (femaleOnly !== undefined) {
+        draft.femaleOnly = femaleOnly;
+    }
     draft.step = Math.max(draft.step, 13);
     return saveDraft(draft);
 };
@@ -678,6 +752,20 @@ export const publishRide = async (driverId: string) => {
     }
     if (!draft.totalSeats || !draft.basePricePerSeat) {
         throw new Error('CAPACITY_AND_PRICING_REQUIRED');
+    }
+
+    // Validate driver has accepted ToS and has verified DL
+    const driver = await prisma.user.findUnique({
+        where: { id: driverId },
+        select: { dlVerified: true, tosAcceptedAt: true },
+    });
+
+    if (!driver?.tosAcceptedAt) {
+        throw new Error('TOS_NOT_ACCEPTED');
+    }
+
+    if (!driver?.dlVerified) {
+        throw new Error('DRIVER_NOT_VERIFIED');
     }
 
     // Validate user has a verified vehicle
@@ -726,6 +814,7 @@ export const publishRide = async (driverId: string) => {
                 backSeatOnly: draft.backSeatOnly ?? false,
 
                 notes: draft.notes || null,
+                femaleOnly: draft.femaleOnly ?? false,
                 status: RideStatus.PUBLISHED,
             },
         });

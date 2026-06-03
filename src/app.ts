@@ -13,28 +13,39 @@ import {
   rideBookingRouter,
   driverBookingRouter,
   paymentsWebhookRouter,
+  paymentsConnectRouter,
   chatRouter,
   notificationRouter,
   ratingsRouter,
   dlVerificationRouter,
+  adminRouter,
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
-import { protect, errorHandler } from './middlewares/index.js';
-import { startBookingDeadlineChecker } from './jobs/booking-deadline-checker.job.js';
+import { protect, errorHandler, rateLimiter, otpLimiter } from './middlewares/index.js';
+import './queue/deadline.queue.js'; // start BullMQ deadline worker
+import './queue/maintenance.queue.js'; // start nightly maintenance worker
 
 const app = express();
 
-app.use(cors());
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : [];
+
+app.use(cors({
+    origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+    credentials: true,
+}));
 app.use(helmet());
+app.use(rateLimiter);
 
 // ⚠️ IMPORTANT: Webhook route MUST come BEFORE express.json()
 // Stripe needs the raw body for signature verification
 app.use('/api/v1/payments', express.raw({ type: 'application/json' }), paymentsWebhookRouter);
 
 // Now apply JSON parsing for all other routes
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50kb' }));
+app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
@@ -42,6 +53,9 @@ app.get('/health', (req, res) => {
 
 app.use(docsRouter);
 
+app.use('/api/v1/auth/otp/request', otpLimiter);
+app.use('/api/v1/auth/otp/resend', otpLimiter);
+app.use('/api/v1/auth/otp/verify', otpLimiter);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', protect, userRouter);
 app.use('/api/v1/publish-ride', protect, publishRideRouter);
@@ -55,10 +69,9 @@ app.use('/api/v1/chat', protect, chatRouter);
 app.use('/api/v1/notifications', protect, notificationRouter);
 app.use('/api/v1/ratings', protect, ratingsRouter);
 app.use('/api/v1/dl-verification', dlVerificationRouter);
+app.use('/api/v1/payments/connect', protect, paymentsConnectRouter);
+app.use('/api/v1/admin', protect, adminRouter);
 
 app.use(errorHandler);
-
-// Start background jobs
-startBookingDeadlineChecker();
 
 export default app;

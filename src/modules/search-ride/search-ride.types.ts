@@ -105,17 +105,17 @@ export interface SearchRideBookedRider {
 }
 
 export interface SearchRideBooking {
-    id: string;
-    rideId: string;
+    id?: string;
+    rideId?: string;
     passengerId: string;
     seatsBooked: number;
-    totalPrice: number;
+    totalPrice?: number;
     status: BookingStatus;
     pickupWaypointId: string | null;
     dropoffWaypointId: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-    rider: SearchRideBookedRider;
+    createdAt?: Date;
+    updatedAt?: Date;
+    rider?: SearchRideBookedRider;
 }
 
 /* ================= SEARCH RESPONSE ================= */
@@ -132,6 +132,7 @@ export interface SearchRideResponse {
 /* ================= RIDE DETAILS RESPONSE ================= */
 export interface RideDetailsResponse extends SearchRideResult {
     notes: string | null;
+    femaleOnly?: boolean;
     waypoints: WaypointInfo[];
     totalSeats: number;
     isSegmentView?: boolean;

@@ -7,6 +7,11 @@ datasource db {
 }
 
 // ENUMS
+enum UserRole {
+  USER
+  ADMIN
+}
+
 enum OnboardingStatus {
   PENDING
   COMPLETED
@@ -74,9 +79,20 @@ model User {
 
   avatarUrl String?
 
+  role             UserRole         @default(USER)
+  isBanned         Boolean          @default(false)
+
   onboardingStatus OnboardingStatus @default(PENDING)
   isVerified       Boolean          @default(false)
   dlVerified       Boolean          @default(false)
+
+  stripeAccountId          String?
+  stripeOnboardingComplete Boolean @default(false)
+
+  tosAcceptedAt     DateTime?
+  tosVersion        String?
+  privacyAcceptedAt DateTime?
+  privacyVersion    String?
 
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
@@ -101,6 +117,12 @@ model User {
 
   // DL Verification relations
   dlVerifications DlVerification[]
+
+  // Report / Block relations
+  reportsMade     UserReport[] @relation("ReportsMade")
+  reportsReceived UserReport[] @relation("ReportsReceived")
+  blocksInitiated UserBlock[]  @relation("BlocksInitiated")
+  blocksReceived  UserBlock[]  @relation("BlocksReceived")
 
   @@index([id])
 }
@@ -251,6 +273,7 @@ model Ride {
   // Luggage & seating preferences
   maxLuggagePerPerson Int     @default(2)
   backSeatOnly        Boolean @default(false)
+  femaleOnly          Boolean @default(false)
 
   // Additional info
   notes String?
@@ -332,6 +355,8 @@ model RideBooking {
   driverCancellationReason String?
   driverPenaltyAppliedAt  DateTime?
   driverPenaltyValue      Float?
+  pickupOtp               String?
+  dropOtp                 String?
   pickupOtpHash           String?
   pickupOtpExpiresAt      DateTime?
   pickupOtpVerifiedAt     DateTime?
@@ -494,6 +519,39 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([userId, isRead])
+}
+
+// ============ REPORT / BLOCK MODELS ============
+model UserReport {
+  id         String @id @default(uuid())
+  reporterId String
+  reportedId String
+  reporter   User   @relation("ReportsMade", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported   User   @relation("ReportsReceived", fields: [reportedId], references: [id], onDelete: Cascade)
+
+  reason    String
+  details   String?
+  resolved  Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([reporterId, reportedId])
+  @@index([reportedId])
+  @@index([resolved, createdAt])
+}
+
+model UserBlock {
+  id        String @id @default(uuid())
+  blockerId String
+  blockedId String
+  blocker   User   @relation("BlocksInitiated", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User   @relation("BlocksReceived", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
 }
 
 // ============ DL VERIFICATION MODELS ============

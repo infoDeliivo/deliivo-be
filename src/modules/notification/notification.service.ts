@@ -65,7 +65,7 @@ export const createNotification = async (input: CreateNotificationInput) => {
             logger.warn(`⚠️ This means WebSocket server may not be initialized`);
         } else {
             logger.info(`✅ Socket.IO instance is available`);
-            const socketIds = getUserSocketIds(userId);
+            const socketIds = await getUserSocketIds(userId);
             logger.info(`📡 User ${userId} has ${socketIds.length} active socket(s): ${socketIds.join(', ')}`);
 
             if (socketIds.length > 0) {

@@ -26,6 +26,7 @@ out/
 .env
 .env.*
 !.env.example
+!.env.test.example
 
 # ========================
 # Logs
@@ -45,6 +46,8 @@ pids/
 # ========================
 coverage/
 .nyc_output/
+tests/e2e/report.html
+tests/e2e/.test-state.json
 
 # ========================
 # Cache

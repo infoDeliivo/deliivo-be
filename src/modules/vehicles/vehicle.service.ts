@@ -111,7 +111,6 @@ export const updateVehicle = async (
   if (!vehicle) {
     return { success: false, message: 'Vehicle not found' }
   }
-  console.log(update);
   const data = await prisma.vehicle.update({
     where: { id: vehicleId },
     data: update,

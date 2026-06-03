@@ -5,6 +5,7 @@ import { clusterStops } from './google.cluster.js';
 import redis from '../../cache/redis.js';
 import polyline from '@mapbox/polyline';
 import { createCircuitBreaker } from '../../middlewares/circuitBreaker.js';
+import { logWarn } from '../../utils/logger.js';
 const routesBreaker = createCircuitBreaker(googleHttp.routes);
 
 /**
@@ -24,7 +25,6 @@ export const googleService = {
 
     // Fetch from Google API
     const response: any = await googleHttp.autocomplete({ input, location, radius, types });
-    console.log(response);
 
     const predictions = response.predictions;
 
@@ -44,7 +44,6 @@ export const googleService = {
     if (cached) return JSON.parse(cached);
 
     const response: any = await googleHttp.placeDetails(placeId);
-    console.log(response);
 
     const result = response.result;
 
@@ -88,7 +87,7 @@ export const googleService = {
         results.push(result);
       } catch (err: any) {
         if (isBreakerOpen(err)) {
-          console.warn('⚠️ Google Routes breaker is open, returning cached/partial data');
+          logWarn('Google Routes breaker open, returning cached data');
           const fallback = await redis.get(cacheKey);
           if (fallback) return JSON.parse(fallback);
           continue;
@@ -158,7 +157,7 @@ export const googleService = {
       return routesWithDecoded;
     } catch (err: any) {
       if (isBreakerOpen(err)) {
-        console.warn('⚠️ Google Routes breaker is open, returning cached multi-route if available');
+        logWarn('Google Routes breaker open, returning cached multi-route');
         const fallback = await redis.get(cacheKey);
         if (fallback) return JSON.parse(fallback);
       }

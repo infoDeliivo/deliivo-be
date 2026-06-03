@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { logError } from '../../utils/logger.js';
 import * as SearchRideService from './search-ride.service.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
@@ -8,7 +9,7 @@ import { SearchRideQuery, EnhancedSearchRideQuery } from './search-ride.types.js
 // Cache key helpers
 const cacheKeys = {
     searchResults: (query: SearchRideQuery, viewerId?: string) =>
-        `search:v2:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${viewerId || 'anon'}`,
+        `search:v2:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${query.maxPrice || ''}:${query.femaleOnly || ''}:${viewerId || 'anon'}`,
     rideDetails: (id: string, segmentId?: string) =>
         `ride:details:${id}:${segmentId || 'full'}:v2`,
 };
@@ -255,7 +256,7 @@ export const searchRidesAdvanced = async (req: AuthRequest, res: Response) => {
             data: result,
         });
     } catch (error: any) {
-        console.error('Advanced search error:', error);
+        logError('Advanced search error', error);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: error.message || 'Failed to search rides',

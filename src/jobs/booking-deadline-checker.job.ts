@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { checkExpiredDeadlines } from '../services/booking-deadline-checker.service.js';
+import { logInfo, logError } from '../utils/logger.js';
 
 // Run every minute
 export const startBookingDeadlineChecker = () => {
@@ -7,14 +8,16 @@ export const startBookingDeadlineChecker = () => {
         try {
             const result = await checkExpiredDeadlines();
             if (result.initialExpired > 0 || result.extendedExpired > 0) {
-                console.log(
-                    `[Cron] Deadline Checker: ${result.initialExpired} expired, ${result.extendedExpired} auto-cancelled at ${result.timestamp}`
-                );
+                logInfo('Checked expired deadlines', {
+                    initialExpired: result.initialExpired,
+                    extendedExpired: result.extendedExpired,
+                    timestamp: result.timestamp,
+                });
             }
         } catch (error) {
-            console.error('[Cron] Error checking expired deadlines:', error);
+            logError('Error checking expired deadlines', error);
         }
     });
 
-    console.log('[Cron] Booking deadline checker started (runs every minute)');
+    logInfo('Booking deadline checker started (runs every minute)');
 };
