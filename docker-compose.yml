@@ -1,0 +1,128 @@
+services:
+
+  # ── Infrastructure ────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: carpooling
+      POSTGRES_USER: ${POSTGRES_USER:-carpooling}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-carpooling}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-carpooling} -d carpooling"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  # ── Migration (runs once, exits) ──────────────────────────────────────────
+  # Explicit one-shot migration service for local dev.
+  # Guarantees migrations are fully applied before any app service starts.
+  # On Railway this is handled by docker-entrypoint.sh inside each container.
+
+  migrate:
+    build:
+      context: .
+      target: runner
+    # Override the entrypoint to skip the migration step — just run migrate
+    # directly, then exit. This avoids running migrations twice for the api.
+    entrypoint: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ── Application services ──────────────────────────────────────────────────
+
+  api:
+    build:
+      context: .
+      target: runner
+    # Uses default ENTRYPOINT (docker-entrypoint.sh) + CMD (node dist/server.js)
+    # entrypoint runs migrate deploy (idempotent, fast), then starts server
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: "3000"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  mail-worker:
+    build:
+      context: .
+      target: runner
+    command: ["node", "dist/modules/mail/mail.worker.js"]
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  sms-worker:
+    build:
+      context: .
+      target: runner
+    command: ["node", "dist/modules/sms/sms.worker.js"]
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

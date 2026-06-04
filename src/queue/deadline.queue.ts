@@ -31,7 +31,7 @@ export const enqueueDeadlineCheck = async (bookingId: string, delayMs: number) =
     );
 };
 
-const worker = new Worker(
+export const deadlineWorker = new Worker(
     QUEUE_NAME,
     async (job: any) => {
         const { bookingId } = job.data as { bookingId: string };
@@ -45,7 +45,7 @@ const worker = new Worker(
     { connection: bullRedis, concurrency: 5 }
 );
 
-worker.on('failed', (job: any, err: any) => {
+deadlineWorker.on('failed', (job: any, err: any) => {
     logError('DeadlineQueue job failed', err, { jobId: job?.id });
 });
 

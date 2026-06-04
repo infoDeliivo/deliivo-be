@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import { prisma } from './config/index.js';
+import redis from './cache/redis.js';
 
 import {
   authRouter,
@@ -22,7 +24,7 @@ import {
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
-import { protect, errorHandler, rateLimiter, otpLimiter } from './middlewares/index.js';
+import { protect, errorHandler, rateLimiter, otpLimiter, requestTimeout } from './middlewares/index.js';
 import './queue/deadline.queue.js'; // start BullMQ deadline worker
 import './queue/maintenance.queue.js'; // start nightly maintenance worker
 
@@ -46,9 +48,27 @@ app.use('/api/v1/payments', express.raw({ type: 'application/json' }), paymentsW
 // Now apply JSON parsing for all other routes
 app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
+app.use(requestTimeout);
 
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+app.get('/health', async (req, res) => {
+  const checks: Record<string, boolean> = { database: false, redis: false };
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.database = true;
+  } catch {}
+
+  try {
+    await redis.ping();
+    checks.redis = true;
+  } catch {}
+
+  const healthy = checks.database && checks.redis;
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'ok' : 'degraded',
+    checks,
+    uptime: process.uptime(),
+  });
 });
 
 app.use(docsRouter);

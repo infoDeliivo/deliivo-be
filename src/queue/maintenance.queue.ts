@@ -20,7 +20,7 @@ maintenanceQueue.add(
     }
 );
 
-new Worker(
+export const maintenanceWorker = new Worker(
     QUEUE_NAME,
     async () => {
         const now = new Date();

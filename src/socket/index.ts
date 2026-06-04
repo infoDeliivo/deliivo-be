@@ -1,5 +1,4 @@
 import { Server, Socket } from 'socket.io';
-import { createClient } from 'redis';
 import { createAdapter } from '@socket.io/redis-adapter';
 import jwt from 'jsonwebtoken';
 import http from 'http';
@@ -55,18 +54,11 @@ export const initSocket = async (server: http.Server) => {
         pingTimeout: 60000,
     });
 
-    // Setup Redis adapter for horizontal scaling
+    // Setup Redis adapter for horizontal scaling (uses ioredis duplicates)
     try {
-        const redisUrl =
-            process.env.REDIS_URL ||
-            `redis://${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || 6379}`;
-
-        const pubClient = createClient({
-            url: redisUrl,
-        });
-        const subClient = pubClient.duplicate();
-        await Promise.all([pubClient.connect(), subClient.connect()]);
-        io.adapter(createAdapter(pubClient, subClient));
+        const pubClient = redis.duplicate();
+        const subClient = redis.duplicate();
+        io.adapter(createAdapter(pubClient as any, subClient as any));
         logger.info('✅ Socket.IO Redis adapter connected');
     } catch (error) {
         logger.warn('⚠️ Redis adapter failed, running without horizontal scaling:', error);

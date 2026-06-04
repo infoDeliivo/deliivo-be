@@ -292,6 +292,7 @@ model Ride {
   @@index([vehicleId])
   @@index([status])
   @@index([departureDate])
+  @@index([status, departureDate])
 }
 
 model RideWaypoint {
@@ -373,6 +374,8 @@ model RideBooking {
   @@index([rideId])
   @@index([passengerId])
   @@index([status])
+  @@index([rideId, status])
+  @@index([passengerId, status])
   @@index([driverDecisionDeadlineAt])
 }
 
@@ -485,6 +488,7 @@ model Message {
 
   @@unique([senderId, clientMsgId])
   @@index([conversationId, createdAt])
+  @@index([conversationId, receiverId, readAt])
   @@index([receiverId, deliveredAt, createdAt])
 }
 

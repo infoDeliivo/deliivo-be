@@ -1,15 +1,8 @@
 import { Queue, Worker } from 'bullmq';
-import { Redis } from 'ioredis';
 import logger from '../utils/logger.js';
+import { bullRedis } from '../queue/redisConnection.js';
 
-const connection = process.env.REDIS_URL
-    ? new Redis(process.env.REDIS_URL)
-    : {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
-    };
-
-export const notificationQueue = new Queue('notifications', { connection });
+export const notificationQueue = new Queue('notifications', { connection: bullRedis });
 
 const worker = new Worker(
     'notifications',
@@ -19,7 +12,7 @@ const worker = new Worker(
         await new Promise((resolve) => setTimeout(resolve, 1000));
         logger.info(`Job ${job.id} completed`);
     },
-    { connection }
+    { connection: bullRedis }
 );
 
 worker.on('completed', (job: any) => {

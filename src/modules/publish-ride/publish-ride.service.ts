@@ -294,31 +294,42 @@ export const cancelRide = async (driverId: string, rideId: string) => {
             data: { status: RideStatus.CANCELLED },
         });
 
+        // Batch update all active bookings at once
+        const now = new Date();
+        await tx.rideBooking.updateMany({
+            where: { rideId, status: { in: ['CONFIRMED', 'DRIVER_PENDING'] } },
+            data: {
+                status: 'CANCELLED',
+                cancelledAt: now,
+                cancelledByRole: 'DRIVER',
+                cancellationReason: 'DRIVER_CANCELLED_RIDE',
+                refundPercent: 100,
+            },
+        });
+
+        // Set refund amounts individually (updateMany can't use per-row computed values)
         for (const booking of activeBookings) {
             await tx.rideBooking.update({
                 where: { id: booking.id },
-                data: {
-                    status: BookingStatus.CANCELLED,
-                    cancelledAt: new Date(),
-                    cancelledByRole: 'DRIVER',
-                    cancellationReason: 'DRIVER_CANCELLED_RIDE',
-                    refundPercent: 100,
-                    refundAmount: booking.paymentAmount ?? booking.totalPrice,
-                },
+                data: { refundAmount: booking.paymentAmount ?? booking.totalPrice },
             });
+        }
 
-            // Issue Stripe refund last (inside transaction — if this fails, DB rolls back)
-            const isPaymentCaptured = !!(booking.paymentCapturedAt && booking.stripePaymentIntentId);
-            if (!bypassPayment && isPaymentCaptured && booking.stripePaymentIntentId) {
-                const refundAmount = booking.paymentAmount ?? booking.totalPrice;
-                await refundPaymentIntent(
-                    booking.stripePaymentIntentId,
-                    toMinorCurrencyUnits(refundAmount)
-                );
-                await tx.rideBooking.update({
-                    where: { id: booking.id },
-                    data: { refundedAt: new Date() },
-                });
+        // Issue Stripe refunds (external API calls, must be individual)
+        if (!bypassPayment) {
+            for (const booking of activeBookings) {
+                const isPaymentCaptured = !!(booking.paymentCapturedAt && booking.stripePaymentIntentId);
+                if (isPaymentCaptured && booking.stripePaymentIntentId) {
+                    const refundAmount = booking.paymentAmount ?? booking.totalPrice;
+                    await refundPaymentIntent(
+                        booking.stripePaymentIntentId,
+                        toMinorCurrencyUnits(refundAmount)
+                    );
+                    await tx.rideBooking.update({
+                        where: { id: booking.id },
+                        data: { refundedAt: new Date() },
+                    });
+                }
             }
         }
     });
