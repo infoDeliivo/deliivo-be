@@ -1,0 +1,17 @@
+flowchart TD
+    A[Cancellation Request] --> B{Who cancelled?}
+
+    B -->|Passenger| C{Time until departure?}
+    C -->|More than 24 hours| D[50% refund]
+    C -->|24 hours or less| E[0% refund]
+
+    B -->|Driver| F[100% refund to passenger]
+    F --> G[50% penalty recorded on driver]
+
+    B -->|System deadline expired| H[100% refund to passenger]
+
+    B -->|Driver rejects| I[100% refund to passenger]
+
+    D & E & H & I & G --> J[Update booking to CANCELLED]
+    J --> K[Restore available seats on ride]
+    K --> L[Notify affected party via WebSocket]

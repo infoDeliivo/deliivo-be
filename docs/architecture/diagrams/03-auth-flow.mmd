@@ -1,0 +1,27 @@
+sequenceDiagram
+    participant C as Client
+    participant API as Auth API
+    participant OTP as OTP Service - Redis
+    participant SMS as SMS Queue
+    participant DB as PostgreSQL
+
+    C->>API: POST /signup phone, email
+    API->>DB: Create unverified User
+    API->>OTP: Generate 4-digit OTP with TTL 5min
+    API->>SMS: Enqueue OTP delivery
+    API-->>C: 200 message OTP sent
+
+    C->>API: POST /otp/verify identifier, code
+    API->>OTP: Verify code max 3 attempts
+    alt OTP Valid
+        API->>DB: Set isVerified = true
+        API->>DB: Create RefreshToken
+        API-->>C: 200 accessToken, refreshToken
+    else OTP Invalid
+        API-->>C: 400 error Invalid OTP
+    end
+
+    Note over C,API: Token Refresh
+    C->>API: POST /access-token refreshToken
+    API->>DB: Validate refresh token
+    API-->>C: 200 accessToken

@@ -1,0 +1,9 @@
+flowchart TD
+    A[Business Event Triggers Notification] --> B[NotificationService.create]
+    B --> C[Persist to PostgreSQL]
+    C --> D[Increment Redis unread count]
+    D --> E{User has active WebSocket?}
+    E -->|Yes| F[Emit notification:new to all user sockets]
+    E -->|No| G{User has device tokens?}
+    G -->|Yes| H[Send FCM/APNs push notification]
+    G -->|No| I[Notification waits in DB until next fetch]

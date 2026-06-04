@@ -1,0 +1,29 @@
+graph TB
+    subgraph "Cloud Platform - Railway / Docker"
+        subgraph "Application Container"
+            APP[Express + Socket.IO Server]
+            W1[Deadline Worker]
+            W2[Maintenance Worker]
+            W3[Mail Worker]
+            W4[SMS Worker]
+        end
+
+        subgraph "Managed Services"
+            PG[(PostgreSQL)]
+            RD[(Redis)]
+        end
+    end
+
+    subgraph "External"
+        STR[Stripe]
+        GOO[Google Cloud APIs]
+        VRF[Veriff]
+        PUSH[FCM / APNs]
+    end
+
+    LB[Load Balancer / CDN] --> APP
+    APP --> PG & RD
+    W1 & W2 & W3 & W4 --> RD
+    APP --> STR & GOO & VRF & PUSH
+    STR -->|Webhooks| APP
+    VRF -->|Webhooks| APP

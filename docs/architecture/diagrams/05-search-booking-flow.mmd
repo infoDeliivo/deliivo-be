@@ -1,0 +1,46 @@
+sequenceDiagram
+    participant P as Passenger App
+    participant API as API Server
+    participant DB as PostgreSQL
+    participant STR as Stripe
+    participant Q as Deadline Queue
+    participant WS as WebSocket
+    participant D as Driver App
+
+    P->>API: GET /search-rides/advanced origin, dest, date, seats
+    API->>DB: Query rides geo-spatial + D_POINTS scoring
+    API-->>P: Ranked results with segments
+
+    P->>API: POST /bookings/price-preview rideId, pickup, dropoff, seats
+    API-->>P: basePrice, serviceFee, total
+
+    P->>API: POST /bookings rideId, pickup, dropoff, seats
+    API->>API: Validate not banned, not blocked, seats available
+    API->>DB: Create booking PAYMENT_PENDING
+    API->>STR: Create PaymentIntent
+    STR-->>API: clientSecret
+    API-->>P: 201 booking, clientSecret
+
+    P->>STR: Confirm payment client-side
+    STR->>API: Webhook payment_intent.succeeded
+    API->>DB: Update booking to DRIVER_PENDING
+    API->>Q: Enqueue deadline check
+    API->>WS: Emit notification to driver
+    WS->>D: New booking request
+
+    alt Driver Accepts
+        D->>API: POST /driver/bookings/:id/accept
+        API->>DB: Update to CONFIRMED, generate OTPs
+        API->>WS: Notify passenger
+        WS->>P: Booking confirmed
+    else Driver Rejects
+        D->>API: POST /driver/bookings/:id/reject reason
+        API->>DB: Update to CANCELLED
+        API->>STR: Full refund
+        API->>WS: Notify passenger
+    else Deadline Expires Auto
+        Q->>API: Process deadline job
+        API->>DB: Update to CANCELLED
+        API->>STR: Full refund
+        API->>WS: Notify passenger
+    end

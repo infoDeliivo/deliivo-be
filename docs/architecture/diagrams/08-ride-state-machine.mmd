@@ -1,0 +1,8 @@
+stateDiagram-v2
+    [*] --> DRAFT: Driver starts wizard
+    DRAFT --> PUBLISHED: POST /draft/publish
+    PUBLISHED --> IN_PROGRESS: POST /:id/start
+    PUBLISHED --> CANCELLED: DELETE /:id
+    IN_PROGRESS --> COMPLETED: POST /:id/complete
+    COMPLETED --> [*]
+    CANCELLED --> [*]

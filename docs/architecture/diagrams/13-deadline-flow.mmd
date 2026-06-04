@@ -1,0 +1,14 @@
+flowchart TD
+    A[Booking becomes DRIVER_PENDING] --> B[Enqueue initial deadline job]
+    B --> C["Wait DRIVER_DECISION_WINDOW_MS default 4hr"]
+    C --> D{Booking still DRIVER_PENDING?}
+    D -->|No - already resolved| E[No-op exit]
+    D -->|Yes| F[Notify passenger: driver has not responded]
+    F --> G[Enqueue extended job +1hr]
+    G --> H[Wait 1 hour]
+    H --> I{Still DRIVER_PENDING?}
+    I -->|No| E
+    I -->|Yes| J[Auto-cancel booking]
+    J --> K[Restore available seats]
+    K --> L[Initiate Stripe full refund]
+    L --> M[Notify passenger: booking auto-cancelled]

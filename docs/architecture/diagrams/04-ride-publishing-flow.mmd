@@ -1,0 +1,39 @@
+sequenceDiagram
+    participant D as Driver App
+    participant API as Publish API
+    participant RDS as Redis Draft
+    participant GOO as Google Routes API
+    participant DB as PostgreSQL
+
+    Note over D,DB: Multi-step wizard Redis-backed 1hr TTL
+
+    D->>API: POST /draft/origin lat, lng, placeId
+    API->>RDS: Store origin in draft
+
+    D->>API: PUT /draft/destination lat, lng, placeId
+    API->>RDS: Store destination in draft
+
+    D->>API: GET /draft/routes/compute
+    API->>GOO: Compute driving routes
+    GOO-->>API: Route options with polylines
+    API->>RDS: Cache route options
+    API-->>D: Route options
+
+    D->>API: PUT /draft/routes/select routeIndex
+    API->>RDS: Store selected route and polyline
+
+    D->>API: GET /draft/stopovers/suggestions
+    API->>GOO: Places along polyline
+    API-->>D: Suggested stopovers
+
+    D->>API: PUT /draft/stopovers list of places
+    D->>API: PUT /draft/schedule date, time
+    D->>API: PUT /draft/capacity seats, luggage
+    D->>API: PUT /draft/pricing basePricePerSeat
+
+    D->>API: POST /draft/publish
+    API->>RDS: Read full draft
+    API->>API: Validate ToS, dlVerified, vehicle
+    API->>DB: Atomic insert Ride + Waypoints
+    API->>RDS: Delete draft
+    API-->>D: 201 ride created

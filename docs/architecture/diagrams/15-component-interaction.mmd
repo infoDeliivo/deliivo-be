@@ -1,0 +1,57 @@
+graph LR
+    subgraph "Client Layer"
+        APP[Mobile/Web App]
+    end
+
+    subgraph "API Layer"
+        AUTH_R[Auth Routes]
+        USER_R[User Routes]
+        RIDE_R[Ride Routes]
+        BOOK_R[Booking Routes]
+        SEARCH_R[Search Routes]
+        CHAT_R[Chat Routes]
+        PAY_R[Payment Routes]
+        ADMIN_R[Admin Routes]
+        NOTIF_R[Notification Routes]
+    end
+
+    subgraph "Service Layer"
+        AUTH_S[Auth Service]
+        USER_S[User Service]
+        RIDE_S[Publish Ride Service]
+        BOOK_S[Booking Service]
+        DBOOK_S[Driver Booking Service]
+        SEARCH_S[Search Service]
+        CHAT_S[Chat via Socket.IO]
+        PAY_S[Stripe Service]
+        NOTIF_S[Notification Service]
+        OTP_S[OTP Service]
+        TOKEN_S[Token Service]
+        GDPR_S[GDPR Service]
+        SAFETY_S[Safety Service]
+    end
+
+    subgraph "Infrastructure"
+        PG[(PostgreSQL)]
+        RD[(Redis)]
+        BQ[BullMQ Workers]
+        WS[Socket.IO + Redis Adapter]
+    end
+
+    APP --> AUTH_R & USER_R & RIDE_R & BOOK_R & SEARCH_R & CHAT_R & PAY_R & ADMIN_R & NOTIF_R
+    APP <-->|WebSocket| WS
+
+    AUTH_R --> AUTH_S --> OTP_S & TOKEN_S
+    USER_R --> USER_S & GDPR_S & SAFETY_S
+    RIDE_R --> RIDE_S
+    BOOK_R --> BOOK_S --> PAY_S & NOTIF_S
+    SEARCH_R --> SEARCH_S
+    CHAT_R --> CHAT_S
+    PAY_R --> PAY_S
+    ADMIN_R --> USER_S & PAY_S
+    NOTIF_R --> NOTIF_S
+
+    AUTH_S & USER_S & RIDE_S & BOOK_S & SEARCH_S --> PG
+    OTP_S & RIDE_S & NOTIF_S & WS --> RD
+    BOOK_S & NOTIF_S --> BQ
+    NOTIF_S --> WS
