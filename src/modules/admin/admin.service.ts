@@ -2,6 +2,7 @@ import { BookingStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
+import redis from '../../cache/redis.js';
 
 /* ================= LIST USERS ================= */
 export const listUsers = async (query: {
@@ -73,11 +74,20 @@ export const setBanStatus = async (userId: string, isBanned: boolean) => {
     if (!user) throw new Error('USER_NOT_FOUND');
     if (user.role === 'ADMIN') throw new Error('CANNOT_BAN_ADMIN');
 
-    return prisma.user.update({
+    const updated = await prisma.user.update({
         where: { id: userId },
         data: { isBanned },
         select: { id: true, isBanned: true },
     });
+
+    // Sync ban status to Redis for auth middleware check
+    if (isBanned) {
+        await redis.set(`banned:${userId}`, '1');
+    } else {
+        await redis.del(`banned:${userId}`);
+    }
+
+    return updated;
 };
 
 /* ================= PLATFORM STATS ================= */

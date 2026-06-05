@@ -24,7 +24,7 @@ import {
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
-import { protect, errorHandler, rateLimiter, otpLimiter, requestTimeout } from './middlewares/index.js';
+import { protect, errorHandler, rateLimiter, otpLimiter, requestTimeout, searchLimiter, bookingLimiter } from './middlewares/index.js';
 import './queue/deadline.queue.js'; // start BullMQ deadline worker
 import './queue/maintenance.queue.js'; // start nightly maintenance worker
 
@@ -79,8 +79,8 @@ app.use('/api/v1/auth/otp/verify', otpLimiter);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', protect, userRouter);
 app.use('/api/v1/publish-ride', protect, publishRideRouter);
-app.use('/api/v1/search-rides', protect, searchRideRouter);
-app.use('/api/v1/bookings', protect, rideBookingRouter);
+app.use('/api/v1/search-rides', protect, searchLimiter, searchRideRouter);
+app.use('/api/v1/bookings', protect, bookingLimiter, rideBookingRouter);
 app.use('/api/v1/driver/bookings', protect, driverBookingRouter);
 app.use('/api/v1/vehicles', protect, vehiclesRouter);
 app.use('/api/v1/travel-preferences', protect, travelPreferenceRouter);

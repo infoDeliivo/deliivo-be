@@ -81,7 +81,8 @@ docs/
 - [Railway Deployment](deployment/railway-deployment.md) — deploy to production
 - [Production Readiness](decisions/PRODUCTION_READINESS.md) — audit results and status
 - [Scaling Fixes](decisions/SCALING_FIXES.md) — P0/P1 bottleneck fixes (graceful shutdown, pooling, clustering)
-- [Technical Review](architecture/TECHNICAL_REVIEW.md) — CTO-level scaling bottleneck analysis
+- [Technical Review v1](architecture/TECHNICAL_REVIEW.md) — Initial bottleneck analysis (pre-fixes)
+- [Technical Review v2](architecture/TECHNICAL_REVIEW_V2.md) — Post-fixes assessment for 50K users / 10K DAU
 
 ### Background Reading
 - [Backlog](decisions/backlog.md) — deferred items and tech debt

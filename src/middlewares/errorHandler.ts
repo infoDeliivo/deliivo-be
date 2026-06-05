@@ -3,8 +3,14 @@ import { logError } from '../utils/logger.js';
 
 export const errorHandler = (err: any, _req: Request, res: Response, _next: NextFunction) => {
   logError('Unhandled error', err);
-  res.status(500).json({
+
+  const status = err.statusCode || err.status || 500;
+  const message = process.env.NODE_ENV === 'production' && status === 500
+    ? 'Internal Server Error'
+    : err.message || 'Internal Server Error';
+
+  res.status(status).json({
     success: false,
-    message: err.message || 'Internal Server Error',
+    message,
   });
 };

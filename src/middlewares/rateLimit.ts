@@ -54,3 +54,23 @@ export const otpLimiter = rateLimit({
   keyGenerator: (req) => (req.body?.identifier || req.body?.phone || req.body?.email || req.ip) as string,
   store: new RedisStore('rl:otp'),
 });
+
+// Tighter limiter for CPU-heavy search endpoints: 20 per minute
+export const searchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: isRateLimitDisabled ? 0 : 20,
+  skip: () => isRateLimitDisabled,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisStore('rl:search'),
+});
+
+// Tighter limiter for booking creation: 10 per minute
+export const bookingLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: isRateLimitDisabled ? 0 : 10,
+  skip: () => isRateLimitDisabled,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisStore('rl:booking'),
+});

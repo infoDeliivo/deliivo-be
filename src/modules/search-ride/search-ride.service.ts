@@ -239,7 +239,7 @@ export const searchRides = async (
   }
 
   // Get rides with driver info
-  const [rides, total] = await Promise.all([
+  const [allRides, total] = await Promise.all([
     prisma.ride.findMany({
       where: whereClause,
       include: {
@@ -253,11 +253,12 @@ export const searchRides = async (
         bookings: bookingWithRiderInclude,
       },
       orderBy: getOrderBy(sortBy, sortOrder),
-      skip,
-      take: limit,
+      take: 200, // cap candidates for Haversine filter
     }),
     prisma.ride.count({ where: whereClause }),
   ]);
+
+  const rides = allRides;
 
   const vehicleIds = Array.from(
     new Set(
@@ -384,13 +385,17 @@ export const searchRides = async (
     });
   }
 
+  // Paginate after filtering
+  const filteredTotal = ridesWithDistance.length;
+  const paginatedRides = ridesWithDistance.slice(skip, skip + limit);
+
   return {
-    rides: ridesWithDistance,
+    rides: paginatedRides,
     pagination: {
       page,
       limit,
-      total: ridesWithDistance.length,
-      totalPages: Math.ceil(ridesWithDistance.length / limit),
+      total: filteredTotal,
+      totalPages: Math.ceil(filteredTotal / limit),
     },
   };
 };

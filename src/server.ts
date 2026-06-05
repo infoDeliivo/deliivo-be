@@ -11,6 +11,7 @@ import redis from './cache/redis.js';
 import { bullRedis } from './queue/redisConnection.js';
 import { deadlineWorker } from './queue/deadline.queue.js';
 import { maintenanceWorker } from './queue/maintenance.queue.js';
+import { pushWorker } from './jobs/index.js';
 
 const PORT = process.env.PORT || 3000;
 
@@ -60,7 +61,7 @@ const shutdown = async (signal: string) => {
     }
 
     // Close BullMQ workers
-    await Promise.all([deadlineWorker.close(), maintenanceWorker.close()]);
+    await Promise.all([deadlineWorker.close(), maintenanceWorker.close(), pushWorker.close()]);
     logger.info('BullMQ workers closed');
 
     // Close Redis connections
