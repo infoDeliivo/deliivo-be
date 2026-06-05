@@ -23,6 +23,7 @@ import {
 } from './publish-ride.types.js';
 import { getFuelPriceForCurrency } from '../../services/fuel-price.service.js';
 import { buildStopoverPricingByPlaceId, getStopoverPriceByPlaceId } from './stopover-pricing.utils.js';
+import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
 
 // ============================================================
 //  CONSTANTS
@@ -554,12 +555,34 @@ export const getStopoversAlongRoute = async (
     // 4. Sort by distance from origin
     allSuggestions.sort((a, b) => a.distanceFromOriginMeters - b.distanceFromOriginMeters);
 
-    // 5. Auto-calculate per-stopper pricing if base price exists
+    // 5. Calculate arrival times if departure time and duration are available
     const totalDistanceKm = (draft.routeDistanceMeters || 0) / 1000;
-    if (draft.basePricePerSeat && totalDistanceKm > 0) {
-        for (const suggestion of allSuggestions) {
+    const totalDurationSeconds = draft.routeDurationSeconds || 0;
+    
+    let arrivalTimes: string[] = [];
+    if (draft.departureTime && totalDurationSeconds > 0 && allSuggestions.length > 0) {
+        // Create a temporary waypoint list: origin + suggestions + destination
+        const waypointCount = allSuggestions.length + 2;
+        arrivalTimes = calculateWaypointArrivalTimes(
+            draft.departureTime,
+            totalDurationSeconds,
+            waypointCount
+        );
+    }
+    
+    // 6. Auto-calculate per-stopper pricing and assign arrival times
+    for (let i = 0; i < allSuggestions.length; i++) {
+        const suggestion = allSuggestions[i];
+        
+        // Calculate price if base price exists
+        if (draft.basePricePerSeat && totalDistanceKm > 0) {
             const distanceRatio = suggestion.distanceFromOriginKm / totalDistanceKm;
             suggestion.pricePerSeat = Math.round(draft.basePricePerSeat * distanceRatio * 100) / 100;
+        }
+        
+        // Assign arrival time (index + 1 because index 0 is origin)
+        if (arrivalTimes.length > 0) {
+            suggestion.estimatedArrivalTime = arrivalTimes[i + 1];
         }
     }
 
@@ -651,11 +674,22 @@ export const getRecommendedPrice = async (
     const recommendedPrice = Math.round(fuelCost * 1.5);
     const maxPrice = Math.round(fuelCost * 2.5);
 
-    // Calculate per-stopper pricing if stopovers exist
-    let stopoverPricing: { placeId: string; address: string; distanceFromOriginKm: number; recommendedPrice: number }[] | undefined;
+    // Calculate per-stopper pricing and arrival times if stopovers exist
+    let stopoverPricing: { placeId: string; address: string; distanceFromOriginKm: number; recommendedPrice: number; estimatedArrivalTime?: string }[] | undefined;
 
     if (draft.stopovers && draft.stopovers.length > 0 && draft.originLat && draft.originLng) {
-        stopoverPricing = draft.stopovers.map(stopover => {
+        // Calculate arrival times if departure time is set
+        let arrivalTimes: string[] = [];
+        if (draft.departureTime && draft.routeDurationSeconds) {
+            const waypointCount = draft.stopovers.length + 2; // origin + stopovers + destination
+            arrivalTimes = calculateWaypointArrivalTimes(
+                draft.departureTime,
+                draft.routeDurationSeconds,
+                waypointCount
+            );
+        }
+        
+        stopoverPricing = draft.stopovers.map((stopover, index) => {
             const distFromOrigin = haversineDistance(
                 { lat: draft.originLat!, lng: draft.originLng! },
                 { lat: stopover.lat, lng: stopover.lng }
@@ -669,6 +703,7 @@ export const getRecommendedPrice = async (
                 address: stopover.address,
                 distanceFromOriginKm: distFromOriginKm,
                 recommendedPrice: stopPrice,
+                estimatedArrivalTime: arrivalTimes.length > 0 ? arrivalTimes[index + 1] : undefined,
             };
         });
 
@@ -853,8 +888,22 @@ export const publishRide = async (driverId: string) => {
             pricePerSeat: getStopoverPriceByPlaceId(draft.stopoverPricingByPlaceId, s.placeId),
         }));
 
-        const allWaypoints = [...pickups, ...dropoffs, ...stopovers];
-        if (allWaypoints.length > 0) {
+        // Sort all waypoints by orderIndex
+        const allWaypoints = [...pickups, ...dropoffs, ...stopovers].sort((a, b) => a.orderIndex - b.orderIndex);
+        
+        // Calculate arrival times for each waypoint
+        if (allWaypoints.length > 0 && newRide.routeDurationSeconds) {
+            const arrivalTimes = calculateWaypointArrivalTimes(
+                newRide.departureTime,
+                newRide.routeDurationSeconds,
+                allWaypoints.length
+            );
+            
+            // Add estimated arrival time to each waypoint
+            allWaypoints.forEach((waypoint, index) => {
+                (waypoint as any).estimatedArrivalTime = arrivalTimes[index] || null;
+            });
+            
             await tx.rideWaypoint.createMany({ data: allWaypoints });
         }
 

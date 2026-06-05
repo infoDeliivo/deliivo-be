@@ -314,6 +314,9 @@ model RideWaypoint {
   // Optional custom price for this waypoint
   pricePerSeat Float?
 
+  // Estimated arrival time at this waypoint (HH:MM format)
+  estimatedArrivalTime String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

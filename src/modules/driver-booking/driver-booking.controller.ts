@@ -53,6 +53,8 @@ const mapDriverActionError = (error: Error) => {
 export const acceptBooking = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
+        console.log(bookingId,"hii");
+        
         const result = await DriverBookingService.acceptBooking(req.user.id, bookingId);
         await invalidateBookingCaches(result.bookingId, result.rideId, result.passengerId);
 
@@ -61,6 +63,7 @@ export const acceptBooking = async (req: AuthRequest, res: Response) => {
             data: result,
         });
     } catch (error: any) {
+        console.log("hii",error);
         const mapped = mapDriverActionError(error as Error);
         return sendError(res, mapped);
     }

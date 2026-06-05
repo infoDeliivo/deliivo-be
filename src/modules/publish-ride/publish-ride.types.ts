@@ -253,6 +253,7 @@ export interface StopoverSuggestion {
     distanceFromOriginMeters: number;
     types: string[];        // Google Places types (e.g. "locality", "point_of_interest")
     pricePerSeat?: number;  // Auto-calculated based on distance + base price
+    estimatedArrivalTime?: string;  // HH:MM format - calculated if departure time is set
 }
 
 export interface StopoverSuggestionsResult {
