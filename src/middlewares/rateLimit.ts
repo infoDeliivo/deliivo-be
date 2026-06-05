@@ -15,21 +15,30 @@ class RedisStore implements Store {
   }
 
   async increment(key: string): Promise<IncrementResponse> {
-    const redisKey = `${this.prefix}:${key}`;
-    const totalHits = await redis.incr(redisKey);
-    if (totalHits === 1) {
-      await redis.pexpire(redisKey, this.windowMs);
+    try {
+      const redisKey = `${this.prefix}:${key}`;
+      const totalHits = await redis.incr(redisKey);
+      if (totalHits === 1) {
+        await redis.pexpire(redisKey, this.windowMs);
+      }
+      const ttl = await redis.pttl(redisKey);
+      return { totalHits, resetTime: new Date(Date.now() + (ttl > 0 ? ttl : this.windowMs)) };
+    } catch {
+      // Fail open: if Redis is unavailable, allow the request
+      return { totalHits: 0, resetTime: new Date(Date.now() + this.windowMs) };
     }
-    const ttl = await redis.pttl(redisKey);
-    return { totalHits, resetTime: new Date(Date.now() + (ttl > 0 ? ttl : this.windowMs)) };
   }
 
   async decrement(key: string): Promise<void> {
-    await redis.decr(`${this.prefix}:${key}`);
+    try {
+      await redis.decr(`${this.prefix}:${key}`);
+    } catch {}
   }
 
   async resetKey(key: string): Promise<void> {
-    await redis.del(`${this.prefix}:${key}`);
+    try {
+      await redis.del(`${this.prefix}:${key}`);
+    } catch {}
   }
 }
 

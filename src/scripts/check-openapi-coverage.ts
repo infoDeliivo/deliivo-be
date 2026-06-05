@@ -22,7 +22,7 @@ const OPENAPI_HIDDEN_ENDPOINTS = new Set<string>([
 const ROOT = process.cwd();
 const APP_PATH = path.join(ROOT, 'src/app.ts');
 const MODULES_INDEX_PATH = path.join(ROOT, 'src/modules/index.ts');
-const OPENAPI_BUNDLE_PATH = path.join(ROOT, 'docs/openapi/dist/openapi.json');
+const OPENAPI_BUNDLE_PATH = path.join(ROOT, 'docs/api/openapi/dist/openapi.json');
 
 const buildRouterImportMap = (modulesSource: string): Map<string, string> => {
   const map = new Map<string, string>();

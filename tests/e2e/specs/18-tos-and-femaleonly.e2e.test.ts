@@ -217,3 +217,62 @@ describe('TC-FEMALE-003 — femaleOnly ride is visible in ride detail', () => {
     expect(ride.femaleOnly).toBe(true);
   });
 });
+
+// ── TC-FEMALE-004: Male driver cannot publish femaleOnly ride ────────────────
+describe('TC-FEMALE-004 — Male driver cannot publish a female-only ride', () => {
+  it('returns 403 when male driver tries to set femaleOnly=true', async () => {
+    // Use malePaxToken (salutation=MR) — start a draft, then try notes step
+    const a = authed(malePaxToken);
+    await a.post('/publish-ride/draft/origin', {
+      originPlaceId: LONDON_TO_MANCHESTER.originPlaceId,
+      originAddress: LONDON_TO_MANCHESTER.originAddress,
+      originLat: LONDON_TO_MANCHESTER.originLat,
+      originLng: LONDON_TO_MANCHESTER.originLng,
+    });
+    const res = await a.patch('/publish-ride/draft/notes', {
+      notes: 'Trying to set female only',
+      femaleOnly: true,
+    });
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.data)).toMatch(/female/i);
+  });
+});
+
+// ── TC-FEMALE-005: Male rider does NOT see femaleOnly rides in search ────────
+describe('TC-FEMALE-005 — Male rider cannot see femaleOnly rides in search results', () => {
+  it('femaleOnly ride is hidden from male rider search', async () => {
+    if (!femaleRideId) return;
+    const res = await authed(malePaxToken).get('/search-rides', {
+      originLat: LONDON_TO_MANCHESTER.originLat,
+      originLng: LONDON_TO_MANCHESTER.originLng,
+      destinationLat: LONDON_TO_MANCHESTER.destinationLat,
+      destinationLng: LONDON_TO_MANCHESTER.destinationLng,
+      departureDate: futureDateStr(55),
+      radiusKm: 50,
+    });
+    expect(res.status).toBe(200);
+    const rides = (res.data.data ?? res.data).rides ?? [];
+    const found = rides.find((r: any) => r.id === femaleRideId);
+    expect(found).toBeUndefined();
+  });
+});
+
+// ── TC-FEMALE-006: Female rider CAN see femaleOnly rides in search ───────────
+describe('TC-FEMALE-006 — Female rider can see femaleOnly rides in search results', () => {
+  it('femaleOnly ride is visible to female rider in search', async () => {
+    if (!femaleRideId) return;
+    const res = await authed(femalePaxToken).get('/search-rides', {
+      originLat: LONDON_TO_MANCHESTER.originLat,
+      originLng: LONDON_TO_MANCHESTER.originLng,
+      destinationLat: LONDON_TO_MANCHESTER.destinationLat,
+      destinationLng: LONDON_TO_MANCHESTER.destinationLng,
+      departureDate: futureDateStr(55),
+      radiusKm: 50,
+    });
+    expect(res.status).toBe(200);
+    const rides = (res.data.data ?? res.data).rides ?? [];
+    const found = rides.find((r: any) => r.id === femaleRideId);
+    expect(found).toBeDefined();
+    expect(found.femaleOnly).toBe(true);
+  });
+});

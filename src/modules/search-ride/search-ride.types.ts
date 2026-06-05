@@ -88,6 +88,9 @@ export interface SearchRideResult {
     // Status
     status: RideStatus;
 
+    // Flags
+    femaleOnly?: boolean;
+
     // Distance from search origin/destination (km)
     distanceFromOrigin?: number;
     distanceFromDestination?: number;

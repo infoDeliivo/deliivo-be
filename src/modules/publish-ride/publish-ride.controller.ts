@@ -316,15 +316,16 @@ export const updateNotes = async (req: AuthRequest, res: Response) => {
             data: formatDraftResponse(draft),
         });
     } catch (error: any) {
-        const status = error.message === 'DRAFT_NOT_FOUND'
-            ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
-        return sendError(res, {
-            status,
-            message: error.message === 'DRAFT_NOT_FOUND'
-                ? 'Draft not found'
-                : 'Failed to update notes',
-        });
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to update notes';
+        if (error.message === 'DRAFT_NOT_FOUND') {
+            status = HttpStatus.NOT_FOUND;
+            message = 'Draft not found';
+        } else if (error.message === 'FEMALE_ONLY_NOT_ALLOWED') {
+            status = HttpStatus.FORBIDDEN;
+            message = 'Only female drivers can publish female-only rides';
+        }
+        return sendError(res, { status, message });
     }
 };
 

@@ -32,6 +32,7 @@ import {
 } from './polyline.utils.js';
 
 /* ================= CONSTANTS (Spec §4.1, §8) ================= */
+const FEMALE_SALUTATIONS = ['MS', 'MRS', 'MX'];
 const RADIUS_KM = 10;
 const BASE_SCORE = 1000;
 const DISTANCE_PENALTY_FACTOR = 50;
@@ -239,6 +240,21 @@ export const searchRides = async (
     whereClause.basePricePerSeat = { lte: maxPrice };
   }
 
+  // Female-only visibility: only female riders see femaleOnly rides
+  const viewerSalutation = excludeDriverId
+    ? (await prisma.user.findUnique({ where: { id: excludeDriverId }, select: { salutation: true } }))?.salutation
+    : null;
+  const isViewerFemale = viewerSalutation && FEMALE_SALUTATIONS.includes(viewerSalutation);
+
+  if (isViewerFemale && femaleOnly) {
+    // Female rider filtering for female-only rides specifically
+    whereClause.femaleOnly = true;
+  } else if (!isViewerFemale) {
+    // Non-female riders never see female-only rides
+    whereClause.femaleOnly = false;
+  }
+  // else: female rider without filter → sees all rides (femaleOnly + normal)
+
   // Get rides with driver info
   const [allRides, total] = await Promise.all([
     prisma.ride.findMany({
@@ -368,6 +384,7 @@ export const searchRides = async (
         basePricePerSeat: ride.basePricePerSeat,
         currency: ride.currency,
         status: ride.status,
+        femaleOnly: ride.femaleOnly,
         distanceFromOrigin,
         distanceFromDestination,
         hasActiveBooking,
@@ -786,6 +803,16 @@ export const searchRidesAdvanced = async (
     };
   }
 
+  // Female-only visibility: only female riders see femaleOnly rides
+  const advViewerSalutation = excludeDriverId
+    ? (await prisma.user.findUnique({ where: { id: excludeDriverId }, select: { salutation: true } }))?.salutation
+    : null;
+  const isAdvViewerFemale = advViewerSalutation && FEMALE_SALUTATIONS.includes(advViewerSalutation);
+
+  if (!isAdvViewerFemale) {
+    whereClause.femaleOnly = false;
+  }
+
   const candidateRides = await prisma.ride.findMany({
     where: whereClause,
     include: {
@@ -1038,6 +1065,7 @@ export const searchRidesAdvanced = async (
       basePricePerSeat: riderFacingPrice,
       currency: ride.currency,
       status: ride.status,
+      femaleOnly: ride.femaleOnly,
       distanceFromOrigin: haversine(riderOrigin, { lat: ride.originLat, lng: ride.originLng }),
       distanceFromDestination: haversine(riderDest, {
         lat: ride.destinationLat,

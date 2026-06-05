@@ -45,7 +45,7 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 
 # Copy bundled OpenAPI spec (served by /docs and /openapi.json endpoints)
-COPY --from=builder /app/docs/openapi/dist ./docs/openapi/dist
+COPY --from=builder /app/docs/api/openapi/dist ./docs/api/openapi/dist
 
 # Copy entrypoint script (must be done as root, before USER switch)
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

@@ -754,6 +754,8 @@ export const updatePricing = async (
 //  STEP 13: UPDATE NOTES
 // ============================================================
 
+const FEMALE_SALUTATIONS = ['MS', 'MRS', 'MX'];
+
 export const updateNotes = async (
     driverId: string,
     notes: string,
@@ -761,9 +763,21 @@ export const updateNotes = async (
 ): Promise<DraftRide> => {
     const draft = await getDraft(driverId);
     draft.notes = notes;
-    if (femaleOnly !== undefined) {
-        draft.femaleOnly = femaleOnly;
+
+    if (femaleOnly === true) {
+        // Only female drivers can publish female-only rides
+        const driver = await prisma.user.findUnique({
+            where: { id: driverId },
+            select: { salutation: true },
+        });
+        if (!driver?.salutation || !FEMALE_SALUTATIONS.includes(driver.salutation)) {
+            throw new Error('FEMALE_ONLY_NOT_ALLOWED');
+        }
+        draft.femaleOnly = true;
+    } else if (femaleOnly === false) {
+        draft.femaleOnly = false;
     }
+
     draft.step = Math.max(draft.step, 13);
     return saveDraft(draft);
 };

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 export type OpenApiSpec = Record<string, unknown>;
 
-export const openApiSpecPath = path.resolve(process.cwd(), 'docs/openapi/dist/openapi.json');
+export const openApiSpecPath = path.resolve(process.cwd(), 'docs/api/openapi/dist/openapi.json');
 
 export const loadOpenApiSpec = (): OpenApiSpec => {
   if (!fs.existsSync(openApiSpecPath)) {

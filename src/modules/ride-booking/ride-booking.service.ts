@@ -474,7 +474,7 @@ export const createBooking = async (
             },
         });
 
-        if ((ride as any).femaleOnly) {
+        if (ride.femaleOnly) {
             const allowed = ['MS', 'MRS', 'MX'];
             if (!passenger?.salutation || !allowed.includes(passenger.salutation)) {
                 throw new Error('FEMALE_ONLY_RIDE');
