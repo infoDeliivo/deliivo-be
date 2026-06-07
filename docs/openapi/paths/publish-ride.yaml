@@ -682,6 +682,11 @@
                         },
                         "pricePerSeat": {
                           "type": "number"
+                        },
+                        "estimatedArrivalTime": {
+                          "type": "string",
+                          "pattern": "^([01]\\d|2[0-3]):([0-5]\\d)$",
+                          "description": "Expected arrival time in HH:mm format"
                         }
                       },
                       "required": [

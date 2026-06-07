@@ -673,9 +673,123 @@ export const updatePricing = async (
 ): Promise<DraftRide> => {
     const draft = await getDraft(driverId);
     draft.basePricePerSeat = input.basePricePerSeat;
+    
+    // Handle stopover pricing with arrival times
     if (input.stopoverPricing !== undefined) {
         draft.stopoverPricingByPlaceId = buildStopoverPricingByPlaceId(input.stopoverPricing);
+        
+        // Update stopovers with arrival times
+        if (draft.stopovers) {
+            draft.stopovers = draft.stopovers.map(stopover => {
+                const pricingInfo = input.stopoverPricing?.find(sp => sp.placeId === stopover.placeId);
+                if (pricingInfo?.estimatedArrivalTime) {
+                    return { ...stopover, estimatedArrivalTime: pricingInfo.estimatedArrivalTime };
+                }
+                return stopover;
+            });
+        }
     }
+    
+    // Auto-calculate arrival times for all waypoints if we have departure time and route duration
+    if (draft.departureTime && draft.routeDurationSeconds) {
+        const allWaypoints: { type: 'pickup' | 'stopover' | 'dropoff'; placeId: string; distanceFromOrigin: number }[] = [];
+        
+        // Calculate distances from origin for all waypoints
+        if (draft.originLat && draft.originLng) {
+            // Add pickups
+            if (draft.pickups) {
+                draft.pickups.forEach(pickup => {
+                    const dist = haversineDistance(
+                        { lat: draft.originLat!, lng: draft.originLng! },
+                        { lat: pickup.lat, lng: pickup.lng }
+                    );
+                    allWaypoints.push({ type: 'pickup', placeId: pickup.placeId, distanceFromOrigin: dist });
+                });
+            }
+            
+            // Add stopovers
+            if (draft.stopovers) {
+                draft.stopovers.forEach(stopover => {
+                    const dist = haversineDistance(
+                        { lat: draft.originLat!, lng: draft.originLng! },
+                        { lat: stopover.lat, lng: stopover.lng }
+                    );
+                    allWaypoints.push({ type: 'stopover', placeId: stopover.placeId, distanceFromOrigin: dist });
+                });
+            }
+            
+            // Add dropoffs
+            if (draft.dropoffs) {
+                draft.dropoffs.forEach(dropoff => {
+                    const dist = haversineDistance(
+                        { lat: draft.originLat!, lng: draft.originLng! },
+                        { lat: dropoff.lat, lng: dropoff.lng }
+                    );
+                    allWaypoints.push({ type: 'dropoff', placeId: dropoff.placeId, distanceFromOrigin: dist });
+                });
+            }
+            
+            // Sort by distance
+            allWaypoints.sort((a, b) => a.distanceFromOrigin - b.distanceFromOrigin);
+            
+            // Calculate arrival times
+            const totalDistanceMeters = draft.routeDistanceMeters || 0;
+            if (totalDistanceMeters > 0) {
+                const [hours, minutes] = draft.departureTime.split(':').map(Number);
+                const departureMinutes = hours * 60 + minutes;
+                const totalDurationMinutes = Math.ceil(draft.routeDurationSeconds / 60);
+                
+                // Update pickups with arrival times
+                if (draft.pickups) {
+                    draft.pickups = draft.pickups.map(pickup => {
+                        const wp = allWaypoints.find(w => w.type === 'pickup' && w.placeId === pickup.placeId);
+                        if (wp && totalDistanceMeters > 0) {
+                            const ratio = wp.distanceFromOrigin / totalDistanceMeters;
+                            const arrivalMinutes = departureMinutes + Math.ceil(totalDurationMinutes * ratio);
+                            const arrivalHours = Math.floor(arrivalMinutes / 60) % 24;
+                            const arrivalMins = arrivalMinutes % 60;
+                            const estimatedArrivalTime = `${String(arrivalHours).padStart(2, '0')}:${String(arrivalMins).padStart(2, '0')}`;
+                            return { ...pickup, estimatedArrivalTime };
+                        }
+                        return pickup;
+                    });
+                }
+                
+                // Update stopovers with arrival times
+                if (draft.stopovers) {
+                    draft.stopovers = draft.stopovers.map(stopover => {
+                        const wp = allWaypoints.find(w => w.type === 'stopover' && w.placeId === stopover.placeId);
+                        if (wp && totalDistanceMeters > 0) {
+                            const ratio = wp.distanceFromOrigin / totalDistanceMeters;
+                            const arrivalMinutes = departureMinutes + Math.ceil(totalDurationMinutes * ratio);
+                            const arrivalHours = Math.floor(arrivalMinutes / 60) % 24;
+                            const arrivalMins = arrivalMinutes % 60;
+                            const estimatedArrivalTime = `${String(arrivalHours).padStart(2, '0')}:${String(arrivalMins).padStart(2, '0')}`;
+                            return { ...stopover, estimatedArrivalTime };
+                        }
+                        return stopover;
+                    });
+                }
+                
+                // Update dropoffs with arrival times
+                if (draft.dropoffs) {
+                    draft.dropoffs = draft.dropoffs.map(dropoff => {
+                        const wp = allWaypoints.find(w => w.type === 'dropoff' && w.placeId === dropoff.placeId);
+                        if (wp && totalDistanceMeters > 0) {
+                            const ratio = wp.distanceFromOrigin / totalDistanceMeters;
+                            const arrivalMinutes = departureMinutes + Math.ceil(totalDurationMinutes * ratio);
+                            const arrivalHours = Math.floor(arrivalMinutes / 60) % 24;
+                            const arrivalMins = arrivalMinutes % 60;
+                            const estimatedArrivalTime = `${String(arrivalHours).padStart(2, '0')}:${String(arrivalMins).padStart(2, '0')}`;
+                            return { ...dropoff, estimatedArrivalTime };
+                        }
+                        return dropoff;
+                    });
+                }
+            }
+        }
+    }
+    
     draft.step = Math.max(draft.step, 12);
     return saveDraft(draft);
 };
