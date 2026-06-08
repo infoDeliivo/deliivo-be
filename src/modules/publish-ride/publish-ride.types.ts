@@ -187,6 +187,9 @@ export interface LocationInput {
     lat: number;
     lng: number;
     estimatedArrivalTime?: string; // HH:mm format
+    recommendedPrice?: number;
+    minPrice?: number;
+    maxPrice?: number;
 }
 
 export interface UpdatePickupsInput {
