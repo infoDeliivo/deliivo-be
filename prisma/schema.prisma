@@ -21,15 +21,15 @@ enum Salutation {
 }
 
 enum Chattiness {
-  LOW
-  MEDIUM
-  HIGH
+  chatterbox
+  chatty_when_comfortable
+  quiet
 }
 
 enum PetsPreference {
-  YES
-  NO
-  SOMETIMES
+  love_pets
+  depends_on_animal
+  no_pets
 }
 
 enum VehicleType {
@@ -111,8 +111,8 @@ model TravelPreference {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  chattiness Chattiness
-  pets       PetsPreference
+  chattiness Chattiness?
+  pets       PetsPreference?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
