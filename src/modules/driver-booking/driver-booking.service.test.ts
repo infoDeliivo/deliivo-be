@@ -40,6 +40,11 @@ jest.mock('../ride-booking/booking-otp.utils.js', () => ({
     isOtpValid: (...args: unknown[]) => mockIsOtpValid(...args),
 }));
 
+jest.mock('../ride-booking/segment-capacity.utils.js', () => ({
+    __esModule: true,
+    releaseSegmentSeats: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { BookingStatus } from '@prisma/client';
 import {
     acceptBooking,
@@ -60,6 +65,8 @@ describe('driver booking service', () => {
             id: 'booking-1',
             rideId: 'ride-1',
             passengerId: 'passenger-1',
+            pickupWaypointId: null,
+            dropoffWaypointId: null,
             status: BookingStatus.DRIVER_PENDING,
             driverDecisionDeadlineAt: new Date(Date.now() + 60_000),
             passenger: { id: 'passenger-1', name: 'Rider', avatarUrl: null },
@@ -68,6 +75,8 @@ describe('driver booking service', () => {
                 driverId: 'driver-1',
                 originAddress: 'Mathura',
                 destinationAddress: 'Delhi',
+                driver: { id: 'driver-1', name: 'Driver', avatarUrl: null, dlVerified: true },
+                waypoints: [],
             },
         });
 
@@ -105,6 +114,8 @@ describe('driver booking service', () => {
             id: 'booking-2',
             rideId: 'ride-2',
             passengerId: 'passenger-2',
+            pickupWaypointId: null,
+            dropoffWaypointId: null,
             status: BookingStatus.DRIVER_PENDING,
             paymentCapturedAt: new Date(),
             paymentAmount: 500,
@@ -117,6 +128,7 @@ describe('driver booking service', () => {
                 driverId: 'driver-2',
                 originAddress: 'A',
                 destinationAddress: 'B',
+                waypoints: [],
             },
         });
 
@@ -130,25 +142,27 @@ describe('driver booking service', () => {
                     rideId: 'ride-2',
                     passengerId: 'passenger-2',
                     seatsBooked: 1,
+                    pickupPosition: null,
+                    dropoffPosition: null,
+                    ride: { totalSeats: 3 },
                 }),
                 update: jest.fn().mockResolvedValue({}),
             },
             ride: {
                 update: jest.fn().mockResolvedValue({}),
             },
+            rideSegmentCapacity: {
+                findMany: jest.fn().mockResolvedValue([]),
+                updateMany: jest.fn().mockResolvedValue({}),
+            },
         };
 
         mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
 
-        const result = await rejectBooking('driver-2', 'booking-2');
+        const result = await rejectBooking('driver-2', 'booking-2', 'not suitable');
 
         expect(result.status).toBe(BookingStatus.CANCELLED);
         expect(mockRefundPaymentIntent).toHaveBeenCalled();
-        expect(tx.ride.update).toHaveBeenCalledWith(
-            expect.objectContaining({
-                data: { availableSeats: { increment: 1 } },
-            })
-        );
     });
 
     it('moves booking CONFIRMED -> IN_PROGRESS on valid pickup OTP', async () => {
@@ -156,6 +170,8 @@ describe('driver booking service', () => {
             id: 'booking-3',
             rideId: 'ride-3',
             passengerId: 'passenger-3',
+            pickupWaypointId: null,
+            dropoffWaypointId: null,
             status: BookingStatus.CONFIRMED,
             pickupOtpHash: 'hash-111111',
             pickupOtpExpiresAt: new Date(Date.now() + 60_000),
@@ -166,6 +182,7 @@ describe('driver booking service', () => {
                 driverId: 'driver-3',
                 originAddress: 'A',
                 destinationAddress: 'B',
+                waypoints: [],
             },
         });
 
@@ -194,6 +211,8 @@ describe('driver booking service', () => {
             id: 'booking-4',
             rideId: 'ride-4',
             passengerId: 'passenger-4',
+            pickupWaypointId: null,
+            dropoffWaypointId: null,
             status: BookingStatus.CONFIRMED,
             pickupOtpHash: 'hash-111111',
             pickupOtpExpiresAt: new Date(Date.now() + 60_000),
@@ -204,6 +223,7 @@ describe('driver booking service', () => {
                 driverId: 'driver-4',
                 originAddress: 'A',
                 destinationAddress: 'B',
+                waypoints: [],
             },
         });
 
@@ -228,14 +248,16 @@ describe('driver booking service', () => {
             id: 'booking-bypass-reject',
             rideId: 'ride-2',
             passengerId: 'passenger-2',
+            pickupWaypointId: null,
+            dropoffWaypointId: null,
             status: BookingStatus.DRIVER_PENDING,
             paymentCapturedAt: new Date(),
             paymentAmount: 500,
             totalPrice: 500,
             stripePaymentIntentId: null,
-            driverDecisionDeadlineAt: new Date(Date.now() + 60_000), // Avoid BOOKING_DECISION_DEADLINE_PASSED
+            driverDecisionDeadlineAt: new Date(Date.now() + 60_000),
             passenger: { id: 'passenger-2', name: 'Rider', avatarUrl: null },
-            ride: { id: 'ride-2', driverId: 'driver-2', originAddress: 'A', destinationAddress: 'B' },
+            ride: { id: 'ride-2', driverId: 'driver-2', originAddress: 'A', destinationAddress: 'B', waypoints: [] },
         });
 
         const tx = {
@@ -246,14 +268,18 @@ describe('driver booking service', () => {
                     rideId: 'ride-2',
                     passengerId: 'passenger-2',
                     seatsBooked: 1,
+                    pickupPosition: null,
+                    dropoffPosition: null,
+                    ride: { totalSeats: 3 },
                 }),
                 update: jest.fn().mockResolvedValue({}),
             },
             ride: { update: jest.fn().mockResolvedValue({}) },
+            rideSegmentCapacity: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
         };
         mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
 
-        await rejectBooking('driver-2', 'booking-bypass-reject');
+        await rejectBooking('driver-2', 'booking-bypass-reject', 'test reason');
 
         expect(mockRefundPaymentIntent).not.toHaveBeenCalled();
         expect(tx.rideBooking.update).toHaveBeenCalledWith(
@@ -273,13 +299,15 @@ describe('driver booking service', () => {
             id: 'booking-bypass-cancel',
             rideId: 'ride-3',
             passengerId: 'passenger-3',
+            pickupWaypointId: null,
+            dropoffWaypointId: null,
             status: BookingStatus.CONFIRMED,
             paymentCapturedAt: new Date(),
             paymentAmount: 900,
             totalPrice: 900,
             stripePaymentIntentId: null,
             passenger: { id: 'passenger-3', name: 'Rider', avatarUrl: null },
-            ride: { id: 'ride-3', driverId: 'driver-3', originAddress: 'A', destinationAddress: 'B' },
+            ride: { id: 'ride-3', driverId: 'driver-3', originAddress: 'A', destinationAddress: 'B', waypoints: [] },
         });
 
         const tx = {
@@ -290,15 +318,19 @@ describe('driver booking service', () => {
                     rideId: 'ride-3',
                     passengerId: 'passenger-3',
                     seatsBooked: 1,
+                    pickupPosition: null,
+                    dropoffPosition: null,
+                    ride: { totalSeats: 3 },
                 }),
                 update: jest.fn().mockResolvedValue({}),
             },
             ride: { update: jest.fn().mockResolvedValue({}) },
             driverPenaltyEvent: { create: jest.fn().mockResolvedValue({}) },
+            rideSegmentCapacity: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
         };
         mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
 
-        await cancelAfterAccept('driver-3', 'booking-bypass-cancel');
+        await cancelAfterAccept('driver-3', 'booking-bypass-cancel', 'test reason');
 
         expect(mockRefundPaymentIntent).not.toHaveBeenCalled();
         expect(tx.driverPenaltyEvent.create).toHaveBeenCalled();

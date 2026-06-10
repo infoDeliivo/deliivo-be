@@ -921,6 +921,19 @@ export const publishRide = async (driverId: string) => {
             await tx.rideWaypoint.createMany({ data: allWaypoints });
         }
 
+        // Create segment capacity edges for per-segment seat tracking
+        const stopoverCount = stopovers.length;
+        const totalPositions = stopoverCount + 1; // edges = stopoverCount + 1 (origin→...→destination)
+        const segmentCapacityData = Array.from({ length: totalPositions }, (_, i) => ({
+            rideId: newRide.id,
+            fromPosition: i,
+            toPosition: i + 1,
+            occupiedSeats: 0,
+        }));
+        if (segmentCapacityData.length > 0) {
+            await tx.rideSegmentCapacity.createMany({ data: segmentCapacityData });
+        }
+
         return tx.ride.findUnique({
             where: { id: newRide.id },
             include: { waypoints: { orderBy: { orderIndex: 'asc' } } },

@@ -28,6 +28,7 @@ import {
     toMinorCurrencyUnits,
 } from './booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from './booking-payment-mode.js';
+import { releaseSegmentSeats } from './segment-capacity.utils.js';
 
 type RideWaypointDetails = {
     id: string;
@@ -513,7 +514,63 @@ export const createBooking = async (
 
         const resolvedPickupWaypointId = riderView.bookingContext.pickupWaypointId;
         const resolvedDropoffWaypointId = riderView.bookingContext.dropoffWaypointId;
-        
+
+        // Resolve segment positions for per-segment capacity tracking
+        const pickupPoint = points.find(p => p.waypointId === resolvedPickupWaypointId && resolvedPickupWaypointId !== null)
+            ?? points.find(p => p.ref === (resolvedPickupWaypointId ? `waypoint:${resolvedPickupWaypointId}` : 'origin'))!;
+        const dropPoint = points.find(p => p.waypointId === resolvedDropoffWaypointId && resolvedDropoffWaypointId !== null)
+            ?? points.find(p => p.ref === (resolvedDropoffWaypointId ? `waypoint:${resolvedDropoffWaypointId}` : 'destination'))!;
+        const pickupPosition = pickupPoint.position;
+        const dropoffPosition = dropPoint.position;
+
+        // Per-segment capacity check: verify all edges in the booked range have capacity
+        const edgeCapacities = await tx.rideSegmentCapacity.findMany({
+            where: {
+                rideId,
+                fromPosition: { gte: pickupPosition },
+                toPosition: { lte: dropoffPosition },
+            },
+        });
+
+        // If segment capacity rows exist, use per-segment check
+        if (edgeCapacities.length > 0) {
+            const maxOccupied = Math.max(...edgeCapacities.map(e => e.occupiedSeats));
+            if (maxOccupied + seatsBooked > ride.totalSeats) {
+                throw new Error('INSUFFICIENT_SEATS');
+            }
+
+            // Increment occupied seats on all covered edges
+            await tx.rideSegmentCapacity.updateMany({
+                where: {
+                    rideId,
+                    fromPosition: { gte: pickupPosition },
+                    toPosition: { lte: dropoffPosition },
+                },
+                data: { occupiedSeats: { increment: seatsBooked } },
+            });
+
+            // Update denormalized availableSeats = totalSeats - max(occupiedSeats across ALL edges)
+            const allEdges = await tx.rideSegmentCapacity.findMany({ where: { rideId } });
+            const newMaxOccupied = Math.max(...allEdges.map(e => e.occupiedSeats));
+            await tx.ride.update({
+                where: { id: rideId },
+                data: { availableSeats: ride.totalSeats - newMaxOccupied },
+            });
+        } else {
+            // Fallback: global seat check (rides without segment capacity rows)
+            const seatUpdate = await tx.ride.updateMany({
+                where: {
+                    id: rideId,
+                    availableSeats: { gte: seatsBooked },
+                    status: RideStatus.PUBLISHED,
+                },
+                data: { availableSeats: { decrement: seatsBooked } },
+            });
+            if (seatUpdate.count === 0) {
+                throw new Error('INSUFFICIENT_SEATS');
+            }
+        }
+
         // Calculate price with breakdown
         const priceBreakdown = calculateBookingPrice(
             riderView.basePricePerSeat,
@@ -530,6 +587,11 @@ export const createBooking = async (
                 totalPrice: priceBreakdown.totalPrice,
                 pickupWaypointId: resolvedPickupWaypointId,
                 dropoffWaypointId: resolvedDropoffWaypointId,
+                pickupAddress: riderView.originAddress,
+                dropoffAddress: riderView.destinationAddress,
+                segmentFare: riderView.basePricePerSeat,
+                pickupPosition,
+                dropoffPosition,
                 status: bypassBookingPaymentMode
                     ? BookingStatus.DRIVER_PENDING
                     : BookingStatus.PAYMENT_PENDING,
@@ -555,21 +617,6 @@ export const createBooking = async (
                 },
             },
         });
-
-        const seatUpdate = await tx.ride.updateMany({
-            where: {
-                id: rideId,
-                availableSeats: { gte: seatsBooked },
-                status: RideStatus.PUBLISHED,
-            },
-            data: {
-                availableSeats: { decrement: seatsBooked },
-            },
-        });
-
-        if (seatUpdate.count === 0) {
-            throw new Error('INSUFFICIENT_SEATS');
-        }
 
         return {
             booking,
@@ -651,6 +698,9 @@ export const createBooking = async (
                     status: true,
                     rideId: true,
                     seatsBooked: true,
+                    pickupPosition: true,
+                    dropoffPosition: true,
+                    ride: { select: { totalSeats: true } },
                 },
             });
 
@@ -663,11 +713,12 @@ export const createBooking = async (
                 data: { status: BookingStatus.PAYMENT_FAILED },
             });
 
-            await tx.ride.update({
-                where: { id: existing.rideId },
-                data: {
-                    availableSeats: { increment: existing.seatsBooked },
-                },
+            await releaseSegmentSeats(tx as any, {
+                rideId: existing.rideId,
+                seatsBooked: existing.seatsBooked,
+                pickupPosition: existing.pickupPosition,
+                dropoffPosition: existing.dropoffPosition,
+                totalSeats: (existing as any).ride.totalSeats,
             });
         });
 
@@ -856,6 +907,9 @@ export const cancelBooking = async (
                 id: true,
                 rideId: true,
                 seatsBooked: true,
+                pickupPosition: true,
+                dropoffPosition: true,
+                ride: { select: { totalSeats: true } },
             },
         });
 
@@ -875,11 +929,12 @@ export const cancelBooking = async (
             },
         });
 
-        await tx.ride.update({
-            where: { id: current.rideId },
-            data: {
-                availableSeats: { increment: current.seatsBooked },
-            },
+        await releaseSegmentSeats(tx as any, {
+            rideId: current.rideId,
+            seatsBooked: current.seatsBooked,
+            pickupPosition: current.pickupPosition,
+            dropoffPosition: current.dropoffPosition,
+            totalSeats: (current as any).ride.totalSeats,
         });
 
         // Issue refund last — DB writes above must succeed before we charge Stripe

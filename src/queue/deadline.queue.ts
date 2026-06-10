@@ -8,6 +8,7 @@ import { createNotification } from '../modules/notification/notification.service
 import { refundPaymentIntent } from '../modules/payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../modules/ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../modules/ride-booking/booking-payment-mode.js';
+import { releaseSegmentSeats } from '../modules/ride-booking/segment-capacity.utils.js';
 
 const QUEUE_NAME = 'booking-deadline';
 const EXTENDED_DEADLINE_MS = 60 * 60 * 1000; // 1 hour
@@ -96,6 +97,7 @@ const handleInitialDeadline = async (bookingId: string) => {
 const handleExtendedDeadline = async (bookingId: string) => {
     const booking = await prisma.rideBooking.findUnique({
         where: { id: bookingId },
+        include: { ride: { select: { totalSeats: true } } },
     });
 
     if (!booking || booking.status !== BookingStatus.DRIVER_PENDING) return;
@@ -120,9 +122,12 @@ const handleExtendedDeadline = async (bookingId: string) => {
             },
         });
 
-        await tx.ride.update({
-            where: { id: booking.rideId },
-            data: { availableSeats: { increment: booking.seatsBooked } },
+        await releaseSegmentSeats(tx as any, {
+            rideId: booking.rideId,
+            seatsBooked: booking.seatsBooked,
+            pickupPosition: booking.pickupPosition,
+            dropoffPosition: booking.dropoffPosition,
+            totalSeats: booking.ride.totalSeats,
         });
 
         if (!bypassPayment && booking.paymentCapturedAt && booking.stripePaymentIntentId) {

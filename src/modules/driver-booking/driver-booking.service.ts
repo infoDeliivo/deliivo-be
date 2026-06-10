@@ -5,17 +5,27 @@ import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { generateBookingOtp, hashOtp, isOtpValid } from '../ride-booking/booking-otp.utils.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
+import { releaseSegmentSeats } from '../ride-booking/segment-capacity.utils.js';
 
 const PICKUP_OTP_TTL_MS = 6 * 60 * 60 * 1000;
 const DROP_OTP_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 const DRIVER_PENALTY_PERCENT = 50;
 
+type SegmentInfo = {
+    pickupAddress: string;
+    dropoffAddress: string;
+    pickupWaypointId: string | null;
+    dropoffWaypointId: string | null;
+    isPartialRoute: boolean;
+};
+
 type DriverBookingResult = {
     bookingId: string;
     rideId: string;
     passengerId: string;
     status: BookingStatus;
+    segment?: SegmentInfo;
 };
 
 const fetchDriverBooking = async (bookingId: string) => {
@@ -39,10 +49,38 @@ const fetchDriverBooking = async (bookingId: string) => {
                             dlVerified: true,
                         },
                     },
+                    waypoints: {
+                        orderBy: { orderIndex: 'asc' },
+                        select: {
+                            id: true,
+                            address: true,
+                            waypointType: true,
+                        },
+                    },
                 },
             },
         },
     });
+};
+
+const resolveBookingSegment = (booking: DriverBookingRecord): SegmentInfo => {
+    const isPartial = !!(booking.pickupWaypointId || booking.dropoffWaypointId);
+    const waypoints = (booking.ride as any).waypoints ?? [];
+
+    const pickupAddress = booking.pickupWaypointId
+        ? (waypoints.find((w: any) => w.id === booking.pickupWaypointId)?.address ?? booking.ride.originAddress)
+        : booking.ride.originAddress;
+    const dropoffAddress = booking.dropoffWaypointId
+        ? (waypoints.find((w: any) => w.id === booking.dropoffWaypointId)?.address ?? booking.ride.destinationAddress)
+        : booking.ride.destinationAddress;
+
+    return {
+        pickupAddress,
+        dropoffAddress,
+        pickupWaypointId: booking.pickupWaypointId,
+        dropoffWaypointId: booking.dropoffWaypointId,
+        isPartialRoute: isPartial,
+    };
 };
 
 type DriverBookingRecord = NonNullable<Awaited<ReturnType<typeof fetchDriverBooking>>>;
@@ -118,6 +156,7 @@ export const acceptBooking = async (driverId: string, bookingId: string): Promis
         rideId: updated.rideId,
         passengerId: updated.passengerId,
         status: updated.status,
+        segment: resolveBookingSegment(booking),
     };
 };
 
@@ -156,6 +195,9 @@ export const rejectBooking = async (driverId: string, bookingId: string, reason:
                 rideId: true,
                 passengerId: true,
                 seatsBooked: true,
+                pickupPosition: true,
+                dropoffPosition: true,
+                ride: { select: { totalSeats: true } },
             },
         });
 
@@ -180,11 +222,12 @@ export const rejectBooking = async (driverId: string, bookingId: string, reason:
             },
         });
 
-        await tx.ride.update({
-            where: { id: current.rideId },
-            data: {
-                availableSeats: { increment: current.seatsBooked },
-            },
+        await releaseSegmentSeats(tx as any, {
+            rideId: current.rideId,
+            seatsBooked: current.seatsBooked,
+            pickupPosition: current.pickupPosition,
+            dropoffPosition: current.dropoffPosition,
+            totalSeats: (current as any).ride.totalSeats,
         });
 
         return current;
@@ -210,6 +253,7 @@ export const rejectBooking = async (driverId: string, bookingId: string, reason:
         rideId: updated.rideId,
         passengerId: updated.passengerId,
         status: BookingStatus.CANCELLED,
+        segment: resolveBookingSegment(booking),
     };
 };
 
@@ -246,6 +290,9 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string, rea
                 rideId: true,
                 passengerId: true,
                 seatsBooked: true,
+                pickupPosition: true,
+                dropoffPosition: true,
+                ride: { select: { totalSeats: true } },
             },
         });
 
@@ -271,11 +318,12 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string, rea
             },
         });
 
-        await tx.ride.update({
-            where: { id: current.rideId },
-            data: {
-                availableSeats: { increment: current.seatsBooked },
-            },
+        await releaseSegmentSeats(tx as any, {
+            rideId: current.rideId,
+            seatsBooked: current.seatsBooked,
+            pickupPosition: current.pickupPosition,
+            dropoffPosition: current.dropoffPosition,
+            totalSeats: (current as any).ride.totalSeats,
         });
 
         await tx.driverPenaltyEvent.create({
@@ -310,6 +358,7 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string, rea
         rideId: updated.rideId,
         passengerId: updated.passengerId,
         status: BookingStatus.CANCELLED,
+        segment: resolveBookingSegment(booking),
     };
 };
 
@@ -375,6 +424,7 @@ export const verifyPickupOtp = async (
         rideId: updated.rideId,
         passengerId: updated.passengerId,
         status: updated.status,
+        segment: resolveBookingSegment(booking),
     };
 };
 
@@ -436,5 +486,6 @@ export const verifyDropOtp = async (
         rideId: updated.rideId,
         passengerId: updated.passengerId,
         status: updated.status,
+        segment: resolveBookingSegment(booking),
     };
 };

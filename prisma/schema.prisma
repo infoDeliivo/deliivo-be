@@ -204,7 +204,9 @@ model RefreshToken {
 enum RideStatus {
   DRAFT
   PUBLISHED
+  READY_TO_START
   IN_PROGRESS
+  COMPLETION_PENDING
   COMPLETED
   CANCELLED
 }
@@ -219,10 +221,16 @@ enum BookingStatus {
   PAYMENT_PENDING
   DRIVER_PENDING
   CONFIRMED
+  WAITING_FOR_PICKUP
+  DRIVER_ARRIVED
+  ONBOARD
+  DROP_PENDING
   IN_PROGRESS
   PAYMENT_FAILED
   CANCELLED
   COMPLETED
+  NO_SHOW
+  DRIVER_MISSED_PICKUP
 }
 
 // ============ CHAT ENUMS ============
@@ -280,10 +288,18 @@ model Ride {
 
   status RideStatus @default(DRAFT)
 
+  // Operational timestamps
+  actualStartTime DateTime?
+  actualEndTime   DateTime?
+  currentStopSequence Int?
+
   // Relations
-  waypoints RideWaypoint[]
-  bookings  RideBooking[]
-  ratings   RideRating[]
+  waypoints        RideWaypoint[]
+  bookings         RideBooking[]
+  ratings          RideRating[]
+  segmentCapacity  RideSegmentCapacity[]
+  locationUpdates  LocationUpdate[]
+  rideEvents       RideEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -323,6 +339,22 @@ model RideWaypoint {
   @@index([rideId])
 }
 
+model RideSegmentCapacity {
+  id     String @id @default(uuid())
+  rideId String
+  ride   Ride   @relation(fields: [rideId], references: [id], onDelete: Cascade)
+
+  // Edge defined by consecutive segment positions (origin=0, stopovers=1..N, destination=N+1)
+  fromPosition  Int
+  toPosition    Int
+
+  // How many seats are currently occupied on this edge
+  occupiedSeats Int @default(0)
+
+  @@unique([rideId, fromPosition, toPosition])
+  @@index([rideId])
+}
+
 model RideBooking {
   id        String @id @default(uuid())
   rideId    String
@@ -332,6 +364,13 @@ model RideBooking {
 
   pickupWaypointId  String?
   dropoffWaypointId String?
+
+  // Segment snapshot (stored at booking time for stability)
+  pickupAddress     String?
+  dropoffAddress    String?
+  segmentFare       Float?
+  pickupPosition    Int?
+  dropoffPosition   Int?
 
   seatsBooked Int   @default(1)
   totalPrice  Float
@@ -368,6 +407,15 @@ model RideBooking {
   dropOtpExpiresAt        DateTime?
   dropOtpVerifiedAt       DateTime?
   otpAttemptCount         Int       @default(0)
+
+  // Operational timestamps
+  driverArrivedAt     DateTime?
+  waitTimerStartedAt  DateTime?
+  onboardedAt         DateTime?
+  dropoffConfirmedAt  DateTime?
+  riderDropoffConfirmedAt DateTime?
+  noShowMarkedAt      DateTime?
+  completedAt         DateTime?
 
   ratings RideRating[]
 
@@ -559,6 +607,45 @@ model UserBlock {
   @@unique([blockerId, blockedId])
   @@index([blockerId])
   @@index([blockedId])
+}
+
+// ============ RIDE OPERATIONS MODELS ============
+model LocationUpdate {
+  id        String   @id @default(uuid())
+  rideId    String
+  ride      Ride     @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  driverId  String
+  lat       Float
+  lng       Float
+  speed     Float?
+  heading   Float?
+  accuracy  Float?
+  timestamp DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([rideId, timestamp])
+  @@index([driverId, timestamp])
+}
+
+model RideEvent {
+  id               String   @id @default(uuid())
+  rideId           String
+  ride             Ride     @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  bookingId        String?
+  actionId         String   @unique  // Client-generated UUID for idempotency
+  eventType        String
+  actorType        String   // DRIVER, RIDER, SYSTEM
+  actorId          String
+  lat              Float?
+  lng              Float?
+  clientTimestamp   DateTime
+  serverTimestamp   DateTime @default(now())
+  validationStatus String   @default("VALID") // VALID, WARNING, SUSPICIOUS
+  metadataJson     Json?
+
+  @@index([rideId, serverTimestamp])
+  @@index([actionId])
 }
 
 // ============ DL VERIFICATION MODELS ============
