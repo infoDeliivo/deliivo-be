@@ -3,26 +3,25 @@ import { logWarn } from '../../utils/logger.js';
 import { prisma } from '../../config/index.js';
 import { RideStatus } from '@prisma/client';
 import {
-    CreateOriginInput,
-    UpdateDestinationInput,
-    UpdateScheduleInput,
-    UpdateCapacityInput,
-    UpdatePickupsInput,
-    UpdateDropoffsInput,
-    UpdateStopoversInput,
-    UpdateRouteInput,
-    UpdatePricingInput,
-    RouteOption,
-    ComputeRoutesResult,
-    PriceRecommendation,
-    DraftSummary,
-    ListDraftsQuery,
-    LocationInput,
-    StopoverSuggestion,
-    StopoverSuggestionsResult,
+  CreateOriginInput,
+  UpdateDestinationInput,
+  UpdateScheduleInput,
+  UpdateCapacityInput,
+  UpdatePickupsInput,
+  UpdateDropoffsInput,
+  UpdateStopoversInput,
+  UpdateRouteInput,
+  UpdatePricingInput,
+  RouteOption,
+  ComputeRoutesResult,
+  PriceRecommendation,
+  DraftSummary,
+  ListDraftsQuery,
+  LocationInput,
+  StopoverSuggestion,
+  StopoverSuggestionsResult,
 } from './publish-ride.types.js';
 import { getFuelPriceForCurrency } from '../../services/fuel-price.service.js';
-import { buildStopoverPricingByPlaceId, getStopoverPriceByPlaceId } from './stopover-pricing.utils.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
 
 // ============================================================
@@ -30,7 +29,7 @@ import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
 // ============================================================
 
 const DRAFT_TTL = 3600; // 10 minutes
-const ROUTES_TTL = 300;  // 5 minutes for computed routes
+const ROUTES_TTL = 300; // 5 minutes for computed routes
 
 // ============================================================
 //  CACHE KEY HELPERS
@@ -44,22 +43,22 @@ const routesCacheKey = (userId: string) => `rideDraft:routes:${userId}`;
 // ============================================================
 
 const NEXT_STEP: Record<number, string> = {
-    1: 'destination',
-    4: 'compute-routes',
-    7: 'stopovers',
-    8: 'schedule',
-    9: 'capacity',
-    10: 'pricing',
-    12: 'notes',
-    13: 'publish',
+  1: 'destination',
+  4: 'compute-routes',
+  7: 'stopovers',
+  8: 'schedule',
+  9: 'capacity',
+  10: 'pricing',
+  12: 'notes',
+  13: 'publish',
 };
 
 export const formatDraftResponse = (draft: DraftRide) => {
-    const { userId, step, ...rest } = draft;
-    return {
-        ...rest,
-        next: NEXT_STEP[step] || null,
-    };
+  const { userId, step, ...rest } = draft;
+  return {
+    ...rest,
+    next: NEXT_STEP[step] || null,
+  };
 };
 
 // ============================================================
@@ -67,52 +66,51 @@ export const formatDraftResponse = (draft: DraftRide) => {
 // ============================================================
 
 interface DraftRide {
-    userId: string;
-    step: number;
-    createdAt: string;
-    updatedAt: string;
+  userId: string;
+  step: number;
+  createdAt: string;
+  updatedAt: string;
 
-    // Origin (Step 1)
-    originPlaceId?: string;
-    originAddress?: string;
-    originLat?: number;
-    originLng?: number;
+  // Origin (Step 1)
+  originPlaceId?: string;
+  originAddress?: string;
+  originLat?: number;
+  originLng?: number;
 
-    // Pickups (Step 1)
-    pickups?: LocationInput[];
+  // Pickups (Step 1)
+  pickups?: LocationInput[];
 
-    // Destination (Step 2)
-    destinationPlaceId?: string;
-    destinationAddress?: string;
-    destinationLat?: number;
-    destinationLng?: number;
+  // Destination (Step 2)
+  destinationPlaceId?: string;
+  destinationAddress?: string;
+  destinationLat?: number;
+  destinationLng?: number;
 
-    // Dropoffs (Step 5-6)
-    dropoffs?: LocationInput[];
+  // Dropoffs (Step 5-6)
+  dropoffs?: LocationInput[];
 
-    // Route (Step 7)
-    routePolyline?: string;
-    routeDistanceMeters?: number;
-    routeDurationSeconds?: number;
+  // Route (Step 7)
+  routePolyline?: string;
+  routeDistanceMeters?: number;
+  routeDurationSeconds?: number;
 
-    // Stopovers (Step 8)
-    stopovers?: LocationInput[];
+  // Stopovers (Step 8)
+  stopovers?: LocationInput[];
 
-    // Schedule (Step 9)
-    departureDate?: string;
-    departureTime?: string;
+  // Schedule (Step 9)
+  departureDate?: string;
+  departureTime?: string;
 
-    // Capacity (Step 10)
-    totalSeats?: number;
-    basePricePerSeat?: number;
-    currency?: string;
-    vehicleId?: string | null;
-    maxLuggagePerPerson?: number;
-    backSeatOnly?: boolean;
-    stopoverPricingByPlaceId?: Record<string, number>;
+  // Capacity (Step 10)
+  totalSeats?: number;
+  basePricePerSeat?: number;
+  currency?: string;
+  vehicleId?: string | null;
+  maxLuggagePerPerson?: number;
+  backSeatOnly?: boolean;
 
-    // Notes (Step 13)
-    notes?: string;
+  // Notes (Step 13)
+  notes?: string;
 
     // Preferences
     femaleOnly?: boolean;
@@ -122,46 +120,49 @@ interface DraftRide {
  * Get a draft from Redis. Throws if not found.
  */
 const getDraft = async (userId: string): Promise<DraftRide> => {
-    const key = draftKey(userId);
-    const data = await redis.get(key);
-    if (!data) {
-        throw new Error('DRAFT_NOT_FOUND');
-    }
-    return JSON.parse(data) as DraftRide;
+  const key = draftKey(userId);
+  const data = await redis.get(key);
+  if (!data) {
+    throw new Error('DRAFT_NOT_FOUND');
+  }
+  return JSON.parse(data) as DraftRide;
 };
 
 /**
  * Save (create/update) a draft to Redis with TTL refresh.
  */
 const saveDraft = async (draft: DraftRide): Promise<DraftRide> => {
-    const key = draftKey(draft.userId);
-    draft.updatedAt = new Date().toISOString();
-    await redis.setex(key, DRAFT_TTL, JSON.stringify(draft));
-    return draft;
+  const key = draftKey(draft.userId);
+  draft.updatedAt = new Date().toISOString();
+  await redis.setex(key, DRAFT_TTL, JSON.stringify(draft));
+  return draft;
 };
 
 // ============================================================
 //  STEP 1: CREATE WITH ORIGIN + PICKUP
 // ============================================================
 
-export const createWithOrigin = async (driverId: string, input: CreateOriginInput): Promise<DraftRide> => {
-    // Delete any existing draft for this user
-    await redis.del(draftKey(driverId));
-    await redis.del(routesCacheKey(driverId));
+export const createWithOrigin = async (
+  driverId: string,
+  input: CreateOriginInput,
+): Promise<DraftRide> => {
+  // Delete any existing draft for this user
+  await redis.del(draftKey(driverId));
+  await redis.del(routesCacheKey(driverId));
 
-    const draft: DraftRide = {
-        userId: driverId,
-        step: 1,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        originPlaceId: input.originPlaceId,
-        originAddress: input.originAddress,
-        originLat: input.originLat,
-        originLng: input.originLng,
-        pickups: input.pickup ? [input.pickup] : undefined,
-    };
+  const draft: DraftRide = {
+    userId: driverId,
+    step: 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    originPlaceId: input.originPlaceId,
+    originAddress: input.originAddress,
+    originLat: input.originLat,
+    originLng: input.originLng,
+    pickups: input.pickup ? [input.pickup] : undefined,
+  };
 
-    return saveDraft(draft);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -169,13 +170,13 @@ export const createWithOrigin = async (driverId: string, input: CreateOriginInpu
 // ============================================================
 
 export const updatePickups = async (
-    driverId: string,
-    input: UpdatePickupsInput
+  driverId: string,
+  input: UpdatePickupsInput,
 ): Promise<DraftRide> => {
-    const draft = await getDraft(driverId);
-    draft.pickups = input.pickups;
-    draft.step = Math.max(draft.step, 2);
-    return saveDraft(draft);
+  const draft = await getDraft(driverId);
+  draft.pickups = input.pickups;
+  draft.step = Math.max(draft.step, 2);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -183,19 +184,19 @@ export const updatePickups = async (
 // ============================================================
 
 export const updateDestination = async (
-    driverId: string,
-    input: UpdateDestinationInput
+  driverId: string,
+  input: UpdateDestinationInput,
 ): Promise<DraftRide> => {
-    const draft = await getDraft(driverId);
-    draft.destinationPlaceId = input.destinationPlaceId;
-    draft.destinationAddress = input.destinationAddress;
-    draft.destinationLat = input.destinationLat;
-    draft.destinationLng = input.destinationLng;
-    if (input.dropoff) {
-        draft.dropoffs = [input.dropoff];
-    }
-    draft.step = Math.max(draft.step, 2);
-    return saveDraft(draft);
+  const draft = await getDraft(driverId);
+  draft.destinationPlaceId = input.destinationPlaceId;
+  draft.destinationAddress = input.destinationAddress;
+  draft.destinationLat = input.destinationLat;
+  draft.destinationLng = input.destinationLng;
+  if (input.dropoff) {
+    draft.dropoffs = [input.dropoff];
+  }
+  draft.step = Math.max(draft.step, 2);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -203,13 +204,13 @@ export const updateDestination = async (
 // ============================================================
 
 export const updateDropoffs = async (
-    driverId: string,
-    input: UpdateDropoffsInput
+  driverId: string,
+  input: UpdateDropoffsInput,
 ): Promise<DraftRide> => {
-    const draft = await getDraft(driverId);
-    draft.dropoffs = input.dropoffs;
-    draft.step = Math.max(draft.step, 5);
-    return saveDraft(draft);
+  const draft = await getDraft(driverId);
+  draft.dropoffs = input.dropoffs;
+  draft.step = Math.max(draft.step, 5);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -217,18 +218,18 @@ export const updateDropoffs = async (
 // ============================================================
 
 export const computeRouteOptions = async (
-    driverId: string,
-    includeAlternatives: boolean = true
+  driverId: string,
+  includeAlternatives: boolean = true,
 ): Promise<ComputeRoutesResult> => {
-    const draft = await getDraft(driverId);
+  const draft = await getDraft(driverId);
 
-    if (!draft.originLat || !draft.destinationLat) {
-        throw new Error('ORIGIN_AND_DESTINATION_REQUIRED');
-    }
+  if (!draft.originLat || !draft.destinationLat) {
+    throw new Error('ORIGIN_AND_DESTINATION_REQUIRED');
+  }
 
-    // Build origin and destination
-    const origin = { latitude: draft.originLat, longitude: draft.originLng };
-    const destination = { latitude: draft.destinationLat, longitude: draft.destinationLng };
+  // Build origin and destination
+  const origin = { latitude: draft.originLat, longitude: draft.originLng };
+  const destination = { latitude: draft.destinationLat, longitude: draft.destinationLng };
 
     let data: any;
 
@@ -257,8 +258,10 @@ export const computeRouteOptions = async (
         };
     } else {
         // Build intermediate waypoints from stopovers
-        const intermediateWaypoints = (draft.stopovers || [])
-            .map(wp => ({ latitude: wp.lat, longitude: wp.lng }));
+  const intermediateWaypoints = (draft.stopovers || []).map((wp) => ({
+    latitude: wp.lat,
+    longitude: wp.lng,
+  }));
 
         // Call Google Routes API
         const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
@@ -271,7 +274,7 @@ export const computeRouteOptions = async (
             body: JSON.stringify({
                 origin: { location: { latLng: origin } },
                 destination: { location: { latLng: destination } },
-                intermediates: intermediateWaypoints.map(wp => ({ location: { latLng: wp } })),
+      intermediates: intermediateWaypoints.map((wp) => ({ location: { latLng: wp } })),
                 travelMode: 'DRIVE',
                 computeAlternativeRoutes: includeAlternatives,
             }),
@@ -280,63 +283,60 @@ export const computeRouteOptions = async (
         data = await response.json();
     }
 
-    if (!data.routes || data.routes.length === 0) {
-        throw new Error('NO_ROUTES_FOUND');
-    }
+  if (!data.routes || data.routes.length === 0) {
+    throw new Error('NO_ROUTES_FOUND');
+  }
 
-    // Format route options
-    const routes: RouteOption[] = data.routes.map((route: any, index: number) => {
-        const distanceMeters = route.distanceMeters || 0;
-        const durationSeconds = parseInt(route.duration?.replace('s', '') || '0');
-
-        return {
-            index,
-            polyline: route.polyline?.encodedPolyline || '',
-            distanceMeters,
-            durationSeconds,
-            distanceText: `${(distanceMeters / 1000).toFixed(1)} km`,
-            durationText: formatDuration(durationSeconds),
-        };
-    });
-
-    // Cache computed routes for selection (5 min)
-    await redis.setex(routesCacheKey(driverId), ROUTES_TTL, JSON.stringify(routes));
+  // Format route options
+  const routes: RouteOption[] = data.routes.map((route: any, index: number) => {
+    const distanceMeters = route.distanceMeters || 0;
+    const durationSeconds = parseInt(route.duration?.replace('s', '') || '0');
 
     return {
-        routes,
-        selectedIndex: draft.routePolyline ? 0 : null,
+      index,
+      polyline: route.polyline?.encodedPolyline || '',
+      distanceMeters,
+      durationSeconds,
+      distanceText: `${(distanceMeters / 1000).toFixed(1)} km`,
+      durationText: formatDuration(durationSeconds),
     };
+  });
+
+  // Cache computed routes for selection (5 min)
+  await redis.setex(routesCacheKey(driverId), ROUTES_TTL, JSON.stringify(routes));
+
+  return {
+    routes,
+    selectedIndex: draft.routePolyline ? 0 : null,
+  };
 };
 
 // ============================================================
 //  STEP 7b: SELECT ROUTE
 // ============================================================
 
-export const selectRoute = async (
-    driverId: string,
-    routeIndex: number
-): Promise<DraftRide> => {
-    const draft = await getDraft(driverId);
+export const selectRoute = async (driverId: string, routeIndex: number): Promise<DraftRide> => {
+  const draft = await getDraft(driverId);
 
-    // Get cached routes
-    const cachedData = await redis.get(routesCacheKey(driverId));
-    if (!cachedData) {
-        throw new Error('ROUTES_EXPIRED');
-    }
+  // Get cached routes
+  const cachedData = await redis.get(routesCacheKey(driverId));
+  if (!cachedData) {
+    throw new Error('ROUTES_EXPIRED');
+  }
 
-    const routes: RouteOption[] = JSON.parse(cachedData);
+  const routes: RouteOption[] = JSON.parse(cachedData);
 
-    if (routeIndex < 0 || routeIndex >= routes.length) {
-        throw new Error('INVALID_ROUTE_INDEX');
-    }
+  if (routeIndex < 0 || routeIndex >= routes.length) {
+    throw new Error('INVALID_ROUTE_INDEX');
+  }
 
-    const selectedRoute = routes[routeIndex];
-    draft.routePolyline = selectedRoute.polyline;
-    draft.routeDistanceMeters = selectedRoute.distanceMeters;
-    draft.routeDurationSeconds = selectedRoute.durationSeconds;
-    draft.step = Math.max(draft.step, 7);
+  const selectedRoute = routes[routeIndex];
+  draft.routePolyline = selectedRoute.polyline;
+  draft.routeDistanceMeters = selectedRoute.distanceMeters;
+  draft.routeDurationSeconds = selectedRoute.durationSeconds;
+  draft.step = Math.max(draft.step, 7);
 
-    return saveDraft(draft);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -347,41 +347,41 @@ export const selectRoute = async (
  * Decode a Google-encoded polyline string into an array of {lat, lng} points.
  */
 function decodePolyline(encoded: string): { lat: number; lng: number }[] {
-    const points: { lat: number; lng: number }[] = [];
-    let index = 0;
-    let lat = 0;
-    let lng = 0;
+  const points: { lat: number; lng: number }[] = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
 
-    while (index < encoded.length) {
-        let shift = 0;
-        let result = 0;
-        let byte: number;
+  while (index < encoded.length) {
+    let shift = 0;
+    let result = 0;
+    let byte: number;
 
-        do {
-            byte = encoded.charCodeAt(index++) - 63;
-            result |= (byte & 0x1f) << shift;
-            shift += 5;
-        } while (byte >= 0x20);
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
 
-        const dlat = result & 1 ? ~(result >> 1) : result >> 1;
-        lat += dlat;
+    const dlat = result & 1 ? ~(result >> 1) : result >> 1;
+    lat += dlat;
 
-        shift = 0;
-        result = 0;
+    shift = 0;
+    result = 0;
 
-        do {
-            byte = encoded.charCodeAt(index++) - 63;
-            result |= (byte & 0x1f) << shift;
-            shift += 5;
-        } while (byte >= 0x20);
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
 
-        const dlng = result & 1 ? ~(result >> 1) : result >> 1;
-        lng += dlng;
+    const dlng = result & 1 ? ~(result >> 1) : result >> 1;
+    lng += dlng;
 
-        points.push({ lat: lat / 1e5, lng: lng / 1e5 });
-    }
+    points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
 
-    return points;
+  return points;
 }
 
 /**
@@ -427,51 +427,51 @@ function encodeUnsignedNumber(num: number): string {
  * Calculate distance in meters between two lat/lng points using Haversine formula.
  */
 function haversineDistance(
-    p1: { lat: number; lng: number },
-    p2: { lat: number; lng: number }
+  p1: { lat: number; lng: number },
+  p2: { lat: number; lng: number },
 ): number {
-    const R = 6371000; // Earth radius in meters
-    const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371000; // Earth radius in meters
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
 
-    const dLat = toRad(p2.lat - p1.lat);
-    const dLng = toRad(p2.lng - p1.lng);
+  const dLat = toRad(p2.lat - p1.lat);
+  const dLng = toRad(p2.lng - p1.lng);
 
-    const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(p1.lat)) * Math.cos(toRad(p2.lat)) * Math.sin(dLng / 2) ** 2;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(p1.lat)) * Math.cos(toRad(p2.lat)) * Math.sin(dLng / 2) ** 2;
 
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 /**
  * Sample points along a decoded polyline at regular intervals.
  */
 function samplePointsAlongRoute(
-    points: { lat: number; lng: number }[],
-    intervalMeters: number = 30000 // every ~30km
+  points: { lat: number; lng: number }[],
+  intervalMeters: number = 30000, // every ~30km
 ): { lat: number; lng: number; distanceFromOrigin: number }[] {
-    if (points.length < 2) return [];
+  if (points.length < 2) return [];
 
-    const sampled: { lat: number; lng: number; distanceFromOrigin: number }[] = [];
-    let totalDistance = 0;
-    let nextSampleAt = intervalMeters;
+  const sampled: { lat: number; lng: number; distanceFromOrigin: number }[] = [];
+  let totalDistance = 0;
+  let nextSampleAt = intervalMeters;
 
-    // Skip first and last points (origin/destination)
-    for (let i = 1; i < points.length; i++) {
-        const segmentDist = haversineDistance(points[i - 1], points[i]);
-        totalDistance += segmentDist;
+  // Skip first and last points (origin/destination)
+  for (let i = 1; i < points.length; i++) {
+    const segmentDist = haversineDistance(points[i - 1], points[i]);
+    totalDistance += segmentDist;
 
-        if (totalDistance >= nextSampleAt) {
-            sampled.push({
-                lat: points[i].lat,
-                lng: points[i].lng,
-                distanceFromOrigin: totalDistance,
-            });
-            nextSampleAt += intervalMeters;
-        }
+    if (totalDistance >= nextSampleAt) {
+      sampled.push({
+        lat: points[i].lat,
+        lng: points[i].lng,
+        distanceFromOrigin: totalDistance,
+      });
+      nextSampleAt += intervalMeters;
     }
+  }
 
-    return sampled;
+  return sampled;
 }
 
 /**
@@ -479,118 +479,119 @@ function samplePointsAlongRoute(
  * Decodes polyline → samples points every ~30km → queries Google Places Nearby Search.
  */
 export const getStopoversAlongRoute = async (
-    driverId: string,
+  driverId: string,
 ): Promise<StopoverSuggestionsResult> => {
-    const draft = await getDraft(driverId);
+  const draft = await getDraft(driverId);
 
-    if (!draft.routePolyline) {
-        throw new Error('ROUTE_REQUIRED_FOR_SUGGESTIONS');
-    }
+  if (!draft.routePolyline) {
+    throw new Error('ROUTE_REQUIRED_FOR_SUGGESTIONS');
+  }
 
-    // 1. Decode the polyline
-    const decodedPoints = decodePolyline(draft.routePolyline);
-    if (decodedPoints.length < 2) {
-        throw new Error('INVALID_POLYLINE');
-    }
+  // 1. Decode the polyline
+  const decodedPoints = decodePolyline(draft.routePolyline);
+  if (decodedPoints.length < 2) {
+    throw new Error('INVALID_POLYLINE');
+  }
 
-    // 2. Sample points along the route (every ~30km)
-    const sampledPoints = samplePointsAlongRoute(decodedPoints, 30000);
+  // 2. Sample points along the route (every ~30km)
+  const sampledPoints = samplePointsAlongRoute(decodedPoints, 30000);
 
-    if (sampledPoints.length === 0) {
-        // Route is too short for stopovers
-        return {
-            suggestions: [],
-            routeDistanceKm: (draft.routeDistanceMeters || 0) / 1000,
-            basePricePerSeat: draft.basePricePerSeat || null,
-        };
-    }
-
-    // 3. Query Google Places Nearby Search for each sampled point
-    const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
-    const allSuggestions: StopoverSuggestion[] = [];
-    const seenPlaceIds = new Set<string>();
-
-    // Limit to max 5 sample points to avoid excessive API calls
-    const pointsToQuery = sampledPoints.slice(0, 5);
-
-    for (const point of pointsToQuery) {
-        try {
-            const url = new URL('https://maps.googleapis.com/maps/api/place/nearbysearch/json');
-            url.searchParams.set('location', `${point.lat},${point.lng}`);
-            url.searchParams.set('radius', '15000'); // 15km radius
-            url.searchParams.set('type', 'locality');  // cities/towns
-            url.searchParams.set('key', GOOGLE_API_KEY);
-
-            const response = await fetch(url.toString());
-            const data = await response.json() as any;
-
-            if (data.results && Array.isArray(data.results)) {
-                for (const place of data.results.slice(0, 3)) { // max 3 per sample
-                    if (seenPlaceIds.has(place.place_id)) continue;
-                    seenPlaceIds.add(place.place_id);
-
-                    const distFromOrigin = haversineDistance(
-                        { lat: draft.originLat!, lng: draft.originLng! },
-                        { lat: place.geometry.location.lat, lng: place.geometry.location.lng }
-                    );
-
-                    allSuggestions.push({
-                        placeId: place.place_id,
-                        name: place.name,
-                        address: place.vicinity || place.name,
-                        lat: place.geometry.location.lat,
-                        lng: place.geometry.location.lng,
-                        distanceFromOriginKm: Math.round((distFromOrigin / 1000) * 10) / 10,
-                        distanceFromOriginMeters: Math.round(distFromOrigin),
-                        types: place.types || [],
-                    });
-                }
-            }
-        } catch (err) {
-            // Skip failed queries silently, continue with other points
-            logWarn('Places API error for point', { point, error: err instanceof Error ? err.message : err });
-        }
-    }
-
-    // 4. Sort by distance from origin
-    allSuggestions.sort((a, b) => a.distanceFromOriginMeters - b.distanceFromOriginMeters);
-
-    // 5. Calculate arrival times if departure time and duration are available
-    const totalDistanceKm = (draft.routeDistanceMeters || 0) / 1000;
-    const totalDurationSeconds = draft.routeDurationSeconds || 0;
-    
-    let arrivalTimes: string[] = [];
-    if (draft.departureTime && totalDurationSeconds > 0 && allSuggestions.length > 0) {
-        // Create a temporary waypoint list: origin + suggestions + destination
-        const waypointCount = allSuggestions.length + 2;
-        arrivalTimes = calculateWaypointArrivalTimes(
-            draft.departureTime,
-            totalDurationSeconds,
-            waypointCount
-        );
-    }
-    
-    // 6. Auto-calculate per-stopper pricing and assign arrival times
-    for (let i = 0; i < allSuggestions.length; i++) {
-        const suggestion = allSuggestions[i];
-        
-        // Calculate price if base price exists
-        if (draft.basePricePerSeat && totalDistanceKm > 0) {
-            const distanceRatio = suggestion.distanceFromOriginKm / totalDistanceKm;
-            suggestion.pricePerSeat = Math.round(draft.basePricePerSeat * distanceRatio * 100) / 100;
-        }
-        
-        // Assign arrival time (index + 1 because index 0 is origin)
-        if (arrivalTimes.length > 0) {
-            suggestion.estimatedArrivalTime = arrivalTimes[i + 1];
-        }
-    }
-
+  if (sampledPoints.length === 0) {
+    // Route is too short for stopovers
     return {
-        suggestions: allSuggestions,
-        routeDistanceKm: Math.round(totalDistanceKm * 10) / 10,
-        basePricePerSeat: draft.basePricePerSeat || null,
+      suggestions: [],
+      routeDistanceKm: (draft.routeDistanceMeters || 0) / 1000,
+      basePricePerSeat: draft.basePricePerSeat || null,
     };
+  }
+
+  // 3. Query Google Places Nearby Search for each sampled point
+  const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+  const allSuggestions: StopoverSuggestion[] = [];
+  const seenPlaceIds = new Set<string>();
+
+  // Limit to max 5 sample points to avoid excessive API calls
+  const pointsToQuery = sampledPoints.slice(0, 5);
+
+  for (const point of pointsToQuery) {
+    try {
+      const url = new URL('https://maps.googleapis.com/maps/api/place/nearbysearch/json');
+      url.searchParams.set('location', `${point.lat},${point.lng}`);
+      url.searchParams.set('radius', '15000'); // 15km radius
+      url.searchParams.set('type', 'locality'); // cities/towns
+      url.searchParams.set('key', GOOGLE_API_KEY);
+
+      const response = await fetch(url.toString());
+      const data = (await response.json()) as any;
+
+      if (data.results && Array.isArray(data.results)) {
+        for (const place of data.results.slice(0, 3)) {
+          // max 3 per sample
+          if (seenPlaceIds.has(place.place_id)) continue;
+          seenPlaceIds.add(place.place_id);
+
+          const distFromOrigin = haversineDistance(
+            { lat: draft.originLat!, lng: draft.originLng! },
+            { lat: place.geometry.location.lat, lng: place.geometry.location.lng },
+          );
+
+          allSuggestions.push({
+            placeId: place.place_id,
+            name: place.name,
+            address: place.vicinity || place.name,
+            lat: place.geometry.location.lat,
+            lng: place.geometry.location.lng,
+            distanceFromOriginKm: Math.round((distFromOrigin / 1000) * 10) / 10,
+            distanceFromOriginMeters: Math.round(distFromOrigin),
+            types: place.types || [],
+          });
+        }
+      }
+    } catch (err) {
+      // Skip failed queries silently, continue with other points
+            logWarn('Places API error for point', { point, error: err instanceof Error ? err.message : err });
+    }
+  }
+
+  // 4. Sort by distance from origin
+  allSuggestions.sort((a, b) => a.distanceFromOriginMeters - b.distanceFromOriginMeters);
+
+  // 5. Calculate arrival times if departure time and duration are available
+  const totalDistanceKm = (draft.routeDistanceMeters || 0) / 1000;
+  const totalDurationSeconds = draft.routeDurationSeconds || 0;
+
+  let arrivalTimes: string[] = [];
+  if (draft.departureTime && totalDurationSeconds > 0 && allSuggestions.length > 0) {
+    // Create a temporary waypoint list: origin + suggestions + destination
+    const waypointCount = allSuggestions.length + 2;
+    arrivalTimes = calculateWaypointArrivalTimes(
+      draft.departureTime,
+      totalDurationSeconds,
+      waypointCount,
+    );
+  }
+
+  // 6. Auto-calculate per-stopper pricing and assign arrival times
+  for (let i = 0; i < allSuggestions.length; i++) {
+    const suggestion = allSuggestions[i];
+
+    // Calculate price if base price exists
+    if (draft.basePricePerSeat && totalDistanceKm > 0) {
+      const distanceRatio = suggestion.distanceFromOriginKm / totalDistanceKm;
+      suggestion.pricePerSeat = Math.round(draft.basePricePerSeat * distanceRatio * 100) / 100;
+    }
+
+    // Assign arrival time (index + 1 because index 0 is origin)
+    if (arrivalTimes.length > 0) {
+      suggestion.estimatedArrivalTime = arrivalTimes[i + 1];
+    }
+  }
+
+  return {
+    suggestions: allSuggestions,
+    routeDistanceKm: Math.round(totalDistanceKm * 10) / 10,
+    basePricePerSeat: draft.basePricePerSeat || null,
+  };
 };
 
 // ============================================================
@@ -598,13 +599,13 @@ export const getStopoversAlongRoute = async (
 // ============================================================
 
 export const updateStopovers = async (
-    driverId: string,
-    input: UpdateStopoversInput
+  driverId: string,
+  input: UpdateStopoversInput,
 ): Promise<DraftRide> => {
-    const draft = await getDraft(driverId);
-    draft.stopovers = input.stopovers;
-    draft.step = Math.max(draft.step, 8);
-    return saveDraft(draft);
+  const draft = await getDraft(driverId);
+  draft.stopovers = input.stopovers;
+  draft.step = Math.max(draft.step, 8);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -612,14 +613,14 @@ export const updateStopovers = async (
 // ============================================================
 
 export const updateSchedule = async (
-    driverId: string,
-    input: UpdateScheduleInput
+  driverId: string,
+  input: UpdateScheduleInput,
 ): Promise<DraftRide> => {
-    const draft = await getDraft(driverId);
-    draft.departureDate = new Date(input.departureDate).toISOString();
-    draft.departureTime = input.departureTime;
-    draft.step = Math.max(draft.step, 9);
-    return saveDraft(draft);
+  const draft = await getDraft(driverId);
+  draft.departureDate = new Date(input.departureDate).toISOString();
+  draft.departureTime = input.departureTime;
+  draft.step = Math.max(draft.step, 9);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -627,23 +628,23 @@ export const updateSchedule = async (
 // ============================================================
 
 export const updateCapacity = async (
-    driverId: string,
-    input: UpdateCapacityInput
+  driverId: string,
+  input: UpdateCapacityInput,
 ): Promise<DraftRide> => {
-    const draft = await getDraft(driverId);
+  const draft = await getDraft(driverId);
 
-    // Auto-fetch user's vehicle
-    const vehicle = await prisma.vehicle.findFirst({
-        where: { userId: driverId, deletedAt: null },
-    });
+  // Auto-fetch user's vehicle
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { userId: driverId, deletedAt: null },
+  });
 
-    draft.totalSeats = input.totalSeats;
-    draft.vehicleId = vehicle?.id || null;
-    draft.maxLuggagePerPerson = input.maxLuggagePerPerson ?? 2;
-    draft.backSeatOnly = input.backSeatOnly ?? false;
-    draft.step = Math.max(draft.step, 10);
+  draft.totalSeats = input.totalSeats;
+  draft.vehicleId = vehicle?.id || null;
+  draft.maxLuggagePerPerson = input.maxLuggagePerPerson ?? 2;
+  draft.backSeatOnly = input.backSeatOnly ?? false;
+  draft.step = Math.max(draft.step, 10);
 
-    return saveDraft(draft);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -653,84 +654,100 @@ export const updateCapacity = async (
 const DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER = Number(process.env.FUEL_EFFICIENCY_KM_PER_LITER || 12);
 
 export const getRecommendedPrice = async (
-    driverId: string,
-): Promise<PriceRecommendation & { stopoverPricing?: { placeId: string; address: string; distanceFromOriginKm: number; recommendedPrice: number }[] }> => {
-    const draft = await getDraft(driverId);
+  driverId: string,
+): Promise<
+  PriceRecommendation & {
+    stopoverPricing?: {
+      placeId: string;
+      address: string;
+      distanceFromOriginKm: number;
+      recommendedPrice: number;
+    }[];
+  }
+> => {
+  const draft = await getDraft(driverId);
 
-    if (!draft.routeDistanceMeters) {
-        throw new Error('ROUTE_REQUIRED_FOR_PRICING');
+  if (!draft.routeDistanceMeters) {
+    throw new Error('ROUTE_REQUIRED_FOR_PRICING');
+  }
+
+  const fuelContext = await getFuelPriceForCurrency(draft.currency || 'GBP');
+  const fuelEfficiency =
+    DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER > 0 ? DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER : 12;
+  const pricePerKm = fuelContext.pricePerLiter / fuelEfficiency;
+
+  const distanceKm = draft.routeDistanceMeters / 1000;
+  const fuelCost = distanceKm * pricePerKm;
+
+  const minPrice = Math.round(fuelCost * 0.8);
+  const recommendedPrice = Math.round(fuelCost * 1.5);
+  const maxPrice = Math.round(fuelCost * 2.5);
+
+  // Calculate per-stopper pricing and arrival times if stopovers exist
+  let stopoverPricing:
+    | {
+        placeId: string;
+        address: string;
+        distanceFromOriginKm: number;
+        recommendedPrice: number;
+        estimatedArrivalTime?: string;
+      }[]
+    | undefined;
+
+  if (draft.stopovers && draft.stopovers.length > 0 && draft.originLat && draft.originLng) {
+    // Calculate arrival times if departure time is set
+    let arrivalTimes: string[] = [];
+    if (draft.departureTime && draft.routeDurationSeconds) {
+      const waypointCount = draft.stopovers.length + 2; // origin + stopovers + destination
+      arrivalTimes = calculateWaypointArrivalTimes(
+        draft.departureTime,
+        draft.routeDurationSeconds,
+        waypointCount,
+      );
     }
 
-    const fuelContext = await getFuelPriceForCurrency(draft.currency || 'GBP');
-    const fuelEfficiency = DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER > 0
-        ? DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER
-        : 12;
-    const pricePerKm = fuelContext.pricePerLiter / fuelEfficiency;
+    stopoverPricing = draft.stopovers.map((stopover, index) => {
+      const distFromOrigin = haversineDistance(
+        { lat: draft.originLat!, lng: draft.originLng! },
+        { lat: stopover.lat, lng: stopover.lng },
+      );
+      const distFromOriginKm = Math.round((distFromOrigin / 1000) * 10) / 10;
+      const ratio = distFromOriginKm / distanceKm;
+      const stopPrice = Math.round(recommendedPrice * ratio * 100) / 100;
 
-    const distanceKm = draft.routeDistanceMeters / 1000;
-    const fuelCost = distanceKm * pricePerKm;
+      return {
+        placeId: stopover.placeId,
+        address: stopover.address,
+        distanceFromOriginKm: distFromOriginKm,
+        recommendedPrice: stopPrice,
+        estimatedArrivalTime: arrivalTimes.length > 0 ? arrivalTimes[index + 1] : undefined,
+      };
+    });
 
-    const minPrice = Math.round(fuelCost * 0.8);
-    const recommendedPrice = Math.round(fuelCost * 1.5);
-    const maxPrice = Math.round(fuelCost * 2.5);
+    // Sort by distance
+    stopoverPricing.sort((a, b) => a.distanceFromOriginKm - b.distanceFromOriginKm);
+  }
 
-    // Calculate per-stopper pricing and arrival times if stopovers exist
-    let stopoverPricing: { placeId: string; address: string; distanceFromOriginKm: number; recommendedPrice: number; estimatedArrivalTime?: string }[] | undefined;
-
-    if (draft.stopovers && draft.stopovers.length > 0 && draft.originLat && draft.originLng) {
-        // Calculate arrival times if departure time is set
-        let arrivalTimes: string[] = [];
-        if (draft.departureTime && draft.routeDurationSeconds) {
-            const waypointCount = draft.stopovers.length + 2; // origin + stopovers + destination
-            arrivalTimes = calculateWaypointArrivalTimes(
-                draft.departureTime,
-                draft.routeDurationSeconds,
-                waypointCount
-            );
-        }
-        
-        stopoverPricing = draft.stopovers.map((stopover, index) => {
-            const distFromOrigin = haversineDistance(
-                { lat: draft.originLat!, lng: draft.originLng! },
-                { lat: stopover.lat, lng: stopover.lng }
-            );
-            const distFromOriginKm = Math.round((distFromOrigin / 1000) * 10) / 10;
-            const ratio = distFromOriginKm / distanceKm;
-            const stopPrice = Math.round(recommendedPrice * ratio * 100) / 100;
-
-            return {
-                placeId: stopover.placeId,
-                address: stopover.address,
-                distanceFromOriginKm: distFromOriginKm,
-                recommendedPrice: stopPrice,
-                estimatedArrivalTime: arrivalTimes.length > 0 ? arrivalTimes[index + 1] : undefined,
-            };
-        });
-
-        // Sort by distance
-        stopoverPricing.sort((a, b) => a.distanceFromOriginKm - b.distanceFromOriginKm);
-    }
-
-    return {
-        recommendedPrice,
-        minPrice,
-        maxPrice,
-        currency: draft.currency || 'GBP',
-        breakdown: {
-            fuelCost: Math.round(fuelCost * 100) / 100,
-            distanceKm: Math.round(distanceKm * 10) / 10,
-            pricePerKm: Math.round(pricePerKm * 100) / 100,
-            fuelPricePerLiter: Math.round(fuelContext.pricePerLiter * 100) / 100,
-            fuelPriceCurrency: fuelContext.currency,
-            fuelCountryCode: fuelContext.countryCode,
-            fuelSource: fuelContext.sourceLabel,
-            fuelPriceEffectiveDate: fuelContext.effectiveDate,
-            efficiencyKmPerLiter: Math.round(fuelEfficiency * 100) / 100,
-            fuelPriceIsFallback: fuelContext.isFallback,
-            fuelPriceIsCached: fuelContext.isCached,
-        },
-        stopoverPricing,
-    };
+  return {
+    recommendedPrice,
+    minPrice,
+    maxPrice,
+    currency: draft.currency || 'GBP',
+    breakdown: {
+      fuelCost: Math.round(fuelCost * 100) / 100,
+      distanceKm: Math.round(distanceKm * 10) / 10,
+      pricePerKm: Math.round(pricePerKm * 100) / 100,
+      fuelPricePerLiter: Math.round(fuelContext.pricePerLiter * 100) / 100,
+      fuelPriceCurrency: fuelContext.currency,
+      fuelCountryCode: fuelContext.countryCode,
+      fuelSource: fuelContext.sourceLabel,
+      fuelPriceEffectiveDate: fuelContext.effectiveDate,
+      efficiencyKmPerLiter: Math.round(fuelEfficiency * 100) / 100,
+      fuelPriceIsFallback: fuelContext.isFallback,
+      fuelPriceIsCached: fuelContext.isCached,
+    },
+    stopoverPricing,
+  };
 };
 
 // ============================================================
@@ -738,16 +755,208 @@ export const getRecommendedPrice = async (
 // ============================================================
 
 export const updatePricing = async (
-    driverId: string,
-    input: UpdatePricingInput
+  driverId: string,
+  input: UpdatePricingInput,
 ): Promise<DraftRide> => {
-    const draft = await getDraft(driverId);
-    draft.basePricePerSeat = input.basePricePerSeat;
-    if (input.stopoverPricing !== undefined) {
-        draft.stopoverPricingByPlaceId = buildStopoverPricingByPlaceId(input.stopoverPricing);
+  const draft = await getDraft(driverId);
+  draft.basePricePerSeat = input.basePricePerSeat;
+
+  const totalDistanceKm = (draft.routeDistanceMeters || 0) / 1000;
+
+  // Calculate and embed pricing directly in stopovers (based on distance FROM origin)
+  if (
+    draft.stopovers &&
+    draft.stopovers.length > 0 &&
+    draft.originLat &&
+    draft.originLng &&
+    totalDistanceKm > 0
+  ) {
+    draft.stopovers = draft.stopovers.map((stopover) => {
+      const distFromOrigin = haversineDistance(
+        { lat: draft.originLat!, lng: draft.originLng! },
+        { lat: stopover.lat, lng: stopover.lng },
+      );
+      const distFromOriginKm = distFromOrigin / 1000;
+      const distanceRatio = distFromOriginKm / totalDistanceKm;
+
+      // Calculate prices based on base price and distance ratio
+      const stopoverBasePrice = input.basePricePerSeat * distanceRatio;
+      const recommendedPrice = Math.round(stopoverBasePrice * 100) / 100;
+      const minPrice = Math.round(stopoverBasePrice * 0.8 * 100) / 100;
+      const maxPrice = Math.round(stopoverBasePrice * 1.67 * 100) / 100; // 250/150 = 1.67
+
+      return {
+        ...stopover,
+        recommendedPrice,
+        minPrice,
+        maxPrice,
+      };
+    });
+  }
+
+  // Calculate and embed pricing directly in dropoffs (based on distance TO destination)
+  if (
+    draft.dropoffs &&
+    draft.dropoffs.length > 0 &&
+    draft.destinationLat &&
+    draft.destinationLng &&
+    totalDistanceKm > 0
+  ) {
+    draft.dropoffs = draft.dropoffs.map((dropoff) => {
+      const distFromDestination = haversineDistance(
+        { lat: dropoff.lat, lng: dropoff.lng },
+        { lat: draft.destinationLat!, lng: draft.destinationLng! },
+      );
+      const distFromDestinationKm = distFromDestination / 1000;
+      // Price is based on how much of the journey they complete (total - remaining)
+      const travelledDistanceKm = totalDistanceKm - distFromDestinationKm;
+      const distanceRatio = Math.max(0, travelledDistanceKm / totalDistanceKm);
+
+      // Calculate prices based on base price and distance ratio
+      const dropoffBasePrice = input.basePricePerSeat * distanceRatio;
+      const recommendedPrice = Math.round(dropoffBasePrice * 100) / 100;
+      const minPrice = Math.round(dropoffBasePrice * 0.8 * 100) / 100;
+      const maxPrice = Math.round(dropoffBasePrice * 1.67 * 100) / 100; // 250/150 = 1.67
+
+      return {
+        ...dropoff,
+        recommendedPrice,
+        minPrice,
+        maxPrice,
+      };
+    });
+  }
+
+  // Handle stopover pricing with arrival times from input if provided
+  if (input.stopoverPricing !== undefined && draft.stopovers) {
+    draft.stopovers = draft.stopovers.map((stopover) => {
+      const pricingInfo = input.stopoverPricing?.find((sp) => sp.placeId === stopover.placeId);
+      if (pricingInfo?.estimatedArrivalTime) {
+        return { ...stopover, estimatedArrivalTime: pricingInfo.estimatedArrivalTime };
+      }
+      return stopover;
+    });
+  }
+
+  if (draft.departureTime && draft.routeDurationSeconds) {
+    const allWaypoints: {
+      type: 'pickup' | 'stopover' | 'dropoff';
+      placeId: string;
+      distanceFromOrigin: number;
+    }[] = [];
+
+    // Calculate distances from origin for all waypoints
+    if (draft.originLat && draft.originLng) {
+      // Add pickups
+      if (draft.pickups) {
+        draft.pickups.forEach((pickup) => {
+          const dist = haversineDistance(
+            { lat: draft.originLat!, lng: draft.originLng! },
+            { lat: pickup.lat, lng: pickup.lng },
+          );
+          allWaypoints.push({ type: 'pickup', placeId: pickup.placeId, distanceFromOrigin: dist });
+        });
+      }
+
+      // Add stopovers
+      if (draft.stopovers) {
+        draft.stopovers.forEach((stopover) => {
+          const dist = haversineDistance(
+            { lat: draft.originLat!, lng: draft.originLng! },
+            { lat: stopover.lat, lng: stopover.lng },
+          );
+          allWaypoints.push({
+            type: 'stopover',
+            placeId: stopover.placeId,
+            distanceFromOrigin: dist,
+          });
+        });
+      }
+
+      // Add dropoffs
+      if (draft.dropoffs) {
+        draft.dropoffs.forEach((dropoff) => {
+          const dist = haversineDistance(
+            { lat: draft.originLat!, lng: draft.originLng! },
+            { lat: dropoff.lat, lng: dropoff.lng },
+          );
+          allWaypoints.push({
+            type: 'dropoff',
+            placeId: dropoff.placeId,
+            distanceFromOrigin: dist,
+          });
+        });
+      }
+
+      // Sort by distance
+      allWaypoints.sort((a, b) => a.distanceFromOrigin - b.distanceFromOrigin);
+
+      // Calculate arrival times
+      const totalDistanceMeters = draft.routeDistanceMeters || 0;
+      if (totalDistanceMeters > 0) {
+        const [hours, minutes] = draft.departureTime.split(':').map(Number);
+        const departureMinutes = hours * 60 + minutes;
+        const totalDurationMinutes = Math.ceil(draft.routeDurationSeconds / 60);
+
+        // Update pickups with arrival times
+        if (draft.pickups) {
+          draft.pickups = draft.pickups.map((pickup) => {
+            const wp = allWaypoints.find(
+              (w) => w.type === 'pickup' && w.placeId === pickup.placeId,
+            );
+            if (wp && totalDistanceMeters > 0) {
+              const ratio = wp.distanceFromOrigin / totalDistanceMeters;
+              const arrivalMinutes = departureMinutes + Math.ceil(totalDurationMinutes * ratio);
+              const arrivalHours = Math.floor(arrivalMinutes / 60) % 24;
+              const arrivalMins = arrivalMinutes % 60;
+              const estimatedArrivalTime = `${String(arrivalHours).padStart(2, '0')}:${String(arrivalMins).padStart(2, '0')}`;
+              return { ...pickup, estimatedArrivalTime };
+            }
+            return pickup;
+          });
+        }
+
+        // Update stopovers with arrival times
+        if (draft.stopovers) {
+          draft.stopovers = draft.stopovers.map((stopover) => {
+            const wp = allWaypoints.find(
+              (w) => w.type === 'stopover' && w.placeId === stopover.placeId,
+            );
+            if (wp && totalDistanceMeters > 0) {
+              const ratio = wp.distanceFromOrigin / totalDistanceMeters;
+              const arrivalMinutes = departureMinutes + Math.ceil(totalDurationMinutes * ratio);
+              const arrivalHours = Math.floor(arrivalMinutes / 60) % 24;
+              const arrivalMins = arrivalMinutes % 60;
+              const estimatedArrivalTime = `${String(arrivalHours).padStart(2, '0')}:${String(arrivalMins).padStart(2, '0')}`;
+              return { ...stopover, estimatedArrivalTime };
+            }
+            return stopover;
+          });
+        }
+
+        // Update dropoffs with arrival times
+        if (draft.dropoffs) {
+          draft.dropoffs = draft.dropoffs.map((dropoff) => {
+            const wp = allWaypoints.find(
+              (w) => w.type === 'dropoff' && w.placeId === dropoff.placeId,
+            );
+            if (wp && totalDistanceMeters > 0) {
+              const ratio = wp.distanceFromOrigin / totalDistanceMeters;
+              const arrivalMinutes = departureMinutes + Math.ceil(totalDurationMinutes * ratio);
+              const arrivalHours = Math.floor(arrivalMinutes / 60) % 24;
+              const arrivalMins = arrivalMinutes % 60;
+              const estimatedArrivalTime = `${String(arrivalHours).padStart(2, '0')}:${String(arrivalMins).padStart(2, '0')}`;
+              return { ...dropoff, estimatedArrivalTime };
+            }
+            return dropoff;
+          });
+        }
+      }
     }
-    draft.step = Math.max(draft.step, 12);
-    return saveDraft(draft);
+  }
+
+  draft.step = Math.max(draft.step, 12);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -761,8 +970,8 @@ export const updateNotes = async (
     notes: string,
     femaleOnly?: boolean
 ): Promise<DraftRide> => {
-    const draft = await getDraft(driverId);
-    draft.notes = notes;
+  const draft = await getDraft(driverId);
+  draft.notes = notes;
 
     if (femaleOnly === true) {
         // Only female drivers can publish female-only rides
@@ -778,8 +987,8 @@ export const updateNotes = async (
         draft.femaleOnly = false;
     }
 
-    draft.step = Math.max(draft.step, 13);
-    return saveDraft(draft);
+  draft.step = Math.max(draft.step, 13);
+  return saveDraft(draft);
 };
 
 // ============================================================
@@ -787,21 +996,21 @@ export const updateNotes = async (
 // ============================================================
 
 export const publishRide = async (driverId: string) => {
-    const draft = await getDraft(driverId);
+  const draft = await getDraft(driverId);
 
-    // ---- Validation ---- //
-    if (!draft.originPlaceId || !draft.destinationPlaceId) {
-        throw new Error('ORIGIN_AND_DESTINATION_REQUIRED');
-    }
-    if (!draft.routePolyline) {
-        throw new Error('ROUTE_REQUIRED');
-    }
-    if (!draft.departureDate || !draft.departureTime) {
-        throw new Error('SCHEDULE_REQUIRED');
-    }
-    if (!draft.totalSeats || !draft.basePricePerSeat) {
-        throw new Error('CAPACITY_AND_PRICING_REQUIRED');
-    }
+  // ---- Validation ---- //
+  if (!draft.originPlaceId || !draft.destinationPlaceId) {
+    throw new Error('ORIGIN_AND_DESTINATION_REQUIRED');
+  }
+  if (!draft.routePolyline) {
+    throw new Error('ROUTE_REQUIRED');
+  }
+  if (!draft.departureDate || !draft.departureTime) {
+    throw new Error('SCHEDULE_REQUIRED');
+  }
+  if (!draft.totalSeats || !draft.basePricePerSeat) {
+    throw new Error('CAPACITY_AND_PRICING_REQUIRED');
+  }
 
     // Validate driver has accepted ToS and has verified DL
     const driver = await prisma.user.findUnique({
@@ -817,121 +1026,123 @@ export const publishRide = async (driverId: string) => {
         throw new Error('DRIVER_NOT_VERIFIED');
     }
 
-    // Validate user has a verified vehicle
-    const vehicle = await prisma.vehicle.findFirst({
-        where: { userId: driverId, deletedAt: null },
-    });
+  // Validate user has a verified vehicle
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { userId: driverId, deletedAt: null },
+  });
 
-    if (!vehicle) {
-        throw new Error('VEHICLE_REQUIRED');
-    }
-    // if (!vehicle.isVerified) {
-    //     throw new Error('VEHICLE_NOT_VERIFIED');
-    // }
+  if (!vehicle) {
+    throw new Error('VEHICLE_REQUIRED');
+  }
+  // if (!vehicle.isVerified) {
+  //     throw new Error('VEHICLE_NOT_VERIFIED');
+  // }
 
-    // ---- Atomic DB insert ---- //
-    const ride = await prisma.$transaction(async (tx) => {
-        // Create the ride as PUBLISHED (skip DRAFT entirely in DB)
-        const newRide = await tx.ride.create({
-            data: {
-                driverId,
-                vehicleId: vehicle.id,
+  // ---- Atomic DB insert ---- //
+  const ride = await prisma.$transaction(async (tx) => {
+    // Create the ride as PUBLISHED (skip DRAFT entirely in DB)
+    const newRide = await tx.ride.create({
+      data: {
+        driverId,
+        vehicleId: vehicle.id,
 
-                originPlaceId: draft.originPlaceId!,
-                originAddress: draft.originAddress!,
-                originLat: draft.originLat!,
-                originLng: draft.originLng!,
+        originPlaceId: draft.originPlaceId!,
+        originAddress: draft.originAddress!,
+        originLat: draft.originLat!,
+        originLng: draft.originLng!,
 
-                destinationPlaceId: draft.destinationPlaceId!,
-                destinationAddress: draft.destinationAddress!,
-                destinationLat: draft.destinationLat!,
-                destinationLng: draft.destinationLng!,
+        destinationPlaceId: draft.destinationPlaceId!,
+        destinationAddress: draft.destinationAddress!,
+        destinationLat: draft.destinationLat!,
+        destinationLng: draft.destinationLng!,
 
-                routePolyline: draft.routePolyline,
-                routeDistanceMeters: draft.routeDistanceMeters,
-                routeDurationSeconds: draft.routeDurationSeconds,
+        routePolyline: draft.routePolyline,
+        routeDistanceMeters: draft.routeDistanceMeters,
+        routeDurationSeconds: draft.routeDurationSeconds,
 
-                departureDate: new Date(draft.departureDate!),
-                departureTime: draft.departureTime!,
+        departureDate: new Date(draft.departureDate!),
+        departureTime: draft.departureTime!,
 
-                totalSeats: draft.totalSeats!,
-                availableSeats: draft.totalSeats!,
-                basePricePerSeat: draft.basePricePerSeat!,
-                currency: draft.currency || 'GBP',
+        totalSeats: draft.totalSeats!,
+        availableSeats: draft.totalSeats!,
+        basePricePerSeat: draft.basePricePerSeat!,
+        currency: draft.currency || 'GBP',
 
-                maxLuggagePerPerson: draft.maxLuggagePerPerson ?? 2,
-                backSeatOnly: draft.backSeatOnly ?? false,
+        maxLuggagePerPerson: draft.maxLuggagePerPerson ?? 2,
+        backSeatOnly: draft.backSeatOnly ?? false,
 
-                notes: draft.notes || null,
+        notes: draft.notes || null,
                 femaleOnly: draft.femaleOnly ?? false,
-                status: RideStatus.PUBLISHED,
-            },
-        });
-
-        // Create pickup waypoints
-        const pickups = (draft.pickups || []).map((p, i) => ({
-            rideId: newRide.id,
-            placeId: p.placeId,
-            address: p.address,
-            lat: p.lat,
-            lng: p.lng,
-            waypointType: 'PICKUP' as const,
-            orderIndex: i,
-        }));
-
-        // Create dropoff waypoints
-        const dropoffs = (draft.dropoffs || []).map((d, i) => ({
-            rideId: newRide.id,
-            placeId: d.placeId,
-            address: d.address,
-            lat: d.lat,
-            lng: d.lng,
-            waypointType: 'DROPOFF' as const,
-            orderIndex: i + 100,
-        }));
-
-        // Create stopover waypoints
-        const stopovers = (draft.stopovers || []).map((s, i) => ({
-            rideId: newRide.id,
-            placeId: s.placeId,
-            address: s.address,
-            lat: s.lat,
-            lng: s.lng,
-            waypointType: 'STOPOVER' as const,
-            orderIndex: i + 50,
-            pricePerSeat: getStopoverPriceByPlaceId(draft.stopoverPricingByPlaceId, s.placeId),
-        }));
-
-        // Sort all waypoints by orderIndex
-        const allWaypoints = [...pickups, ...dropoffs, ...stopovers].sort((a, b) => a.orderIndex - b.orderIndex);
-        
-        // Calculate arrival times for each waypoint
-        if (allWaypoints.length > 0 && newRide.routeDurationSeconds) {
-            const arrivalTimes = calculateWaypointArrivalTimes(
-                newRide.departureTime,
-                newRide.routeDurationSeconds,
-                allWaypoints.length
-            );
-            
-            // Add estimated arrival time to each waypoint
-            allWaypoints.forEach((waypoint, index) => {
-                (waypoint as any).estimatedArrivalTime = arrivalTimes[index] || null;
-            });
-            
-            await tx.rideWaypoint.createMany({ data: allWaypoints });
-        }
-
-        return tx.ride.findUnique({
-            where: { id: newRide.id },
-            include: { waypoints: { orderBy: { orderIndex: 'asc' } } },
-        });
+        status: RideStatus.PUBLISHED,
+      },
     });
 
-    // ---- Cleanup: Remove draft + route cache from Redis ---- //
-    await redis.del(draftKey(driverId));
-    await redis.del(routesCacheKey(driverId));
+    // Create pickup waypoints
+    const pickups = (draft.pickups || []).map((p, i) => ({
+      rideId: newRide.id,
+      placeId: p.placeId,
+      address: p.address,
+      lat: p.lat,
+      lng: p.lng,
+      waypointType: 'PICKUP' as const,
+      orderIndex: i,
+    }));
 
-    return ride;
+    // Create dropoff waypoints
+    const dropoffs = (draft.dropoffs || []).map((d, i) => ({
+      rideId: newRide.id,
+      placeId: d.placeId,
+      address: d.address,
+      lat: d.lat,
+      lng: d.lng,
+      waypointType: 'DROPOFF' as const,
+      orderIndex: i + 100,
+    }));
+
+    // Create stopover waypoints
+    const stopovers = (draft.stopovers || []).map((s, i) => ({
+      rideId: newRide.id,
+      placeId: s.placeId,
+      address: s.address,
+      lat: s.lat,
+      lng: s.lng,
+      waypointType: 'STOPOVER' as const,
+      orderIndex: i + 50,
+      pricePerSeat: s.recommendedPrice ?? null, // Use embedded recommendedPrice
+    }));
+
+    // Sort all waypoints by orderIndex
+    const allWaypoints = [...pickups, ...dropoffs, ...stopovers].sort(
+      (a, b) => a.orderIndex - b.orderIndex,
+    );
+
+    // Calculate arrival times for each waypoint
+    if (allWaypoints.length > 0 && newRide.routeDurationSeconds) {
+      const arrivalTimes = calculateWaypointArrivalTimes(
+        newRide.departureTime,
+        newRide.routeDurationSeconds,
+        allWaypoints.length,
+      );
+
+      // Add estimated arrival time to each waypoint
+      allWaypoints.forEach((waypoint, index) => {
+        (waypoint as any).estimatedArrivalTime = arrivalTimes[index] || null;
+      });
+
+      await tx.rideWaypoint.createMany({ data: allWaypoints });
+    }
+
+    return tx.ride.findUnique({
+      where: { id: newRide.id },
+      include: { waypoints: { orderBy: { orderIndex: 'asc' } } },
+    });
+  });
+
+  // ---- Cleanup: Remove draft + route cache from Redis ---- //
+  await redis.del(draftKey(driverId));
+  await redis.del(routesCacheKey(driverId));
+
+  return ride;
 };
 
 // ============================================================
@@ -942,24 +1153,24 @@ export const publishRide = async (driverId: string) => {
  * Get the user's draft
  */
 export const getUserDraft = async (driverId: string): Promise<DraftRide> => {
-    return getDraft(driverId);
+  return getDraft(driverId);
 };
 
 /**
  * Delete the user's draft from Redis
  */
 export const deleteDraft = async (driverId: string) => {
-    const key = draftKey(driverId);
-    const exists = await redis.exists(key);
+  const key = draftKey(driverId);
+  const exists = await redis.exists(key);
 
-    if (!exists) {
-        throw new Error('DRAFT_NOT_FOUND');
-    }
+  if (!exists) {
+    throw new Error('DRAFT_NOT_FOUND');
+  }
 
-    await redis.del(key);
-    await redis.del(routesCacheKey(driverId));
+  await redis.del(key);
+  await redis.del(routesCacheKey(driverId));
 
-    return { deleted: true };
+  return { deleted: true };
 };
 
 // ============================================================
@@ -967,24 +1178,24 @@ export const deleteDraft = async (driverId: string) => {
 // ============================================================
 
 function formatDuration(seconds: number): string {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) {
-        return `${hours}h ${minutes}min`;
-    }
-    return `${minutes} min`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) {
+    return `${hours}h ${minutes}min`;
+  }
+  return `${minutes} min`;
 }
 
 function calculateDraftCompletion(draft: DraftRide): number {
-    let completed = 0;
-    const total = 6; // origin, destination, schedule, seats, price, route
+  let completed = 0;
+  const total = 6; // origin, destination, schedule, seats, price, route
 
-    if (draft.originAddress) completed++;
-    if (draft.destinationAddress) completed++;
-    if (draft.departureDate) completed++;
-    if (draft.totalSeats && draft.totalSeats > 0) completed++;
-    if (draft.basePricePerSeat && draft.basePricePerSeat > 0) completed++;
-    if (draft.routePolyline) completed++;
+  if (draft.originAddress) completed++;
+  if (draft.destinationAddress) completed++;
+  if (draft.departureDate) completed++;
+  if (draft.totalSeats && draft.totalSeats > 0) completed++;
+  if (draft.basePricePerSeat && draft.basePricePerSeat > 0) completed++;
+  if (draft.routePolyline) completed++;
 
-    return Math.round((completed / total) * 100);
+  return Math.round((completed / total) * 100);
 }

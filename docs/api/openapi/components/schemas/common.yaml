@@ -136,15 +136,32 @@
     "type": "object",
     "additionalProperties": false,
     "required": [
-      "latitude",
-      "longitude"
+      "placeId",
+      "address",
+      "lat",
+      "lng"
     ],
     "properties": {
-      "latitude": {
-        "type": "number"
+      "placeId": {
+        "type": "string"
       },
-      "longitude": {
-        "type": "number"
+      "address": {
+        "type": "string"
+      },
+      "lat": {
+        "type": "number",
+        "minimum": -90,
+        "maximum": 90
+      },
+      "lng": {
+        "type": "number",
+        "minimum": -180,
+        "maximum": 180
+      },
+      "estimatedArrivalTime": {
+        "type": "string",
+        "pattern": "^([01]\\d|2[0-3]):([0-5]\\d)$",
+        "description": "Expected arrival time in HH:mm format"
       }
     }
   },
