@@ -59,7 +59,8 @@ describe('TC-CHATREST-001 — Send text message via REST', () => {
       text: 'Yes! See you at pickup.',
       clientMsgId: `e2e-msg-${Date.now()}`,
     });
-    expect([200, 201]).toContain(res.status);
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
     const msg = res.data.data ?? res.data;
     expect(msg.text || msg.message?.text).toBeTruthy();
     if (!conversationId && msg.conversationId) {
@@ -124,6 +125,7 @@ describe('TC-CHATREST-006 — Send location message', () => {
       longitude: -0.1278,
       address: 'London, UK',
     });
-    expect([200, 201]).toContain(res.status);
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
   });
 });

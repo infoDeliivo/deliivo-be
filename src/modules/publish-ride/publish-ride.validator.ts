@@ -75,6 +75,10 @@ export const updatePricingSchema = z.object({
         z.object({
             placeId: z.string().trim().min(1, 'Place ID is required'),
             pricePerSeat: z.number().positive(),
+            estimatedArrivalTime: z.string().regex(
+                /^([01]\d|2[0-3]):([0-5]\d)$/,
+                'Time must be in HH:mm format'
+            ).optional(),
         })
     ).optional(),
 });
@@ -108,6 +112,10 @@ const locationSchema = z.object({
     address: z.string().trim().min(1, 'Address is required'),
     lat: z.number().min(-90).max(90),
     lng: z.number().min(-180).max(180),
+    estimatedArrivalTime: z.string().regex(
+        /^([01]\d|2[0-3]):([0-5]\d)$/,
+        'Time must be in HH:mm format'
+    ).optional(),
 });
 
 /* ================= STEP 1: CREATE WITH ORIGIN + PICKUP ================= */

@@ -12,7 +12,9 @@ COPY prisma.config.ts ./
 
 # Install all deps (devDeps needed for tsc)
 # postinstall runs `prisma generate`
-RUN npm ci
+# Use cache mount to speed up subsequent builds
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 # Copy source and compile
 COPY . .
@@ -31,6 +33,9 @@ WORKDIR /app
 # Create a non-root user for security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
+# Create logs directory with proper permissions
+RUN mkdir -p /app/logs && chown -R appuser:appgroup /app/logs
+
 # Copy manifests, Prisma schema, and Prisma config before npm ci
 # so that prisma generate (run by postinstall) can find prisma.config.ts
 COPY package*.json ./
@@ -39,7 +44,9 @@ COPY prisma.config.ts ./
 
 # Install production deps only.
 # postinstall runs `prisma generate`
-RUN npm ci --omit=dev
+# Use cache mount to speed up subsequent builds
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev
 
 # Copy compiled output from builder stage
 COPY --from=builder /app/dist ./dist
@@ -59,6 +66,6 @@ EXPOSE 3000
 # docker-entrypoint.sh runs `prisma migrate deploy` then execs CMD
 ENTRYPOINT ["docker-entrypoint.sh"]
 
-# Default command — uses cluster mode for multi-core utilization
-# Override with "node dist/server.js" for single-process mode or worker services
-CMD ["node", "dist/cluster.js"]
+# Default command — single process mode (recommended for containers)
+# Container orchestrators (Railway, K8s, Docker Compose) handle horizontal scaling
+CMD ["node", "dist/server.js"]

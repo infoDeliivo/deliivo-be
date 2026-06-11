@@ -34,9 +34,12 @@ describe('TC-USER-002 — Update profile', () => {
 describe('TC-USER-003 — Set travel preferences', () => {
   it('creates travel preferences and returns 200/201', async () => {
     const res = await pa.post('/travel-preferences', {
-      chattiness: 'LOW',
-      pets: 'NO',
+      chattiness: 'quiet',
+      pets: 'no_pets',
     });
+    if (res.status !== 200 && res.status !== 201) {
+      console.error('Travel pref creation failed:', res.status, JSON.stringify(res.data));
+    }
     expect([200, 201]).toContain(res.status);
   });
 });
@@ -44,13 +47,13 @@ describe('TC-USER-003 — Set travel preferences', () => {
 describe('TC-USER-004 — Update travel preferences', () => {
   it('updates chattiness and pets', async () => {
     const res = await pa.put('/travel-preferences', {
-      chattiness: 'HIGH',
-      pets: 'YES',
+      chattiness: 'chatterbox',
+      pets: 'love_pets',
     });
     expect(res.status).toBe(200);
     const prefs = res.data.data ?? res.data;
-    expect(prefs.chattiness).toBe('HIGH');
-    expect(prefs.pets).toBe('YES');
+    expect(prefs.chattiness).toBe('chatterbox');
+    expect(prefs.pets).toBe('love_pets');
   });
 });
 
