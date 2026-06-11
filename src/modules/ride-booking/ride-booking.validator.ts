@@ -10,6 +10,14 @@ export const createBookingSchema = z.object({
     pickupWaypointId: z.string().uuid().optional(),
     dropoffWaypointId: z.string().uuid().optional(),
     notes: z.string().max(300, 'Notes must be 300 characters or less').optional(),
+    responseExpiryOption: z.enum([
+        'ONE_HOUR', 'THREE_HOURS', 'SIX_HOURS', 'TWELVE_HOURS', 'TWENTY_FOUR_HOURS', 'BEFORE_DEPARTURE',
+    ]).optional(),
+});
+
+/* ================= WITHDRAW REASON SCHEMA ================= */
+export const withdrawReasonSchema = z.object({
+    reason: z.string().max(300).optional(),
 });
 
 /* ================= PRICE PREVIEW SCHEMA ================= */

@@ -1,6 +1,7 @@
 import { BookingStatus, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
+import { isOtpValid } from '../ride-booking/booking-otp.utils.js';
 import { isWithinGeofence } from './geofence.utils.js';
 import {
     RIDE_TRANSITIONS,
@@ -225,8 +226,7 @@ export const verifyPickupAndBoard = async (driverId: string, bookingId: string, 
     }
     if (booking.otpAttemptCount >= 5) throw new Error('OTP_ATTEMPT_LIMIT_EXCEEDED');
 
-    const expectedHash = `hash-${otp}`; // Matches hashOtp() from booking-otp.utils
-    const isValid = booking.pickupOtpHash === expectedHash;
+    const isValid = isOtpValid(otp, booking.pickupOtpHash);
 
     if (!isValid) {
         await prisma.rideBooking.update({

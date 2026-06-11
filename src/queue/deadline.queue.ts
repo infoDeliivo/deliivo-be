@@ -30,6 +30,21 @@ export const enqueueDeadlineCheck = async (bookingId: string, delayMs: number) =
             removeOnFail: 1000,
         }
     );
+
+    // Enqueue reminder 1 hour before deadline (if deadline is > 1 hour away)
+    const reminderDelayMs = delayMs - (60 * 60 * 1000);
+    if (reminderDelayMs > 0) {
+        await deadlineQueue.add(
+            'reminder',
+            { bookingId },
+            {
+                delay: reminderDelayMs,
+                jobId: `deadline:reminder:${bookingId}`,
+                removeOnComplete: true,
+                removeOnFail: 1000,
+            }
+        );
+    }
 };
 
 export const deadlineWorker = new Worker(
@@ -41,6 +56,8 @@ export const deadlineWorker = new Worker(
             await handleInitialDeadline(bookingId);
         } else if (job.name === 'extended') {
             await handleExtendedDeadline(bookingId);
+        } else if (job.name === 'reminder') {
+            await handleDeadlineReminder(bookingId);
         }
     },
     { connection: bullRedis, concurrency: 5 }
@@ -49,6 +66,38 @@ export const deadlineWorker = new Worker(
 deadlineWorker.on('failed', (job: any, err: any) => {
     logError('DeadlineQueue job failed', err, { jobId: job?.id });
 });
+
+const handleDeadlineReminder = async (bookingId: string) => {
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: {
+            ride: { select: { id: true, driverId: true, originAddress: true, destinationAddress: true } },
+        },
+    });
+
+    if (!booking || booking.status !== BookingStatus.DRIVER_PENDING) return;
+    if (booking.reminderSentAt) return; // already sent
+
+    await prisma.rideBooking.update({
+        where: { id: bookingId },
+        data: { reminderSentAt: new Date() },
+    });
+
+    // Notify driver: respond soon
+    await createNotification({
+        userId: booking.ride.driverId,
+        type: 'booking.driver.deadline_reminder',
+        title: 'Respond to booking request',
+        body: 'A booking request will expire in 1 hour. Please accept or reject.',
+        data: {
+            bookingId: booking.id,
+            rideId: booking.ride.id,
+            originAddress: booking.ride.originAddress,
+            destinationAddress: booking.ride.destinationAddress,
+            deepLink: `app://driver/booking-request/${booking.id}`,
+        },
+    });
+};
 
 const handleInitialDeadline = async (bookingId: string) => {
     const booking = await prisma.rideBooking.findUnique({

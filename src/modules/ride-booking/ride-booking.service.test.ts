@@ -19,6 +19,13 @@ jest.mock('../payments/stripe.service.js', () => ({
     refundPaymentIntent: jest.fn(),
 }));
 
+jest.mock('../payments/payment.service.js', () => ({
+    __esModule: true,
+    createPayment: jest.fn().mockResolvedValue({ id: 'payment-mock-id' }),
+    markPaymentPending: jest.fn().mockResolvedValue({}),
+    markPaymentPaid: jest.fn().mockResolvedValue({}),
+}));
+
 const mockCreateNotification = jest.fn();
 
 jest.mock('../notification/notification.service.js', () => ({

@@ -124,6 +124,9 @@ model User {
   blocksInitiated UserBlock[]  @relation("BlocksInitiated")
   blocksReceived  UserBlock[]  @relation("BlocksReceived")
 
+  // Payment relations
+  paymentMethods PaymentMethod[]
+
   @@index([id])
 }
 
@@ -204,11 +207,13 @@ model RefreshToken {
 enum RideStatus {
   DRAFT
   PUBLISHED
+  SCHEDULED
   READY_TO_START
   IN_PROGRESS
   COMPLETION_PENDING
   COMPLETED
   CANCELLED
+  DISPUTED
 }
 
 enum WaypointType {
@@ -223,14 +228,17 @@ enum BookingStatus {
   CONFIRMED
   WAITING_FOR_PICKUP
   DRIVER_ARRIVED
+  OTP_PENDING
   ONBOARD
   DROP_PENDING
+  DRIVER_DROPPED
   IN_PROGRESS
   PAYMENT_FAILED
   CANCELLED
   COMPLETED
   NO_SHOW
   DRIVER_MISSED_PICKUP
+  DISPUTED
 }
 
 // ============ CHAT ENUMS ============
@@ -300,6 +308,8 @@ model Ride {
   segmentCapacity  RideSegmentCapacity[]
   locationUpdates  LocationUpdate[]
   rideEvents       RideEvent[]
+  pricingSnapshot  RidePricingSnapshot?
+  disputes         Dispute[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -408,6 +418,14 @@ model RideBooking {
   dropOtpVerifiedAt       DateTime?
   otpAttemptCount         Int       @default(0)
 
+  // Request expiry (rider-selected deadline)
+  responseExpiryOption    String?   // ONE_HOUR, THREE_HOURS, SIX_HOURS, TWELVE_HOURS, TWENTY_FOUR_HOURS, BEFORE_DEPARTURE
+  responseExpiryHours     Int?
+  captureMethod           String?   @default("automatic") // automatic, manual
+  withdrawnAt             DateTime?
+  withdrawnReason         String?
+  reminderSentAt          DateTime?
+
   // Operational timestamps
   driverArrivedAt     DateTime?
   waitTimerStartedAt  DateTime?
@@ -418,6 +436,9 @@ model RideBooking {
   completedAt         DateTime?
 
   ratings RideRating[]
+  payment Payment?
+  disputes      Dispute[]
+  trackingLinks TrackingLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -491,6 +512,160 @@ model DriverPenaltyEvent {
 
   @@index([driverId, createdAt])
   @@index([bookingId])
+}
+
+// ============ PAYMENT & PRICING MODELS ============
+model Payment {
+  id                     String    @id @default(uuid())
+  bookingId              String    @unique
+  rideId                 String
+  riderId                String
+  stripePaymentIntentId  String?   @unique
+  amountTotal            Float
+  currency               String
+  fareAmount             Float
+  platformFeeAmount      Float     @default(0)
+  status                 String    @default("CREATED") // CREATED, PAYMENT_PENDING, PAID, HELD_IN_ESCROW, PAYOUT_ELIGIBLE, TRANSFER_CREATED, PAYOUT_COMPLETED, REFUND_PENDING, REFUNDED, PAYMENT_FAILED
+  failureReason          String?
+  payoutEligibleAt       DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  booking RideBooking @relation(fields: [bookingId], references: [id])
+  payoutItems PayoutItem[]
+
+  @@index([status])
+  @@index([riderId, createdAt])
+  @@index([rideId])
+}
+
+model LedgerEntry {
+  id            String   @id @default(uuid())
+  entryGroupId  String
+  paymentId     String?
+  bookingId     String?
+  userId        String?
+  accountType   String   // RIDER, DRIVER, PLATFORM, PROVIDER
+  entryType     String   // RIDER_PAYMENT_RECEIVED, DRIVER_EARNING_LIABILITY, PLATFORM_FEE_REVENUE, STRIPE_FEE_EXPENSE, REFUND_TO_RIDER, DRIVER_TRANSFER_CREATED, PAYOUT_FAILURE_REVERSAL
+  direction     String   // DEBIT, CREDIT
+  amount        Float
+  currency      String
+  metadataJson  Json?
+  createdAt     DateTime @default(now())
+
+  @@index([bookingId])
+  @@index([userId, createdAt])
+  @@index([entryGroupId])
+  @@index([paymentId])
+}
+
+model PayoutBatch {
+  id               String    @id @default(uuid())
+  driverId         String
+  status           String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  currency         String
+  amountTotal      Float
+  stripeTransferId String?
+  stripePayoutId   String?
+  failureReason    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  items PayoutItem[]
+
+  @@index([driverId, createdAt])
+  @@index([status])
+}
+
+model PayoutItem {
+  id             String   @id @default(uuid())
+  payoutBatchId  String
+  bookingId      String
+  paymentId      String
+  driverAmount   Float
+  platformFee    Float
+  status         String   @default("PENDING") // PENDING, COMPLETED, FAILED
+  createdAt      DateTime @default(now())
+
+  batch   PayoutBatch @relation(fields: [payoutBatchId], references: [id])
+  payment Payment     @relation(fields: [paymentId], references: [id])
+
+  @@index([payoutBatchId])
+  @@index([bookingId])
+}
+
+model PaymentEventOutbox {
+  id            String    @id @default(uuid())
+  eventType     String
+  aggregateType String    // PAYMENT, BOOKING, PAYOUT
+  aggregateId   String
+  payloadJson   Json
+  status        String    @default("PENDING") // PENDING, PROCESSING, PROCESSED, FAILED
+  retryCount    Int       @default(0)
+  nextRetryAt   DateTime?
+  createdAt     DateTime  @default(now())
+  processedAt   DateTime?
+
+  @@index([status, nextRetryAt])
+  @@index([aggregateType, aggregateId])
+}
+
+model PaymentMethod {
+  id                      String    @id @default(uuid())
+  userId                  String
+  stripeCustomerId        String
+  stripePaymentMethodId   String    @unique
+  brand                   String?
+  last4                   String?
+  expMonth                Int?
+  expYear                 Int?
+  isDefault               Boolean   @default(false)
+  status                  String    @default("ACTIVE") // ACTIVE, REMOVED
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId])
+}
+
+model PricingConfig {
+  id                   String    @id @default(uuid())
+  regionCode           String
+  currency             String    @default("EUR")
+  minRatePerKm         Float
+  recommendedRatePerKm Float
+  maxRatePerKm         Float
+  minimumSeatPrice     Float     @default(3.00)
+  roundingStrategy     String    @default("NEAREST_EURO") // NEAREST_EURO, NEAREST_HALF_EURO
+  active               Boolean   @default(true)
+  validFrom            DateTime  @default(now())
+  validTo              DateTime?
+  createdBy            String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([regionCode, active])
+}
+
+model RidePricingSnapshot {
+  id                       String   @id @default(uuid())
+  rideId                   String   @unique
+  pricingVersion           String   @default("DISTANCE_RATE_V1")
+  regionCode               String
+  currency                 String
+  distanceKm               Float
+  minRatePerKm             Float
+  recommendedRatePerKm     Float
+  maxRatePerKm             Float
+  minimumSeatPrice         Float
+  recommendedPricePerSeat  Float
+  minAllowedPricePerSeat   Float
+  maxAllowedPricePerSeat   Float
+  selectedPricePerSeat     Float
+  roundingStrategy         String
+  createdAt                DateTime @default(now())
+
+  ride Ride @relation(fields: [rideId], references: [id])
 }
 
 // ============ CHAT MODELS ============
@@ -646,6 +821,70 @@ model RideEvent {
 
   @@index([rideId, serverTimestamp])
   @@index([actionId])
+}
+
+// ============ DISPUTE & SAFETY MODELS ============
+model Dispute {
+  id             String    @id @default(uuid())
+  rideId         String
+  bookingId      String
+  raisedBy       String    // userId of whoever raised it
+  reason         String
+  description    String?
+  status         String    @default("OPEN") // OPEN, EVIDENCE_COLLECTED, AUTO_RESOLVED_RIDER_REFUND, AUTO_RESOLVED_DRIVER_PAYOUT, NEEDS_MANUAL_REVIEW, WAITING_FOR_USER_RESPONSE, RESOLVED_REFUND, RESOLVED_PAYOUT, RESOLVED_SPLIT, ESCALATED
+  evidenceJson   Json?
+  recommendation String?
+  riskScore      Float?
+  resolution     String?
+  resolvedBy     String?
+  createdAt      DateTime  @default(now())
+  resolvedAt     DateTime?
+
+  ride    Ride        @relation(fields: [rideId], references: [id])
+  booking RideBooking @relation(fields: [bookingId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([raisedBy])
+  @@index([bookingId])
+}
+
+model TrackingLink {
+  id          String    @id @default(uuid())
+  bookingId   String
+  token       String    @unique
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  accessScope String    @default("LOCATION_ONLY") // LOCATION_ONLY, LOCATION_AND_ETA
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+
+  booking RideBooking @relation(fields: [bookingId], references: [id])
+
+  @@index([bookingId])
+}
+
+// ============ RECONCILIATION MODELS ============
+model ReconciliationIssue {
+  id              String    @id @default(uuid())
+  paymentId       String?
+  bookingId       String?
+  issueType       String    // STRIPE_MISMATCH, MISSING_WEBHOOK, ORPHAN_INTENT, LEDGER_IMBALANCE, STALE_ESCROW
+  severity        String    @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  description     String
+  stripeState     String?   // Payment intent status from Stripe
+  internalState   String?   // Payment status in our DB
+  detectedAt      DateTime  @default(now())
+  autoRepaired    Boolean   @default(false)
+  repairedAt      DateTime?
+  resolvedBy      String?   // admin userId
+  resolvedAt      DateTime?
+  resolution      String?   // Description of how it was resolved
+  metadataJson    Json?
+
+  @@index([issueType, detectedAt])
+  @@index([severity, resolvedAt])
+  @@index([paymentId])
 }
 
 // ============ DL VERIFICATION MODELS ============

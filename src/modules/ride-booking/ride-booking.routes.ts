@@ -6,6 +6,7 @@ import {
     bookingIdParamSchema,
     listBookingsQuerySchema,
     pricePreviewSchema,
+    withdrawReasonSchema,
 } from './ride-booking.validator.js';
 
 const router = Router();
@@ -52,11 +53,24 @@ router.post(
     controller.extendWaitForDriver
 );
 
+// Withdraw booking request (rider cancels pending request before driver responds)
+router.post(
+    '/:id/withdraw',
+    validate({ params: bookingIdParamSchema, body: withdrawReasonSchema }),
+    controller.withdrawBooking
+);
+
 // Cancel booking
 router.post(
     '/:id/cancel',
     validate({ params: bookingIdParamSchema }),
     controller.cancelBooking
+);
+
+// Driver response metrics
+router.get(
+    '/driver/response-metrics',
+    controller.getDriverResponseMetrics
 );
 
 export default router;

@@ -3,12 +3,14 @@ import { RideStatus, BookingStatus } from '@prisma/client';
 // Valid ride state transitions
 export const RIDE_TRANSITIONS: Record<RideStatus, RideStatus[]> = {
     DRAFT: ['PUBLISHED'],
-    PUBLISHED: ['READY_TO_START', 'CANCELLED'],
+    PUBLISHED: ['SCHEDULED', 'READY_TO_START', 'CANCELLED'],
+    SCHEDULED: ['READY_TO_START', 'CANCELLED'],
     READY_TO_START: ['IN_PROGRESS', 'CANCELLED'],
-    IN_PROGRESS: ['COMPLETION_PENDING', 'CANCELLED'],
-    COMPLETION_PENDING: ['COMPLETED'],
-    COMPLETED: [],
+    IN_PROGRESS: ['COMPLETION_PENDING', 'CANCELLED', 'DISPUTED'],
+    COMPLETION_PENDING: ['COMPLETED', 'DISPUTED'],
+    COMPLETED: ['DISPUTED'],
     CANCELLED: [],
+    DISPUTED: [],
 };
 
 // Booking states that are terminal (no further transitions from ride-ops)
@@ -18,6 +20,7 @@ export const TERMINAL_BOOKING_STATES: BookingStatus[] = [
     BookingStatus.NO_SHOW,
     BookingStatus.DRIVER_MISSED_PICKUP,
     BookingStatus.PAYMENT_FAILED,
+    BookingStatus.DISPUTED,
 ];
 
 // Booking states that block ride completion
@@ -27,8 +30,10 @@ export const NON_TERMINAL_BOOKING_STATES: BookingStatus[] = [
     BookingStatus.CONFIRMED,
     BookingStatus.WAITING_FOR_PICKUP,
     BookingStatus.DRIVER_ARRIVED,
+    BookingStatus.OTP_PENDING,
     BookingStatus.ONBOARD,
     BookingStatus.DROP_PENDING,
+    BookingStatus.DRIVER_DROPPED,
     BookingStatus.IN_PROGRESS,
 ];
 

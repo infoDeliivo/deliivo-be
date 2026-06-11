@@ -20,9 +20,64 @@ maintenanceQueue.add(
     }
 );
 
+// Hourly reconciliation job
+maintenanceQueue.add(
+    'hourly-reconciliation',
+    {},
+    {
+        repeat: { pattern: '15 * * * *' }, // :15 past every hour
+        jobId: 'hourly-reconciliation',
+        removeOnComplete: true,
+        removeOnFail: 50,
+    }
+);
+
+// Daily reconciliation job (stale escrow + ledger checks)
+maintenanceQueue.add(
+    'daily-reconciliation',
+    {},
+    {
+        repeat: { pattern: '0 3 * * *' }, // 03:00 UTC daily
+        jobId: 'daily-reconciliation',
+        removeOnComplete: true,
+        removeOnFail: 50,
+    }
+);
+
+// Payout eligibility checker (48h dispute window, runs every 4 hours)
+maintenanceQueue.add(
+    'payout-eligibility',
+    {},
+    {
+        repeat: { pattern: '0 */4 * * *' }, // every 4 hours
+        jobId: 'payout-eligibility',
+        removeOnComplete: true,
+        removeOnFail: 50,
+    }
+);
+
 export const maintenanceWorker = new Worker(
     QUEUE_NAME,
-    async () => {
+    async (job: any) => {
+        if (job.name === 'hourly-reconciliation') {
+            const { runHourlyReconciliation } = await import('../modules/reconciliation/reconciliation.service.js');
+            await runHourlyReconciliation();
+            return;
+        }
+
+        if (job.name === 'daily-reconciliation') {
+            const { runDailyReconciliation } = await import('../modules/reconciliation/reconciliation.service.js');
+            await runDailyReconciliation();
+            return;
+        }
+
+        if (job.name === 'payout-eligibility') {
+            const { checkAndMarkEligible } = await import('../modules/payout/payout.service.js');
+            await checkAndMarkEligible();
+            return;
+        }
+
+        // nightly-cleanup (original job)
         const now = new Date();
         const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
         const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);

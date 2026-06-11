@@ -11,6 +11,7 @@ import { createBookingPaymentIntent, refundPaymentIntent } from '../payments/str
 import { createNotification } from '../notification/notification.service.js';
 import { DRIVER_DECISION_NOTIFICATION_TYPE, DRIVER_DECISION_WINDOW_MS } from '../payments/stripe.constants.js';
 import { enqueueDeadlineCheck } from '../../queue/deadline.queue.js';
+import { calculateDeadline, EXPIRY_OPTIONS } from './request-expiry.utils.js';
 import {
     CancelBookingResult,
     CreateBookingInput,
@@ -29,6 +30,7 @@ import {
 } from './booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from './booking-payment-mode.js';
 import { releaseSegmentSeats } from './segment-capacity.utils.js';
+import { createPayment, markPaymentPending, markPaymentPaid } from '../payments/payment.service.js';
 
 type RideWaypointDetails = {
     id: string;
@@ -395,9 +397,6 @@ export const createBooking = async (
     const bypassBookingPaymentMode = isBypassBookingPaymentMode();
     const now = new Date();
     const paymentCapturedAt = bypassBookingPaymentMode ? now : null;
-    const driverDecisionDeadlineAt = bypassBookingPaymentMode
-        ? new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS)
-        : null;
     const {
         rideId,
         segmentId,
@@ -406,6 +405,7 @@ export const createBooking = async (
         pickupWaypointId,
         dropoffWaypointId,
         notes,
+        responseExpiryOption,
     } = input;
 
     const bookingSeed = await prisma.$transaction(async (tx) => {
@@ -579,6 +579,12 @@ export const createBooking = async (
             ride.currency
         );
 
+        // Calculate rider-selected deadline
+        const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
+        const { deadlineAt: driverDecisionDeadlineAt, expiryHours } = bypassBookingPaymentMode
+            ? calculateDeadline(responseExpiryOption, departureAt, now)
+            : { deadlineAt: new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS), expiryHours: Math.round(DRIVER_DECISION_WINDOW_MS / (60 * 60 * 1000)) };
+
         const booking = await tx.rideBooking.create({
             data: {
                 rideId,
@@ -598,7 +604,9 @@ export const createBooking = async (
                 paymentAmount: bypassBookingPaymentMode ? priceBreakdown.totalPrice : undefined,
                 paymentCurrency: ride.currency,
                 paymentCapturedAt: paymentCapturedAt ?? undefined,
-                driverDecisionDeadlineAt: driverDecisionDeadlineAt ?? undefined,
+                driverDecisionDeadlineAt,
+                responseExpiryOption: responseExpiryOption ?? null,
+                responseExpiryHours: expiryHours,
             },
             include: {
                 ride: {
@@ -625,10 +633,28 @@ export const createBooking = async (
             resolvedPickupWaypointId,
             resolvedDropoffWaypointId,
             passenger,
+            driverDecisionDeadlineAt,
+            expiryHours,
         };
     });
 
     if (bypassBookingPaymentMode) {
+        // Create Payment record for bypass mode (immediately PAID)
+        const platformFeePercent = parseFloat(process.env.PLATFORM_FEE_PERCENT || '0');
+        const platformFeeAmount = Math.round(bookingSeed.priceBreakdown.totalPrice * platformFeePercent) / 100;
+        const fareAmount = bookingSeed.priceBreakdown.totalPrice - platformFeeAmount;
+
+        const payment = await createPayment({
+            bookingId: bookingSeed.booking.id,
+            rideId: bookingSeed.booking.rideId,
+            riderId: passengerId,
+            amountTotal: bookingSeed.priceBreakdown.totalPrice,
+            fareAmount,
+            platformFeeAmount,
+            currency: bookingSeed.ride.currency,
+        });
+        await markPaymentPaid(payment.id, bookingSeed.ride.driverId);
+
         const passengerName = bookingSeed.passenger?.name ?? 'Rider';
         const originAddress = resolveSegmentAddress(
             bookingSeed.ride.originAddress,
@@ -656,16 +682,19 @@ export const createBooking = async (
                 seatsBooked: String(bookingSeed.booking.seatsBooked),
                 totalPrice: String(bookingSeed.booking.totalPrice),
                 currency: bookingSeed.booking.paymentCurrency ?? bookingSeed.ride.currency,
-                decisionDeadlineAt: driverDecisionDeadlineAt?.toISOString() ?? '',
-                decisionTimeRemainingSeconds: driverDecisionDeadlineAt
-                    ? String(Math.max(0, Math.floor((driverDecisionDeadlineAt.getTime() - Date.now()) / 1000)))
+                decisionDeadlineAt: bookingSeed.driverDecisionDeadlineAt?.toISOString() ?? '',
+                decisionTimeRemainingSeconds: bookingSeed.driverDecisionDeadlineAt
+                    ? String(Math.max(0, Math.floor((bookingSeed.driverDecisionDeadlineAt.getTime() - Date.now()) / 1000)))
                     : '0',
                 deepLink: `app://driver/booking-request/${bookingSeed.booking.id}`,
             },
         });
 
-        // Enqueue deadline check — replaces the cron job (BullMQ fires once per booking)
-        await enqueueDeadlineCheck(bookingSeed.booking.id, DRIVER_DECISION_WINDOW_MS);
+        // Enqueue deadline check using rider-selected expiry time
+        const deadlineDelayMs = bookingSeed.driverDecisionDeadlineAt
+            ? Math.max(0, bookingSeed.driverDecisionDeadlineAt.getTime() - Date.now())
+            : DRIVER_DECISION_WINDOW_MS;
+        await enqueueDeadlineCheck(bookingSeed.booking.id, deadlineDelayMs);
 
         return mapBookingResponse(bookingSeed.booking as unknown as BookingWithRideDetails, {
             luggageCount,
@@ -724,6 +753,23 @@ export const createBooking = async (
 
         throw new Error('PAYMENT_INITIALIZATION_FAILED');
     }
+
+    // Create Payment record for Stripe mode
+    const stripePlatformFeePercent = parseFloat(process.env.PLATFORM_FEE_PERCENT || '0');
+    const stripePlatformFeeAmount = Math.round(bookingSeed.priceBreakdown.totalPrice * stripePlatformFeePercent) / 100;
+    const stripeFareAmount = bookingSeed.priceBreakdown.totalPrice - stripePlatformFeeAmount;
+
+    const stripePaymentRecord = await createPayment({
+        bookingId: bookingSeed.booking.id,
+        rideId: bookingSeed.booking.rideId,
+        riderId: passengerId,
+        amountTotal: bookingSeed.priceBreakdown.totalPrice,
+        fareAmount: stripeFareAmount,
+        platformFeeAmount: stripePlatformFeeAmount,
+        currency: paymentIntent.currency,
+        stripePaymentIntentId: paymentIntent.paymentIntentId,
+    });
+    await markPaymentPending(stripePaymentRecord.id);
 
     const booking = await prisma.rideBooking.update({
         where: { id: bookingSeed.booking.id },
@@ -1190,5 +1236,134 @@ export const getBookingPricePreview = async (
             availableSeats: ride.availableSeats,
         },
         segmentRide,
+    };
+};
+
+/* ================= WITHDRAW BOOKING REQUEST ================= */
+export const withdrawBooking = async (
+    passengerId: string,
+    bookingId: string,
+    reason?: string
+): Promise<{ bookingId: string; status: string; refundInitiated: boolean }> => {
+    const booking = await prisma.rideBooking.findFirst({
+        where: {
+            id: bookingId,
+            passengerId,
+            status: BookingStatus.DRIVER_PENDING,
+        },
+        include: {
+            ride: { select: { id: true, totalSeats: true, driverId: true } },
+        },
+    });
+
+    if (!booking) {
+        throw new Error('BOOKING_NOT_FOUND');
+    }
+
+    const bypassPayment = isBypassBookingPaymentMode();
+    let refundInitiated = false;
+
+    await prisma.$transaction(async (tx) => {
+        await tx.rideBooking.update({
+            where: { id: bookingId },
+            data: {
+                status: BookingStatus.CANCELLED,
+                cancelledAt: new Date(),
+                cancelledByRole: 'PASSENGER',
+                cancellationReason: reason ?? 'RIDER_WITHDRAWN',
+                withdrawnAt: new Date(),
+                withdrawnReason: reason ?? 'RIDER_WITHDRAWN',
+                refundPercent: 100,
+                refundAmount: booking.paymentAmount ?? booking.totalPrice,
+            },
+        });
+
+        await releaseSegmentSeats(tx as any, {
+            rideId: booking.rideId,
+            seatsBooked: booking.seatsBooked,
+            pickupPosition: booking.pickupPosition,
+            dropoffPosition: booking.dropoffPosition,
+            totalSeats: booking.ride.totalSeats,
+        });
+
+        // Full refund since driver hasn't responded yet
+        if (!bypassPayment && booking.paymentCapturedAt && booking.stripePaymentIntentId) {
+            await refundPaymentIntent(
+                booking.stripePaymentIntentId,
+                toMinorCurrencyUnits(booking.paymentAmount ?? booking.totalPrice)
+            );
+            refundInitiated = true;
+            await tx.rideBooking.update({
+                where: { id: bookingId },
+                data: { refundedAt: new Date() },
+            });
+        } else if (bypassPayment) {
+            refundInitiated = true;
+        }
+    });
+
+    // Notify driver that rider withdrew
+    await createNotification({
+        userId: booking.ride.driverId,
+        type: 'booking.rider.withdrawn',
+        title: 'Booking request withdrawn',
+        body: 'A rider has withdrawn their booking request.',
+        data: {
+            bookingId: booking.id,
+            rideId: booking.rideId,
+            deepLink: `app://driver/bookings`,
+        },
+    });
+
+    return { bookingId, status: 'CANCELLED', refundInitiated };
+};
+
+/* ================= DRIVER RESPONSE METRICS ================= */
+export const getDriverResponseMetrics = async (driverId: string) => {
+    const bookings = await prisma.rideBooking.findMany({
+        where: {
+            ride: { driverId },
+            driverDecisionDeadlineAt: { not: null },
+        },
+        select: {
+            id: true,
+            status: true,
+            driverDecisionAt: true,
+            driverDecisionDeadlineAt: true,
+            autoCancelledAt: true,
+            createdAt: true,
+        },
+    });
+
+    let totalRequests = bookings.length;
+    let accepted = 0;
+    let rejected = 0;
+    let expired = 0;
+    let totalResponseTimeMs = 0;
+    let respondedCount = 0;
+
+    for (const b of bookings) {
+        if (b.driverDecisionAt && b.status === BookingStatus.CONFIRMED) {
+            accepted++;
+            totalResponseTimeMs += b.driverDecisionAt.getTime() - b.createdAt.getTime();
+            respondedCount++;
+        } else if (b.driverDecisionAt && b.status === BookingStatus.CANCELLED) {
+            rejected++;
+            totalResponseTimeMs += b.driverDecisionAt.getTime() - b.createdAt.getTime();
+            respondedCount++;
+        } else if (b.autoCancelledAt) {
+            expired++;
+        }
+    }
+
+    return {
+        driverId,
+        totalRequests,
+        accepted,
+        rejected,
+        expired,
+        acceptRate: totalRequests > 0 ? Math.round((accepted / totalRequests) * 100) : 0,
+        avgResponseTimeMs: respondedCount > 0 ? Math.round(totalResponseTimeMs / respondedCount) : null,
+        avgResponseTimeMinutes: respondedCount > 0 ? Math.round(totalResponseTimeMs / respondedCount / 60000) : null,
     };
 };

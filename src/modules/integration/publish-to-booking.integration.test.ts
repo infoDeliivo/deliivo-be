@@ -506,6 +506,18 @@ jest.mock('../ride-booking/booking-otp.utils.js', () => ({
     isOtpValid: (plain: string, hash: string) => `hash-${plain}` === hash,
 }));
 
+jest.mock('../pricing/pricing.service.js', () => ({
+    __esModule: true,
+    validateAndSnapshotPricing: jest.fn().mockResolvedValue({ valid: true, snapshotId: 'snap-mock' }),
+}));
+
+jest.mock('../payments/payment.service.js', () => ({
+    __esModule: true,
+    createPayment: jest.fn().mockResolvedValue({ id: 'payment-mock-id' }),
+    markPaymentPending: jest.fn().mockResolvedValue({}),
+    markPaymentPaid: jest.fn().mockResolvedValue({}),
+}));
+
 // ============================================================
 //  IMPORTS (after mocks)
 // ============================================================

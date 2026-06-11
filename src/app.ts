@@ -21,6 +21,17 @@ import {
   ratingsRouter,
   dlVerificationRouter,
   adminRouter,
+  rideOperationsRouter,
+  bookingOperationsRouter,
+  pricingRouter,
+  paymentMethodsRouter,
+  adminPayoutRouter,
+  driverPayoutRouter,
+  disputeRouter,
+  adminDisputeRouter,
+  trackingRouter,
+  publicTrackingRouter,
+  reconciliationRouter,
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
@@ -81,7 +92,9 @@ app.use('/api/v1/users', protect, userRouter);
 app.use('/api/v1/publish-ride', protect, publishRideRouter);
 app.use('/api/v1/search-rides', protect, searchLimiter, searchRideRouter);
 app.use('/api/v1/bookings', protect, bookingLimiter, rideBookingRouter);
+app.use('/api/v1/bookings', protect, bookingOperationsRouter);
 app.use('/api/v1/driver/bookings', protect, driverBookingRouter);
+app.use('/api/v1/rides', protect, rideOperationsRouter);
 app.use('/api/v1/vehicles', protect, vehiclesRouter);
 app.use('/api/v1/travel-preferences', protect, travelPreferenceRouter);
 app.use('/api/v1/maps', protect, mapRouter);
@@ -91,6 +104,15 @@ app.use('/api/v1/ratings', protect, ratingsRouter);
 app.use('/api/v1/dl-verification', dlVerificationRouter);
 app.use('/api/v1/payments/connect', protect, paymentsConnectRouter);
 app.use('/api/v1/admin', protect, adminRouter);
+app.use('/api/v1/pricing', protect, pricingRouter);
+app.use('/api/v1/payment-methods', protect, paymentMethodsRouter);
+app.use('/api/v1/admin/payouts', protect, adminPayoutRouter);
+app.use('/api/v1/drivers/me', protect, driverPayoutRouter);
+app.use('/api/v1/disputes', protect, disputeRouter);
+app.use('/api/v1/admin/disputes', protect, adminDisputeRouter);
+app.use('/api/v1/tracking', protect, trackingRouter);
+app.use('/api/v1/tracking', publicTrackingRouter); // public endpoint, no auth
+app.use('/api/v1/admin/reconciliation', protect, reconciliationRouter);
 
 app.use(errorHandler);
 

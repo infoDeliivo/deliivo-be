@@ -245,6 +245,49 @@ export const listUserBookings = async (req: AuthRequest, res: Response) => {
     }
 };
 
+/* ================= WITHDRAW BOOKING REQUEST ================= */
+export const withdrawBooking = async (req: AuthRequest, res: Response) => {
+    try {
+        const bookingId = req.params.id as string;
+        const result = await BookingService.withdrawBooking(req.user.id, bookingId, req.body?.reason);
+
+        await deleteCache(cacheKeys.booking(bookingId));
+        await deleteCache(cacheKeys.userBookings(req.user.id));
+
+        return sendSuccess(res, {
+            message: 'Booking request withdrawn successfully',
+            data: result,
+        });
+    } catch (error: any) {
+        if (error.message === 'BOOKING_NOT_FOUND') {
+            return sendError(res, {
+                status: HttpStatus.NOT_FOUND,
+                message: 'Booking not found or not in pending state',
+            });
+        }
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to withdraw booking',
+        });
+    }
+};
+
+/* ================= DRIVER RESPONSE METRICS ================= */
+export const getDriverResponseMetrics = async (req: AuthRequest, res: Response) => {
+    try {
+        const metrics = await BookingService.getDriverResponseMetrics(req.user.id);
+        return sendSuccess(res, {
+            message: 'Driver response metrics',
+            data: metrics,
+        });
+    } catch {
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to fetch metrics',
+        });
+    }
+};
+
 /* ================= PRICE PREVIEW ================= */
 export const getBookingPricePreview = async (req: AuthRequest, res: Response) => {
     try {

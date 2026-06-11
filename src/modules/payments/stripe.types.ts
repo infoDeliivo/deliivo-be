@@ -5,6 +5,7 @@ export interface CreatePaymentIntentInput {
     amountMajor: number;
     currency: string;
     driverStripeAccountId?: string | null;
+    captureMethod?: 'automatic' | 'manual';
 }
 
 export interface CreatePaymentIntentResult {

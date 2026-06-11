@@ -24,6 +24,7 @@ import {
 import { getFuelPriceForCurrency } from '../../services/fuel-price.service.js';
 import { buildStopoverPricingByPlaceId, getStopoverPriceByPlaceId } from './stopover-pricing.utils.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
+import { validateAndSnapshotPricing } from '../pricing/pricing.service.js';
 
 // ============================================================
 //  CONSTANTS
@@ -932,6 +933,26 @@ export const publishRide = async (driverId: string) => {
         }));
         if (segmentCapacityData.length > 0) {
             await tx.rideSegmentCapacity.createMany({ data: segmentCapacityData });
+        }
+
+        // Pricing validation: if PricingConfig exists, validate & create snapshot
+        if (newRide.routeDistanceMeters && newRide.routeDistanceMeters > 0) {
+            const distanceKm = newRide.routeDistanceMeters / 1000;
+            try {
+                const priceValidation = await validateAndSnapshotPricing({
+                    rideId: newRide.id,
+                    distanceKm,
+                    selectedPricePerSeat: newRide.basePricePerSeat,
+                });
+                if (!priceValidation.valid) {
+                    throw new Error(`PRICE_OUT_OF_RANGE: ${priceValidation.reason}`);
+                }
+            } catch (err: any) {
+                // If no pricing config exists for region, allow publish without validation
+                if (err.message !== 'PRICING_CONFIG_NOT_FOUND') {
+                    throw err;
+                }
+            }
         }
 
         return tx.ride.findUnique({

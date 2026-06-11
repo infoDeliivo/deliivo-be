@@ -14,6 +14,13 @@ import paymentsConnectRouter from './payments/stripe.connect.routes.js';
 import ratingsRouter from './ratings/ratings.routes.js';
 import dlVerificationRouter from './dl-verification/dl-verification.routes.js';
 import adminRouter from './admin/admin.routes.js';
+import { rideOperationsRouter, bookingOperationsRouter } from './ride-operations/ride-operations.routes.js';
+import { pricingRouter } from './pricing/pricing.routes.js';
+import { paymentMethodsRouter } from './payment-methods/payment-methods.routes.js';
+import { adminPayoutRouter, driverPayoutRouter } from './payout/payout.routes.js';
+import { disputeRouter, adminDisputeRouter } from './dispute/dispute.routes.js';
+import { trackingRouter, publicTrackingRouter } from './tracking/tracking.routes.js';
+import { reconciliationRouter } from './reconciliation/reconciliation.routes.js';
 
 export {
     authRouter,
@@ -32,4 +39,15 @@ export {
     ratingsRouter,
     dlVerificationRouter,
     adminRouter,
+    rideOperationsRouter,
+    bookingOperationsRouter,
+    pricingRouter,
+    paymentMethodsRouter,
+    adminPayoutRouter,
+    driverPayoutRouter,
+    disputeRouter,
+    adminDisputeRouter,
+    trackingRouter,
+    publicTrackingRouter,
+    reconciliationRouter,
 };

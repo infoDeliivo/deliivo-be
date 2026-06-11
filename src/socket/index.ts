@@ -37,6 +37,16 @@ let ioInstance: Server | null = null;
 
 export const getIO = (): Server | null => ioInstance;
 
+/**
+ * Emit an event to all sockets in a ride's room.
+ * Used by ride-operations for live location broadcasting.
+ */
+export const emitToRide = (rideId: string, event: string, data: unknown) => {
+    if (ioInstance) {
+        ioInstance.to(`ride:${rideId}`).emit(event, data);
+    }
+};
+
 // ============ SOCKET.IO INITIALIZATION ============
 
 export const initSocket = async (server: http.Server) => {
