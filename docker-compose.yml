@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-carpooling} -d carpooling"]
       interval: 5s
@@ -27,7 +27,7 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -66,7 +66,7 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     env_file:
-      - path: .env
+      - path: .env.docker
         required: false
     environment:
       NODE_ENV: ${NODE_ENV:-production}
@@ -92,7 +92,7 @@ services:
     command: ["node", "dist/modules/mail/mail.worker.js"]
     restart: unless-stopped
     env_file:
-      - path: .env
+      - path: .env.docker
         required: false
     environment:
       NODE_ENV: ${NODE_ENV:-production}
@@ -104,24 +104,24 @@ services:
       redis:
         condition: service_healthy
 
-  sms-worker:
-    build:
-      context: .
-      target: runner
-    command: ["node", "dist/modules/sms/sms.worker.js"]
-    restart: unless-stopped
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
-      REDIS_URL: redis://redis:6379
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
+  # sms-worker:
+  #   build:
+  #     context: .
+  #     target: runner
+  #   command: ["node", "dist/modules/sms/sms.worker.js"]
+  #   restart: unless-stopped
+  #   env_file:
+  #     - path: .env.docker
+  #       required: false
+  #   environment:
+  #     NODE_ENV: ${NODE_ENV:-production}
+  #     DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
+  #     REDIS_URL: redis://redis:6379
+  #   depends_on:
+  #     migrate:
+  #       condition: service_completed_successfully
+  #     redis:
+  #       condition: service_healthy
 
 volumes:
   postgres_data:

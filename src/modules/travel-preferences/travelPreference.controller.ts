@@ -11,10 +11,15 @@ export const saveTravelPreference = async (req: AuthRequest, res: Response, next
     const userId = req.user.id;
     const { chattiness, pets } = req.body;
 
+    // Build update/create data only with provided fields
+    const data: any = {};
+    if (chattiness !== undefined) data.chattiness = chattiness;
+    if (pets !== undefined) data.pets = pets;
+
     const preference = await prisma.travelPreference.upsert({
       where: { userId },
-      update: { chattiness, pets },
-      create: { userId, chattiness, pets },
+      update: data,
+      create: { userId, ...data },
     });
 
     return sendSuccess(res, {

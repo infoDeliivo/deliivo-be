@@ -1,4 +1,4 @@
-import rateLimit, { Store, Options, IncrementResponse } from 'express-rate-limit';
+import rateLimit, { Store, Options, IncrementResponse, ipKeyGenerator } from 'express-rate-limit';
 import redis from '../cache/redis.js';
 
 class RedisStore implements Store {
@@ -60,7 +60,15 @@ export const otpLimiter = rateLimit({
   skip: () => isRateLimitDisabled,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => (req.body?.identifier || req.body?.phone || req.body?.email || req.ip) as string,
+  keyGenerator: (req) => {
+    const identifier = req.body?.identifier || req.body?.phone || req.body?.email;
+    // If we have a user-provided identifier, use that directly
+    if (identifier) {
+      return identifier as string;
+    }
+    // Otherwise, use the IP address with proper IPv6 handling
+    return ipKeyGenerator(req.ip || '');
+  },
   store: new RedisStore('rl:otp'),
 });
 

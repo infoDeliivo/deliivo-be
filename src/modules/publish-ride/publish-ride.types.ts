@@ -65,6 +65,7 @@ export interface UpdateRouteInput {
 export interface StopoverPricingInput {
     placeId: string;
     pricePerSeat: number;
+    estimatedArrivalTime?: string;
 }
 
 export interface UpdatePricingInput {
@@ -185,6 +186,10 @@ export interface LocationInput {
     address: string;
     lat: number;
     lng: number;
+    estimatedArrivalTime?: string; // HH:mm format
+    recommendedPrice?: number;
+    minPrice?: number;
+    maxPrice?: number;
 }
 
 export interface UpdatePickupsInput {

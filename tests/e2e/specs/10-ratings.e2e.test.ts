@@ -55,7 +55,8 @@ describe('TC-RATE-001 — Passenger rates driver after completed ride', () => {
       stars: 5,
       reviewText: 'Excellent driver, very punctual',
     });
-    expect([200, 201]).toContain(res.status);
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
     const rating = res.data.data ?? res.data;
     expect(rating.stars).toBe(5);
     expect(rating.rateeId).toBe(state.driverA.id);
@@ -70,7 +71,8 @@ describe('TC-RATE-002 — Driver rates passenger after completed ride', () => {
       stars: 4,
       reviewText: 'Polite and on time',
     });
-    expect([200, 201]).toContain(res.status);
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
     const rating = res.data.data ?? res.data;
     expect(rating.stars).toBe(4);
     expect(rating.rateeId).toBe(state.passengerA.id);

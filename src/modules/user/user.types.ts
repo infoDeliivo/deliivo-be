@@ -35,8 +35,8 @@ export interface UserBasicInfo {
 // Travel preference data
 export interface TravelPreferenceData {
   id: string;
-  chattiness: Chattiness;
-  pets: PetsPreference;
+  chattiness: Chattiness | null;
+  pets: PetsPreference | null;
 }
 
 // Vehicle summary for profile

@@ -38,6 +38,7 @@ type RideWaypointDetails = {
     waypointType: string;
     orderIndex: number;
     pricePerSeat: number | null;
+    estimatedArrivalTime: string | null;
 };
 
 type RideWithDetails = {
@@ -176,6 +177,7 @@ const mapRideInfo = (ride: RideWithDetails) => ({
         waypointType: waypoint.waypointType,
         orderIndex: waypoint.orderIndex,
         pricePerSeat: waypoint.pricePerSeat,
+        estimatedArrivalTime: waypoint.estimatedArrivalTime,
     })),
     driver: ride.driver,
     vehicle: ride.vehicle ? {
