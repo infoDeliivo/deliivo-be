@@ -122,7 +122,7 @@ const calculateBookingPrice = (
     basePricePerSeat: number,
     seatsBooked: number,
     luggageCount: number = 0,
-    currency: string = 'GBP'
+    currency: string = 'EUR'
 ): PriceBreakdown => {
     const subtotal = basePricePerSeat * seatsBooked;
     const luggageFee = luggageCount * LUGGAGE_FEE_PER_ITEM;

@@ -27,6 +27,7 @@ import {
   mapsApi,
   publishRideApi,
   vehicleApi,
+  authApi,
   PlacePrediction,
   RouteOption,
   PriceRecommendation,
@@ -224,8 +225,9 @@ function StepRoute({
           markers={[
             ...(state.origin ? [{ lat: state.origin.lat, lng: state.origin.lng, color: 'green' as const }] : []),
             ...(state.destination ? [{ lat: state.destination.lat, lng: state.destination.lng, color: 'red' as const }] : []),
+            ...state.stopovers.map(s => ({ lat: s.lat, lng: s.lng, color: 'blue' as const })),
           ]}
-          className="h-48 w-full rounded-2xl"
+          className="h-56 w-full rounded-2xl"
         />
       ) : (
         <div className="relative h-44 w-full overflow-hidden rounded-2xl bg-gradient-to-br from-primary-50 to-deliivo-orange-light flex items-center justify-center border border-primary-100">
@@ -323,6 +325,8 @@ function StepStopovers({
     }
   }, [loaded]);
 
+  const selectedPolyline = state.selectedRouteIndex !== null ? state.routes[state.selectedRouteIndex]?.polyline : undefined;
+
   function toggleStopover(suggestion: StopoverSuggestion) {
     const exists = state.stopovers.find(s => s.placeId === suggestion.placeId);
     if (exists) {
@@ -340,6 +344,19 @@ function StepStopovers({
           Optional: pick up or drop off passengers along the way.
         </p>
       </div>
+
+      {/* Map with route + stopovers */}
+      {selectedPolyline && (
+        <GoogleMap
+          polyline={selectedPolyline}
+          markers={[
+            ...(state.origin ? [{ lat: state.origin.lat, lng: state.origin.lng, color: 'green' as const }] : []),
+            ...(state.destination ? [{ lat: state.destination.lat, lng: state.destination.lng, color: 'red' as const }] : []),
+            ...state.stopovers.map(s => ({ lat: s.lat, lng: s.lng, color: 'blue' as const })),
+          ]}
+          className="h-48 w-full rounded-2xl"
+        />
+      )}
 
       {loadingSuggestions ? (
         <div className="flex items-center justify-center py-8">
@@ -658,7 +675,7 @@ function StepPrice({
 
       {/* Price input */}
       <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-        <label className="mb-2 block text-sm font-semibold text-deliivo-dark">Price per seat ({rec?.currency || 'GBP'})</label>
+        <label className="mb-2 block text-sm font-semibold text-deliivo-dark">Price per seat ({rec?.currency || 'EUR'})</label>
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -711,10 +728,11 @@ function StepConfirm({
   error,
 }: {
   state: WizardState;
-  onPublish: () => void;
+  onPublish: (tosAccepted: boolean) => void;
   publishing: boolean;
   error: string;
 }) {
+  const [tosChecked, setTosChecked] = useState(false);
   const dateLabel = state.date
     ? new Date(state.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
     : "Not set";
@@ -731,7 +749,7 @@ function StepConfirm({
     { icon: <Clock className="h-4 w-4 text-deliivo-orange" />, label: "Time", value: timeLabel },
     { icon: <Users className="h-4 w-4 text-deliivo-orange" />, label: "Seats", value: `${state.seats} passenger${state.seats !== 1 ? "s" : ""}` },
     { icon: <Luggage className="h-4 w-4 text-deliivo-orange" />, label: "Luggage", value: `Max ${state.maxLuggage} per person` },
-    { icon: <DollarSign className="h-4 w-4 text-deliivo-orange" />, label: "Price/seat", value: state.basePricePerSeat > 0 ? `${state.recommendation?.currency || 'GBP'} ${state.basePricePerSeat.toFixed(2)}` : "Free" },
+    { icon: <DollarSign className="h-4 w-4 text-deliivo-orange" />, label: "Price/seat", value: state.basePricePerSeat > 0 ? `${state.recommendation?.currency || 'EUR'} ${state.basePricePerSeat.toFixed(2)}` : "Free" },
   ];
 
   return (
@@ -782,6 +800,26 @@ function StepConfirm({
         )}
       </div>
 
+      {/* Terms & Conditions checkbox */}
+      <label className="flex items-start gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-4 shadow-sm cursor-pointer">
+        <input
+          type="checkbox"
+          checked={tosChecked}
+          onChange={(e) => setTosChecked(e.target.checked)}
+          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-deliivo-orange focus:ring-deliivo-orange"
+        />
+        <span className="text-sm text-deliivo-dark">
+          I agree to the{' '}
+          <a href="/terms" target="_blank" className="font-semibold text-deliivo-orange underline hover:text-deliivo-orange-dark">
+            Terms of Service
+          </a>{' '}
+          and{' '}
+          <a href="/privacy" target="_blank" className="font-semibold text-deliivo-orange underline hover:text-deliivo-orange-dark">
+            Privacy Policy
+          </a>
+        </span>
+      </label>
+
       {error && (
         <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-100 px-4 py-3">
           <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
@@ -791,8 +829,8 @@ function StepConfirm({
 
       <button
         type="button"
-        onClick={onPublish}
-        disabled={publishing}
+        onClick={() => onPublish(tosChecked)}
+        disabled={publishing || !tosChecked}
         className="btn-primary w-full gap-2 py-4 text-base disabled:opacity-60"
       >
         {publishing ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle className="h-5 w-5" />}
@@ -849,17 +887,20 @@ function PublishRideWizard() {
   }
 
   // Step 1: After selecting both origin and destination, auto-compute routes
+  // Also re-compute if origin or destination changes
   useEffect(() => {
-    if (state.origin && state.destination && state.routes.length === 0) {
+    if (state.origin && state.destination) {
       handleComputeRoutes();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.origin, state.destination]);
+  }, [state.origin?.placeId, state.destination?.placeId]);
 
   async function handleComputeRoutes() {
     if (!state.origin || !state.destination) return;
     setLoading(true);
     setError('');
+    // Clear previous routes so map updates
+    setState(prev => ({ ...prev, routes: [], selectedRouteIndex: null }));
     try {
       // Step 1: Create draft with origin
       await publishRideApi.createWithOrigin({
@@ -944,10 +985,15 @@ function PublishRideWizard() {
     setError('');
   }
 
-  async function handlePublish() {
+  async function handlePublish(tosAccepted: boolean) {
     setLoading(true);
     setError('');
     try {
+      // Accept Terms of Service
+      if (tosAccepted) {
+        await authApi.acceptTos('1.0', '1.0');
+      }
+
       // Save pricing
       await publishRideApi.updatePricing(state.basePricePerSeat);
 
@@ -960,7 +1006,9 @@ function PublishRideWizard() {
       await publishRideApi.publish();
       setPublished(true);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to publish ride';
+      let message = err instanceof Error ? err.message : 'Failed to publish ride';
+      if (message.includes('TOS_NOT_ACCEPTED')) message = 'Please accept the Terms of Service to continue.';
+      if (message.includes('DRIVER_NOT_VERIFIED')) message = 'Your driving license must be verified before publishing a ride.';
       setError(message);
     } finally {
       setLoading(false);

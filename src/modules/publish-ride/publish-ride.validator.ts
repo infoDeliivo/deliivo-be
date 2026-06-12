@@ -39,7 +39,7 @@ export const createRideSchema = z.object({
     // Capacity & Pricing
     totalSeats: z.number().int().min(1, 'At least 1 seat required').max(50, 'Maximum 50 seats'),
     basePricePerSeat: z.number().positive('Price must be positive'),
-    currency: z.string().default('GBP'),
+    currency: z.string().default('EUR'),
 
     // Optional vehicle
     vehicleId: z.string().uuid().optional(),

@@ -15,8 +15,47 @@ function isBreakerOpen(err: any) {
   return err?.message?.includes('Breaker is open');
 }
 
+const isMockMode = () => process.env.GOOGLE_MAPS_MOCK_MODE === 'true';
+
+// Mock data for autocomplete — Baltic region (Estonia, Latvia, Lithuania)
+const MOCK_PLACES = [
+  // Estonia
+  { place_id: 'mock_tallinn', description: 'Tallinn, Estonia', lat: 59.4370, lng: 24.7536 },
+  { place_id: 'mock_tartu', description: 'Tartu, Estonia', lat: 58.3780, lng: 26.7290 },
+  { place_id: 'mock_narva', description: 'Narva, Estonia', lat: 59.3797, lng: 28.1791 },
+  { place_id: 'mock_parnu', description: 'Pärnu, Estonia', lat: 58.3859, lng: 24.4971 },
+  { place_id: 'mock_viljandi', description: 'Viljandi, Estonia', lat: 58.3639, lng: 25.5900 },
+  { place_id: 'mock_rakvere', description: 'Rakvere, Estonia', lat: 59.3469, lng: 26.3557 },
+  { place_id: 'mock_haapsalu', description: 'Haapsalu, Estonia', lat: 58.9431, lng: 23.5414 },
+  { place_id: 'mock_kuressaare', description: 'Kuressaare, Estonia', lat: 58.2480, lng: 22.5038 },
+  // Latvia
+  { place_id: 'mock_riga', description: 'Riga, Latvia', lat: 56.9496, lng: 24.1052 },
+  { place_id: 'mock_daugavpils', description: 'Daugavpils, Latvia', lat: 55.8749, lng: 26.5356 },
+  { place_id: 'mock_liepaja', description: 'Liepāja, Latvia', lat: 56.5047, lng: 21.0109 },
+  { place_id: 'mock_jelgava', description: 'Jelgava, Latvia', lat: 56.6511, lng: 23.7133 },
+  { place_id: 'mock_jurmala', description: 'Jūrmala, Latvia', lat: 56.9680, lng: 23.7704 },
+  { place_id: 'mock_ventspils', description: 'Ventspils, Latvia', lat: 57.3942, lng: 21.5647 },
+  { place_id: 'mock_rezekne', description: 'Rēzekne, Latvia', lat: 56.5099, lng: 27.3340 },
+  { place_id: 'mock_sigulda', description: 'Sigulda, Latvia', lat: 57.1514, lng: 24.8514 },
+  // Lithuania
+  { place_id: 'mock_vilnius', description: 'Vilnius, Lithuania', lat: 54.6872, lng: 25.2797 },
+  { place_id: 'mock_kaunas', description: 'Kaunas, Lithuania', lat: 54.8985, lng: 23.9036 },
+  { place_id: 'mock_klaipeda', description: 'Klaipėda, Lithuania', lat: 55.7033, lng: 21.1443 },
+  { place_id: 'mock_siauliai', description: 'Šiauliai, Lithuania', lat: 55.9349, lng: 23.3137 },
+  { place_id: 'mock_panevezys', description: 'Panevėžys, Lithuania', lat: 55.7348, lng: 24.3575 },
+  { place_id: 'mock_alytus', description: 'Alytus, Lithuania', lat: 54.3963, lng: 24.0459 },
+  { place_id: 'mock_marijampole', description: 'Marijampolė, Lithuania', lat: 54.5594, lng: 23.3500 },
+  { place_id: 'mock_druskininkai', description: 'Druskininkai, Lithuania', lat: 54.0166, lng: 23.9697 },
+];
+
 export const googleService = {
   async autocomplete(input: string, location?: { lat: number; lng: number }, radius?: number, types?: string) {
+    if (isMockMode()) {
+      const lower = input.toLowerCase();
+      const filtered = MOCK_PLACES.filter(p => p.description.toLowerCase().includes(lower));
+      return filtered.map(p => ({ description: p.description, place_id: p.place_id }));
+    }
+
     const cacheKey = `autocomplete:${input}:${location ? `${location.lat},${location.lng}` : 'none'}:${radius || 50000}:${types || 'all'}`;
 
     // Try to get from cache
@@ -38,6 +77,23 @@ export const googleService = {
    * Google Place Details with Redis caching
    */
   async placeDetails(placeId: string) {
+    if (isMockMode()) {
+      const place = MOCK_PLACES.find(p => p.place_id === placeId);
+      if (place) {
+        return {
+          name: place.description.split(',')[0],
+          formatted_address: place.description,
+          geometry: { location: { lat: place.lat, lng: place.lng } },
+        };
+      }
+      // Unknown placeId in mock — return generic
+      return {
+        name: 'Unknown Place',
+        formatted_address: 'Mock Address, UK',
+        geometry: { location: { lat: 51.5, lng: -0.1 } },
+      };
+    }
+
     const cacheKey = `placeDetails:${placeId}`;
 
     const cached = await redis.get(cacheKey);

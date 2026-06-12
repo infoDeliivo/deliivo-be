@@ -97,7 +97,7 @@ app.use('/api/v1/driver/bookings', protect, driverBookingRouter);
 app.use('/api/v1/rides', protect, rideOperationsRouter);
 app.use('/api/v1/vehicles', protect, vehiclesRouter);
 app.use('/api/v1/travel-preferences', protect, travelPreferenceRouter);
-app.use('/api/v1/maps', protect, mapRouter);
+app.use('/api/v1/maps', mapRouter);
 app.use('/api/v1/chat', protect, chatRouter);
 app.use('/api/v1/notifications', protect, notificationRouter);
 app.use('/api/v1/ratings', protect, ratingsRouter);

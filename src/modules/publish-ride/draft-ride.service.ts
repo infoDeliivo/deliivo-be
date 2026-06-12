@@ -235,28 +235,58 @@ export const computeRouteOptions = async (
     let data: any;
 
     if (process.env.GOOGLE_MAPS_MOCK_MODE === 'true') {
-        // Mock mode: generate a synthetic route based on haversine distance
+        // Mock mode: generate 3 synthetic routes with slight variations
         const distMeters = Math.round(
             haversineDistance(
                 { lat: origin.latitude, lng: origin.longitude! },
                 { lat: destination.latitude, lng: destination.longitude! }
             )
         );
-        const durationSeconds = Math.round(distMeters / 25); // ~90 km/h average
-        // Minimal encoded polyline: straight line from origin to destination
-        const encodedPolyline = mockEncodePolyline([
+
+        // Generate 3 routes with different characteristics
+        const midLat = (origin.latitude + destination.latitude) / 2;
+        const midLng = (origin.longitude! + destination.longitude!) / 2;
+
+        // Route 1: Direct (slight curve north)
+        const route1Points: [number, number][] = [
             [origin.latitude, origin.longitude!],
+            [midLat + 0.15, midLng - 0.05],
             [destination.latitude, destination.longitude!],
-        ]);
-        data = {
-            routes: [
-                {
-                    distanceMeters: distMeters,
-                    duration: `${durationSeconds}s`,
-                    polyline: { encodedPolyline },
-                },
-            ],
-        };
+        ];
+        // Route 2: Via south (longer, scenic)
+        const route2Points: [number, number][] = [
+            [origin.latitude, origin.longitude!],
+            [origin.latitude - 0.1, origin.longitude! + (destination.longitude! - origin.longitude!) * 0.3],
+            [midLat - 0.2, midLng],
+            [destination.latitude - 0.1, destination.longitude! - (destination.longitude! - origin.longitude!) * 0.2],
+            [destination.latitude, destination.longitude!],
+        ];
+        // Route 3: Highway (slight curve, fastest)
+        const route3Points: [number, number][] = [
+            [origin.latitude, origin.longitude!],
+            [midLat + 0.05, midLng + 0.1],
+            [destination.latitude, destination.longitude!],
+        ];
+
+        const routes = [
+            {
+                distanceMeters: Math.round(distMeters * 1.15), // ~15% longer than straight
+                duration: `${Math.round((distMeters * 1.15) / 25)}s`,
+                polyline: { encodedPolyline: mockEncodePolyline(route1Points) },
+            },
+            {
+                distanceMeters: Math.round(distMeters * 1.35), // ~35% longer (scenic)
+                duration: `${Math.round((distMeters * 1.35) / 22)}s`,
+                polyline: { encodedPolyline: mockEncodePolyline(route2Points) },
+            },
+            {
+                distanceMeters: Math.round(distMeters * 1.1), // ~10% longer (highway, fastest)
+                duration: `${Math.round((distMeters * 1.1) / 28)}s`,
+                polyline: { encodedPolyline: mockEncodePolyline(route3Points) },
+            },
+        ];
+
+        data = { routes };
     } else {
         // Build intermediate waypoints from stopovers
   const intermediateWaypoints = (draft.stopovers || []).map((wp) => ({
@@ -672,7 +702,7 @@ export const getRecommendedPrice = async (
     throw new Error('ROUTE_REQUIRED_FOR_PRICING');
   }
 
-  const fuelContext = await getFuelPriceForCurrency(draft.currency || 'GBP');
+  const fuelContext = await getFuelPriceForCurrency(draft.currency || 'EUR');
   const fuelEfficiency =
     DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER > 0 ? DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER : 12;
   const pricePerKm = fuelContext.pricePerLiter / fuelEfficiency;
@@ -733,7 +763,7 @@ export const getRecommendedPrice = async (
     recommendedPrice,
     minPrice,
     maxPrice,
-    currency: draft.currency || 'GBP',
+    currency: draft.currency || 'EUR',
     breakdown: {
       fuelCost: Math.round(fuelCost * 100) / 100,
       distanceKm: Math.round(distanceKm * 10) / 10,
@@ -1023,7 +1053,8 @@ export const publishRide = async (driverId: string) => {
         throw new Error('TOS_NOT_ACCEPTED');
     }
 
-    if (!driver?.dlVerified) {
+    const skipDlCheck = process.env.NODE_ENV !== 'production' && process.env.SKIP_DL_VERIFICATION === 'true';
+    if (!driver?.dlVerified && !skipDlCheck) {
         throw new Error('DRIVER_NOT_VERIFIED');
     }
 
@@ -1067,7 +1098,7 @@ export const publishRide = async (driverId: string) => {
         totalSeats: draft.totalSeats!,
         availableSeats: draft.totalSeats!,
         basePricePerSeat: draft.basePricePerSeat!,
-        currency: draft.currency || 'GBP',
+        currency: draft.currency || 'EUR',
 
         maxLuggagePerPerson: draft.maxLuggagePerPerson ?? 2,
         backSeatOnly: draft.backSeatOnly ?? false,

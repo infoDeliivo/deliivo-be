@@ -30,6 +30,7 @@ export default function GoogleMap({ polyline, markers, liveLocation, className =
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const polylineRef = useRef<google.maps.Polyline | null>(null);
   const liveMarkerRef = useRef<google.maps.Marker | null>(null);
+  const markersRef = useRef<google.maps.Marker[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
 
@@ -50,13 +51,14 @@ export default function GoogleMap({ polyline, markers, liveLocation, className =
     });
   }, []);
 
+  // Initialize map once
   useEffect(() => {
-    if (!loaded || !mapRef.current) return;
+    if (!loaded || !mapRef.current || mapInstanceRef.current) return;
 
-    const defaultCenter = center || { lat: 51.5074, lng: -0.1278 };
+    const defaultCenter = center || { lat: 56.95, lng: 24.11 }; // Riga, Baltic region
     const map = new google.maps.Map(mapRef.current, {
       center: defaultCenter,
-      zoom: zoom || 10,
+      zoom: zoom || 7,
       disableDefaultUI: true,
       zoomControl: true,
       styles: [
@@ -65,6 +67,22 @@ export default function GoogleMap({ polyline, markers, liveLocation, className =
       ],
     });
     mapInstanceRef.current = map;
+  }, [loaded, center, zoom]);
+
+  // Update polyline and markers when props change
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    // Clear old polyline
+    if (polylineRef.current) {
+      polylineRef.current.setMap(null);
+      polylineRef.current = null;
+    }
+
+    // Clear old markers
+    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current = [];
 
     // Draw polyline
     if (polyline && google.maps.geometry) {
@@ -79,16 +97,22 @@ export default function GoogleMap({ polyline, markers, liveLocation, className =
       poly.setMap(map);
       polylineRef.current = poly;
 
-      // Fit bounds to polyline
+      // Fit bounds to polyline + markers
       const bounds = new google.maps.LatLngBounds();
       path.forEach(p => bounds.extend(p));
+      markers?.forEach(m => bounds.extend({ lat: m.lat, lng: m.lng }));
+      map.fitBounds(bounds, 40);
+    } else if (markers && markers.length > 0) {
+      // No polyline, but markers — fit to markers
+      const bounds = new google.maps.LatLngBounds();
+      markers.forEach(m => bounds.extend({ lat: m.lat, lng: m.lng }));
       map.fitBounds(bounds, 40);
     }
 
     // Draw markers
     if (markers) {
       markers.forEach(m => {
-        new google.maps.Marker({
+        const marker = new google.maps.Marker({
           position: { lat: m.lat, lng: m.lng },
           map,
           label: m.label ? { text: m.label, color: '#fff', fontSize: '11px', fontWeight: 'bold' } : undefined,
@@ -101,9 +125,10 @@ export default function GoogleMap({ polyline, markers, liveLocation, className =
             scale: 8,
           } : undefined,
         });
+        markersRef.current.push(marker);
       });
     }
-  }, [loaded, polyline, markers, center, zoom]);
+  }, [loaded, polyline, markers]);
 
   // Update live location marker
   useEffect(() => {

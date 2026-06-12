@@ -591,7 +591,7 @@ export const completeRide = async (req: AuthRequest, res: Response) => {
 /* ================= GET CURRENT FUEL PRICE ================= */
 export const getFuelPrice = async (req: AuthRequest, res: Response) => {
     try {
-        const currency = (req.query.currency as string) || 'GBP';
+        const currency = (req.query.currency as string) || 'EUR';
         const fuelPrice = await getCurrentFuelPrice(currency);
 
         return sendSuccess(res, {

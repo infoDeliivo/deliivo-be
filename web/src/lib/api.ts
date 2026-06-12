@@ -454,7 +454,7 @@ export const publishRideApi = {
   },
 
   // Get fuel price
-  getFuelPrice(currency = 'GBP') {
+  getFuelPrice(currency = 'EUR') {
     return apiFetch<{ data: { pricePerLiter: number; currency: string } }>(
       `/api/v1/publish-ride/fuel-price?currency=${currency}`
     );

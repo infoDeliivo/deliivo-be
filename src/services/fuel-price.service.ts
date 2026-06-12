@@ -7,8 +7,8 @@ import { promisify } from 'util';
 import redis from '../cache/redis.js';
 import { logInfo, logError, logWarn } from '../utils/logger.js';
 
-type FuelCountryCode = 'GB' | 'IN';
-type FuelCurrency = 'GBP' | 'INR';
+type FuelCountryCode = 'GB' | 'IN' | 'EE';
+type FuelCurrency = 'GBP' | 'INR' | 'EUR';
 
 export interface FuelPriceContext {
     countryCode: FuelCountryCode;
@@ -28,6 +28,7 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.FUEL_PRICE_FETCH_TIMEOUT_MS || 120
 const CACHE_TTL_SECONDS: Record<FuelCountryCode, number> = {
     GB: 60 * 60 * 12, // 12 hours
     IN: 60 * 60 * 6,  // 6 hours
+    EE: 60 * 60 * 12, // 12 hours (Baltic)
 };
 
 const UK_SOURCE_PAGE = 'https://www.gov.uk/government/statistics/weekly-road-fuel-prices';
@@ -36,6 +37,7 @@ const INDIA_SOURCE_PAGE = 'https://ppac.gov.in/retail-selling-price-rsp-of-petro
 const fallbackFuelPriceByCountry: Record<FuelCountryCode, number> = {
     GB: Number(process.env.FALLBACK_FUEL_PRICE_GB || 1.5),
     IN: Number(process.env.FALLBACK_FUEL_PRICE_IN || 95),
+    EE: Number(process.env.FALLBACK_FUEL_PRICE_EE || 1.65),
 };
 
 const cacheKey = (countryCode: FuelCountryCode) => `fuel-price:${countryCode}:petrol`;
@@ -45,13 +47,17 @@ const isPositiveNumber = (value: number) => Number.isFinite(value) && value > 0;
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
 const resolveCountryFromCurrency = (currency?: string): FuelCountryCode => {
-    const normalized = (currency || 'GBP').toUpperCase();
+    const normalized = (currency || 'EUR').toUpperCase();
     if (normalized === 'INR') return 'IN';
-    return 'GB';
+    if (normalized === 'GBP') return 'GB';
+    return 'EE'; // EUR → Baltic (Estonia/Latvia/Lithuania)
 };
 
-const getCurrencyForCountry = (countryCode: FuelCountryCode): FuelCurrency =>
-    countryCode === 'IN' ? 'INR' : 'GBP';
+const getCurrencyForCountry = (countryCode: FuelCountryCode): FuelCurrency => {
+    if (countryCode === 'IN') return 'INR';
+    if (countryCode === 'GB') return 'GBP';
+    return 'EUR';
+};
 
 const fallbackContext = (countryCode: FuelCountryCode): FuelPriceContext => ({
     countryCode,
@@ -244,6 +250,10 @@ const fetchIndiaFuelPrice = async (): Promise<FuelPriceContext> => {
 const fetchLiveFuelPriceByCountry = async (countryCode: FuelCountryCode): Promise<FuelPriceContext> => {
     if (countryCode === 'IN') {
         return fetchIndiaFuelPrice();
+    }
+    if (countryCode === 'EE') {
+        // Baltic region: no live scraper yet, use fallback directly
+        return fallbackContext('EE');
     }
     return fetchUkFuelPrice();
 };
