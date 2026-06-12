@@ -1,127 +1,114 @@
 services:
-
-  # ── Infrastructure ────────────────────────────────────────────────────────
-
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: carpooling
-      POSTGRES_USER: ${POSTGRES_USER:-carpooling}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-carpooling}
+      POSTGRES_USER: ${POSTGRES_USER:-deliivo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deliivo_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-deliivo}
+    ports:
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-carpooling} -d carpooling"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-deliivo}"]
       interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 10s
+      retries: 5
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    ports:
+      - "6379:6379"
     volumes:
       - redis_data:/data
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 5s
+      retries: 5
 
-  # ── Migration (runs once, exits) ──────────────────────────────────────────
-  # Explicit one-shot migration service for local dev.
-  # Guarantees migrations are fully applied before any app service starts.
-  # On Railway this is handled by docker-entrypoint.sh inside each container.
-
-  migrate:
+  backend:
     build:
       context: .
-      target: runner
-    # Override the entrypoint to skip the migration step — just run migrate
-    # directly, then exit. This avoids running migrations twice for the api.
-    entrypoint: ["npx", "prisma", "migrate", "deploy"]
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-deliivo}:${POSTGRES_PASSWORD:-deliivo_secret}@postgres:5432/${POSTGRES_DB:-deliivo}
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:-change_me}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:-change_me}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      BOOKING_PAYMENT_MODE: ${BOOKING_PAYMENT_MODE:-bypass}
+      PLATFORM_FEE_PERCENT: ${PLATFORM_FEE_PERCENT:-0}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      GOOGLE_MAPS_MOCK_MODE: ${GOOGLE_MAPS_MOCK_MODE:-true}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:3001}
+      EXPOSE_OTP_IN_RESPONSE: ${EXPOSE_OTP_IN_RESPONSE:-true}
+      DISABLE_RATE_LIMIT: ${DISABLE_RATE_LIMIT:-true}
+      SMS_MOCK_MODE: ${SMS_MOCK_MODE:-true}
+      FIREBASE_SERVICE_ACCOUNT_PATH: /app/firebase-sa.json
+    volumes:
+      - ./carpooling-37720-firebase-adminsdk-fbsvc-26fe9c4eaf.json:/app/firebase-sa.json:ro
     depends_on:
       postgres:
         condition: service_healthy
-    restart: "no"
-
-  # ── Application services ──────────────────────────────────────────────────
-
-  api:
-    build:
-      context: .
-      target: runner
-    # Uses default ENTRYPOINT (docker-entrypoint.sh) + CMD (node dist/server.js)
-    # entrypoint runs migrate deploy (idempotent, fast), then starts server
-    restart: unless-stopped
-    ports:
-      - "${PORT:-3000}:3000"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      PORT: "3000"
-      DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
-      REDIS_URL: redis://redis:6379
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
 
   mail-worker:
     build:
       context: .
-      target: runner
-    command: ["node", "dist/modules/mail/mail.worker.js"]
+      dockerfile: Dockerfile
     restart: unless-stopped
-    env_file:
-      - path: .env
-        required: false
+    command: ["node", "dist/modules/mail/mail.worker.js"]
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-deliivo}:${POSTGRES_PASSWORD:-deliivo_secret}@postgres:5432/${POSTGRES_DB:-deliivo}
       REDIS_URL: redis://redis:6379
     depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
+      - backend
 
   sms-worker:
     build:
       context: .
-      target: runner
-    command: ["node", "dist/modules/sms/sms.worker.js"]
+      dockerfile: Dockerfile
     restart: unless-stopped
-    env_file:
-      - path: .env
-        required: false
+    command: ["node", "dist/modules/sms/sms.worker.js"]
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-carpooling}:${POSTGRES_PASSWORD:-carpooling}@postgres:5432/carpooling?schema=public
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-deliivo}:${POSTGRES_PASSWORD:-deliivo_secret}@postgres:5432/${POSTGRES_DB:-deliivo}
       REDIS_URL: redis://redis:6379
     depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
+      - backend
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        # Build-time args for NEXT_PUBLIC_ vars (baked into client bundle)
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
+        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://localhost:3000}
+    restart: unless-stopped
+    ports:
+      - "8080:3001"
+    environment:
+      # Runtime env for the Next.js server (proxy route)
+      BACKEND_URL: http://backend:3000
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:
