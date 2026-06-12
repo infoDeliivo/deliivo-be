@@ -57,6 +57,10 @@ services:
       DISABLE_RATE_LIMIT: ${DISABLE_RATE_LIMIT:-true}
       SMS_MOCK_MODE: ${SMS_MOCK_MODE:-true}
       SKIP_DL_VERIFICATION: ${SKIP_DL_VERIFICATION:-true}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-eu-north-1}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-}
       FIREBASE_SERVICE_ACCOUNT_PATH: /app/firebase-sa.json
     volumes:
       - ./carpooling-37720-firebase-adminsdk-fbsvc-26fe9c4eaf.json:/app/firebase-sa.json:ro

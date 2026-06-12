@@ -1053,7 +1053,7 @@ export const publishRide = async (driverId: string) => {
         throw new Error('TOS_NOT_ACCEPTED');
     }
 
-    const skipDlCheck = process.env.NODE_ENV !== 'production' && process.env.SKIP_DL_VERIFICATION === 'true';
+    const skipDlCheck = process.env.SKIP_DL_VERIFICATION === 'true';
     if (!driver?.dlVerified && !skipDlCheck) {
         throw new Error('DRIVER_NOT_VERIFIED');
     }

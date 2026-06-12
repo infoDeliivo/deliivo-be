@@ -61,6 +61,9 @@ app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 app.use(requestTimeout);
 
+// Serve local uploads (dev fallback when S3 is not configured)
+app.use('/uploads', express.static('uploads'));
+
 app.get('/health', async (req, res) => {
   const checks: Record<string, boolean> = { database: false, redis: false };
 
