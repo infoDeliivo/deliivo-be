@@ -25,6 +25,15 @@ import { startBookingDeadlineChecker } from './jobs/booking-deadline-checker.job
 
 const app = express();
 
+// Disable ETag globally to prevent HTTP/2 stream reset issues
+app.set('etag', false);
+
+// Set server timeout to handle long-running requests
+app.use((req, res, next) => {
+  res.setTimeout(30000); // 30 seconds
+  next();
+});
+
 app.use(cors());
 app.use(helmet());
 
@@ -38,6 +47,13 @@ app.use(express.urlencoded({ extended: true }));
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
+});
+
+// Disable compression and ETag for auth routes to prevent HTTP/2 stream resets
+app.use('/api/v1/auth', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.removeHeader('ETag');
+  next();
 });
 
 app.use(docsRouter);

@@ -169,6 +169,7 @@ export const requestOtp = async (req: Request, res: Response) => {
 };
 export const verifyOtpCont = async (req: Request, res: Response) => {
   try {
+    
     const { identifier, code, purpose, method } = req.body as {
       identifier: string;
       code: string;
@@ -192,6 +193,7 @@ export const verifyOtpCont = async (req: Request, res: Response) => {
         message: errorMessage,
       });
     }
+    
     const result = await verifyOtpService(identifier, code, purpose, method);
     if ('success' in result && !result.success) {
       return sendError(res, {
@@ -201,6 +203,10 @@ export const verifyOtpCont = async (req: Request, res: Response) => {
     }
 
     if ('tokens' in result && result.user && result.success) {
+      // Small delay to ensure response is fully ready (prevents HTTP/2 stream resets)
+      await new Promise(resolve => setTimeout(resolve, 20));
+      
+      // Ensure response is sent quickly
       return sendSuccess(res, {
         message: 'Verification successful',
         data: {
@@ -216,7 +222,8 @@ export const verifyOtpCont = async (req: Request, res: Response) => {
     }
 
     return sendError(res, { message: 'Server error' });
-  } catch {
+  } catch (error) {
+    console.error('verifyOtpCont error:', error);
     return sendError(res, { message: 'Server error' });
   }
 };
