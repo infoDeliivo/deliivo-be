@@ -11,6 +11,7 @@ import {
 } from './stripe.constants.js';
 import { constructStripeEvent } from './stripe.service.js';
 import { logInfo, logError, logWarn, logDebug } from '../../utils/logger.js';
+import { emitToUsers } from '../../socket/index.js';
 
 const getHeaderValue = (value: string | string[] | undefined): string | null => {
     if (!value) return null;
@@ -80,6 +81,8 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
                     driverId: true,
                     originAddress: true,
                     destinationAddress: true,
+                    departureDate: true,
+                    departureTime: true,
                     currency: true,
                     waypoints: {
                         select: {
@@ -136,8 +139,38 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
             },
         });
         logInfo('Notification sent to driver', { driverId: booking.ride.driverId });
+
+        await createNotification({
+            userId: booking.passengerId,
+            type: 'booking.request.sent',
+            title: 'Booking request sent',
+            body: 'Payment received. Your request was sent to the driver.',
+            data: {
+                bookingId: booking.id,
+                rideId: booking.ride.id,
+                status: BookingStatus.DRIVER_PENDING,
+                originAddress,
+                destinationAddress,
+                departureDate: booking.ride.departureDate.toISOString(),
+                departureTime: booking.ride.departureTime,
+                decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
+                deepLink: `app://booking/${booking.id}`,
+            },
+        });
+        logInfo('Notification sent to rider after payment success', { passengerId: booking.passengerId });
+
+        await emitToUsers([booking.ride.driverId], 'booking:updated', {
+            bookingId: booking.id,
+            rideId: booking.ride.id,
+            passengerId: booking.passengerId,
+            status: BookingStatus.DRIVER_PENDING,
+            previousStatus: BookingStatus.PAYMENT_PENDING,
+            actor: 'rider',
+            action: 'booking.requested',
+            updatedAt: new Date().toISOString(),
+        });
     } catch (error) {
-        logError('Failed to send notification to driver', error);
+        logError('Failed to send payment success notification', error);
         throw error;
     }
 };
@@ -146,19 +179,29 @@ const applyPaymentIntentFailed = async (intent: Stripe.PaymentIntent) => {
     const bookingId = intent.metadata?.[STRIPE_METADATA_KEYS.bookingId];
     if (!bookingId) return;
 
-    await prisma.$transaction(async (tx) => {
+    const failedBooking = await prisma.$transaction(async (tx) => {
         const booking = await tx.rideBooking.findUnique({
             where: { id: bookingId },
             select: {
                 id: true,
                 rideId: true,
+                passengerId: true,
                 seatsBooked: true,
                 status: true,
+                ride: {
+                    select: {
+                        id: true,
+                        originAddress: true,
+                        destinationAddress: true,
+                        departureDate: true,
+                        departureTime: true,
+                    },
+                },
             },
         });
 
         if (!booking || booking.status !== BookingStatus.PAYMENT_PENDING) {
-            return;
+            return null;
         }
 
         await tx.rideBooking.update({
@@ -174,6 +217,27 @@ const applyPaymentIntentFailed = async (intent: Stripe.PaymentIntent) => {
                 availableSeats: { increment: booking.seatsBooked },
             },
         });
+
+        return booking;
+    });
+
+    if (!failedBooking) return;
+
+    await createNotification({
+        userId: failedBooking.passengerId,
+        type: 'booking.payment.failed',
+        title: 'Payment failed',
+        body: 'Payment could not be completed for your booking request.',
+        data: {
+            bookingId: failedBooking.id,
+            rideId: failedBooking.ride.id,
+            status: BookingStatus.PAYMENT_FAILED,
+            originAddress: failedBooking.ride.originAddress,
+            destinationAddress: failedBooking.ride.destinationAddress,
+            departureDate: failedBooking.ride.departureDate.toISOString(),
+            departureTime: failedBooking.ride.departureTime,
+            deepLink: `app://booking/${failedBooking.id}`,
+        },
     });
 };
 

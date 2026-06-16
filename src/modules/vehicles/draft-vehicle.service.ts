@@ -146,6 +146,8 @@ export const addDocument = async (
 
 const MAX_VEHICLES_PER_USER = 1;
 
+const shouldAutoVerifyVehicle = () => process.env.SKIP_VEHICLE_VERIFICATION === 'true';
+
 export const saveVehicle = async (userId: string) => {
     const draft = await getDraft(userId);
 
@@ -188,6 +190,7 @@ export const saveVehicle = async (userId: string) => {
             color: draft.color || null,
             year: draft.year || null,
             imageUrl: mainImageUrl,
+            isVerified: shouldAutoVerifyVehicle(),
             documents: {
                 create: (draft.documents || []).map((doc) => ({
                     imageUrl: doc.imageUrl,

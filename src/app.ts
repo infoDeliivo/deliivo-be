@@ -113,9 +113,15 @@ app.use('/api/v1/admin/payouts', protect, adminPayoutRouter);
 app.use('/api/v1/drivers/me', protect, driverPayoutRouter);
 app.use('/api/v1/disputes', protect, disputeRouter);
 app.use('/api/v1/admin/disputes', protect, adminDisputeRouter);
-app.use('/api/v1/tracking', protect, trackingRouter);
 app.use('/api/v1/tracking', publicTrackingRouter); // public endpoint, no auth
+app.use('/api/v1/tracking', protect, trackingRouter);
 app.use('/api/v1/admin/reconciliation', protect, reconciliationRouter);
+
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    message: `API route not found: ${req.method} ${req.originalUrl}`,
+  });
+});
 
 app.use(errorHandler);
 

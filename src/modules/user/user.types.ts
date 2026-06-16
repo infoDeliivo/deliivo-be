@@ -20,10 +20,13 @@ export interface ContactInfo {
 // User basic info (core profile data)
 export interface UserBasicInfo {
   id: string;
+  role: string;
   name: string | null;
   nickName: string | null;
   salutation: Salutation | null;
   dob: Date | null;
+  tosAcceptedAt: Date | null;
+  privacyAcceptedAt: Date | null;
   email: ContactInfo;
   phone: ContactInfo;
   avatarUrl: string | null;
@@ -76,6 +79,7 @@ export interface FullProfileResponse {
 // Public user info (for viewing other users' profiles)
 export interface PublicUserInfo {
   id: string;
+  role: string;
   name: string | null;
   nickName: string | null;
   avatarUrl: string | null;

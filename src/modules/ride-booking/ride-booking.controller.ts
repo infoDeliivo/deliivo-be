@@ -6,6 +6,7 @@ import * as BookingService from './ride-booking.service.js';
 
 const cacheKeys = {
     booking: (id: string) => `booking:${id}`,
+    bookingPattern: (id: string) => `booking:${id}:*`,
     userBookings: (userId: string) => `user:${userId}:bookings`,
     ride: (id: string) => `ride:${id}`,
     rideDetailsPattern: (id: string) => `ride:details:${id}:*`,
@@ -56,7 +57,7 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 break;
             case 'TOS_NOT_ACCEPTED':
                 status = HttpStatus.FORBIDDEN;
-                message = 'You must accept the Terms of Service before booking a ride';
+                message = 'You must accept the Terms of Service and Privacy Policy before booking a ride';
                 break;
             case 'USER_BANNED':
                 status = HttpStatus.FORBIDDEN;
@@ -74,10 +75,19 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 status = HttpStatus.BAD_REQUEST;
                 message = 'Selected ride segment is invalid';
                 break;
+            case 'INVALID_RIDE_DEPARTURE_TIME':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Ride departure time is invalid';
+                break;
             case 'PAYMENT_INITIALIZATION_FAILED':
                 status = HttpStatus.INTERNAL_ERROR;
                 message = 'Could not initialize payment intent';
                 break;
+        }
+
+        if (status === HttpStatus.INTERNAL_ERROR && process.env.NODE_ENV !== 'production') {
+            const detail = error?.message ? ` (${error.message})` : '';
+            message = `Failed to create booking${detail}`;
         }
 
         return sendError(res, { status, message });
@@ -118,6 +128,7 @@ export const extendWaitForDriver = async (req: AuthRequest, res: Response) => {
         const result = await BookingService.extendWaitForDriver(req.user.id, bookingId);
 
         await deleteCache(cacheKeys.booking(bookingId));
+        await deleteCachePattern(cacheKeys.bookingPattern(bookingId));
 
         return sendSuccess(res, {
             message: 'Waiting period extended successfully',
@@ -154,9 +165,10 @@ export const extendWaitForDriver = async (req: AuthRequest, res: Response) => {
 export const cancelBooking = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        const result = await BookingService.cancelBooking(req.user.id, bookingId);
+        const result = await BookingService.cancelBooking(req.user.id, bookingId, req.body?.reason);
 
         await deleteCache(cacheKeys.booking(bookingId));
+        await deleteCachePattern(cacheKeys.bookingPattern(bookingId));
         await deleteCache(cacheKeys.userBookings(req.user.id));
         await deleteCache(cacheKeys.ride(result.rideId));
         await deleteCachePattern(cacheKeys.rideDetailsPattern(result.rideId));
@@ -195,16 +207,6 @@ export const cancelBooking = async (req: AuthRequest, res: Response) => {
 export const getBookingById = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        const cacheKey = `${cacheKeys.booking(bookingId)}:user:${req.user.id}`;
-
-        const cachedBooking = await getCache(cacheKey);
-        if (cachedBooking) {
-            return sendSuccess(res, {
-                message: 'Booking fetched successfully',
-                data: cachedBooking,
-            });
-        }
-
         const booking = await BookingService.getBookingById(req.user.id, bookingId);
 
         if (!booking) {
@@ -213,8 +215,6 @@ export const getBookingById = async (req: AuthRequest, res: Response) => {
                 message: 'Booking not found',
             });
         }
-
-        await setCache(cacheKey, booking);
 
         return sendSuccess(res, {
             message: 'Booking fetched successfully',
@@ -237,10 +237,17 @@ export const listUserBookings = async (req: AuthRequest, res: Response) => {
             message: 'Bookings fetched successfully',
             data: result,
         });
-    } catch {
+    } catch (error: any) {
+        console.error('Failed to fetch bookings:', error);
+
+        let message = 'Failed to fetch bookings';
+        if (process.env.NODE_ENV !== 'production' && error?.message) {
+            message = `Failed to fetch bookings (${error.message})`;
+        }
+
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
-            message: 'Failed to fetch bookings',
+            message,
         });
     }
 };
@@ -252,6 +259,7 @@ export const withdrawBooking = async (req: AuthRequest, res: Response) => {
         const result = await BookingService.withdrawBooking(req.user.id, bookingId, req.body?.reason);
 
         await deleteCache(cacheKeys.booking(bookingId));
+        await deleteCachePattern(cacheKeys.bookingPattern(bookingId));
         await deleteCache(cacheKeys.userBookings(req.user.id));
 
         return sendSuccess(res, {

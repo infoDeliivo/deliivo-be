@@ -44,8 +44,21 @@ const activeBookingStatuses = [
   'PAYMENT_PENDING',
   'DRIVER_PENDING',
   'CONFIRMED',
+  'WAITING_FOR_PICKUP',
+  'DRIVER_ARRIVED',
+  'OTP_PENDING',
   'IN_PROGRESS',
+  'ONBOARD',
+  'DROP_PENDING',
+  'DRIVER_DROPPED',
   'COMPLETED',
+] as unknown as BookingStatus[];
+const rideDetailViewerBookingStatuses = [
+  ...activeBookingStatuses,
+  'CANCELLED',
+  'NO_SHOW',
+  'DRIVER_MISSED_PICKUP',
+  'DISPUTED',
 ] as unknown as BookingStatus[];
 
 interface AdvancedMatchResult extends MatchResult {
@@ -179,6 +192,26 @@ const buildFullRideSnapshot = (ride: RideCoreLike, waypoints?: WaypointInfo[]): 
   currency: ride.currency,
   status: ride.status,
   waypoints,
+});
+
+const rideDetailsVisibilityWhere = (rideId: string, viewerId?: string): Prisma.RideWhereInput => ({
+  id: rideId,
+  OR: [
+    { status: RideStatus.PUBLISHED },
+    ...(viewerId
+      ? [
+          { driverId: viewerId },
+          {
+            bookings: {
+              some: {
+                passengerId: viewerId,
+                status: { in: rideDetailViewerBookingStatuses },
+              },
+            },
+          },
+        ]
+      : []),
+  ],
 });
 
 /* ================= BASIC SEARCH RIDES ================= */
@@ -430,12 +463,9 @@ const getOrderBy = (sortBy: string, sortOrder: string): Prisma.RideOrderByWithRe
 };
 
 /* ================= GET RIDE DETAILS ================= */
-export const getRideDetails = async (rideId: string): Promise<RideDetailsResponse | null> => {
+export const getRideDetails = async (rideId: string, viewerId?: string): Promise<RideDetailsResponse | null> => {
   const ride = await prisma.ride.findFirst({
-    where: {
-      id: rideId,
-      status: RideStatus.PUBLISHED,
-    },
+    where: rideDetailsVisibilityWhere(rideId, viewerId),
     include: {
       driver: {
         select: {
@@ -537,14 +567,12 @@ export const getRideDetails = async (rideId: string): Promise<RideDetailsRespons
 /* ================= GET RIDE VIEW DETAILS BY TOKEN ================= */
 export const getRideViewByToken = async (
   viewToken: string,
+  viewerId?: string,
 ): Promise<RideDetailsResponse | null> => {
   const payload = decodeViewToken(viewToken);
 
   const ride = await prisma.ride.findFirst({
-    where: {
-      id: payload.rideId,
-      status: RideStatus.PUBLISHED,
-    },
+    where: rideDetailsVisibilityWhere(payload.rideId, viewerId),
     include: {
       driver: {
         select: {
@@ -666,9 +694,10 @@ export const getRideViewByToken = async (
 
 export const getRideSegmentById = async (
   segmentId: string,
+  viewerId?: string,
 ): Promise<RideDetailsResponse | null> => {
   try {
-    return await getRideViewByToken(segmentId);
+    return await getRideViewByToken(segmentId, viewerId);
   } catch (error: any) {
     if (error?.message === 'INVALID_VIEW_TOKEN') {
       throw new Error('INVALID_SEGMENT_ID');

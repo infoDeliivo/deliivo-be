@@ -15,10 +15,17 @@ docker compose --profile seed up -d
 ```
 
 The `seed` service:
-- Uses a dedicated `seed` target in the Dockerfile (includes ts-node + source)
+- Uses the backend Dockerfile `base` target (includes ts-node + source)
 - Runs `prisma migrate deploy` then the seed script
-- Has `restart: "no"` — exits after completion
-- Only runs when you include the `seed` profile (won't run on normal `docker compose up`)
+- Has `restart: "no"` so it exits after completion
+- Only runs when you include the `seed` profile
+- Is defined in `docker-compose.yml` as a one-off service
+
+If you are not using the compose seed profile, run:
+
+```bash
+npm run db:seed
+```
 
 ### Local (without Docker)
 
@@ -34,18 +41,19 @@ npx prisma db seed
 
 All users are pre-verified. With `EXPOSE_OTP_IN_RESPONSE=true` (default in dev), the OTP is returned directly in the API response.
 
-```
+```text
 POST /api/v1/auth/login
 { "identifier": "andres@test.dev", "method": "email" }
-→ response includes { data: { code: "123456" } }
+-> response includes { data: { code: "123456" } }
 
 POST /api/v1/auth/otp/verify
 { "identifier": "andres@test.dev", "code": "123456", "purpose": "login", "method": "email" }
-→ returns access + refresh tokens
+-> returns access + refresh tokens
 ```
 
 You can also login by phone:
-```
+
+```text
 POST /api/v1/auth/login
 { "identifier": "+37251001001", "method": "phone" }
 ```
@@ -161,9 +169,9 @@ Access admin panel at `/admin` after logging in with this account.
 
 | Scenario | Use personas |
 |----------|-------------|
-| Driver publishes ride Tallinn → Riga | Andres (driver) |
+| Driver publishes ride Tallinn -> Riga | Andres (driver) |
 | Rider books a seat | Ieva (rider) |
-| Cross-border trip Vilnius → Riga | Mantas (driver), Janis (rider) |
+| Cross-border trip Vilnius -> Riga | Mantas (driver), Janis (rider) |
 | Female-only ride | Liina (driver), Gabija or Ieva (riders) |
 | Admin moderation | Admin Baltic |
 | Driver with no vehicle tries to publish | Ieva (should fail) |

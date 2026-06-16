@@ -14,6 +14,8 @@ async function proxyRequest(req: NextRequest) {
   if (auth) headers.set('authorization', auth);
   const contentType = req.headers.get('content-type');
   if (contentType) headers.set('content-type', contentType);
+  const accept = req.headers.get('accept');
+  headers.set('accept', accept || 'application/json');
 
   const init: RequestInit = {
     method: req.method,
@@ -26,12 +28,25 @@ async function proxyRequest(req: NextRequest) {
 
   try {
     const res = await fetch(target, init);
-    const body = await res.arrayBuffer();
+    const contentType = res.headers.get('content-type') || '';
 
-    return new NextResponse(body, {
+    if (!contentType.includes('application/json') && !contentType.includes('+json')) {
+      const body = await res.text();
+      return NextResponse.json(
+        {
+          message: `Backend returned ${contentType || 'non-JSON'} for ${req.method} ${backendPath}`,
+          status: res.status,
+          target,
+          body: body.slice(0, 500),
+        },
+        { status: res.status }
+      );
+    }
+
+    return new NextResponse(await res.arrayBuffer(), {
       status: res.status,
       headers: {
-        'content-type': res.headers.get('content-type') || 'application/json',
+        'content-type': contentType,
       },
     });
   } catch (error: unknown) {

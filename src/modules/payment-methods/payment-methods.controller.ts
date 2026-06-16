@@ -45,7 +45,7 @@ export const setDefaultHandler = async (req: Request, res: Response) => {
         const pm = await setDefaultPaymentMethod(userId, id as string);
         res.json({ success: true, data: pm });
     } catch (err: any) {
-        if (err.code === 'P2025') {
+        if (err.code === 'P2025' || err.message === 'PAYMENT_METHOD_NOT_FOUND') {
             return res.status(404).json({ success: false, error: 'Payment method not found' });
         }
         res.status(500).json({ success: false, error: err.message });

@@ -48,8 +48,18 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                                 'PAYMENT_PENDING',
                                 'DRIVER_PENDING',
                                 'CONFIRMED',
+                                'WAITING_FOR_PICKUP',
+                                'DRIVER_ARRIVED',
+                                'OTP_PENDING',
                                 'IN_PROGRESS',
+                                'ONBOARD',
+                                'DROP_PENDING',
+                                'DRIVER_DROPPED',
+                                'NO_SHOW',
+                                'DRIVER_MISSED_PICKUP',
                                 'COMPLETED',
+                                'CANCELLED',
+                                'DISPUTED',
                             ],
                         },
                     },
@@ -102,31 +112,43 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                 enhanced.pickupLocation = pickupWaypoint ? {
                     address: pickupWaypoint.address,
                     placeId: pickupWaypoint.placeId,
+                    lat: pickupWaypoint.lat,
+                    lng: pickupWaypoint.lng,
                     estimatedArrivalTime: (pickupWaypoint as any).estimatedArrivalTime,
                 } : {
                     address: ride.originAddress,
                     placeId: ride.originPlaceId,
+                    lat: ride.originLat,
+                    lng: ride.originLng,
                     estimatedArrivalTime: ride.departureTime,
                 };
 
                 enhanced.dropoffLocation = dropoffWaypoint ? {
                     address: dropoffWaypoint.address,
                     placeId: dropoffWaypoint.placeId,
+                    lat: dropoffWaypoint.lat,
+                    lng: dropoffWaypoint.lng,
                     estimatedArrivalTime: (dropoffWaypoint as any).estimatedArrivalTime,
                 } : {
                     address: ride.destinationAddress,
                     placeId: ride.destinationPlaceId,
+                    lat: ride.destinationLat,
+                    lng: ride.destinationLng,
                     estimatedArrivalTime: ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF')?.estimatedArrivalTime || null,
                 };
             } else {
                 enhanced.pickupLocation = {
                     address: ride.originAddress,
                     placeId: ride.originPlaceId,
+                    lat: ride.originLat,
+                    lng: ride.originLng,
                     estimatedArrivalTime: ride.departureTime,
                 };
                 enhanced.dropoffLocation = {
                     address: ride.destinationAddress,
                     placeId: ride.destinationPlaceId,
+                    lat: ride.destinationLat,
+                    lng: ride.destinationLng,
                     estimatedArrivalTime: ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF')?.estimatedArrivalTime || null,
                 };
             }
@@ -172,15 +194,25 @@ export const getRideById = async (driverId: string, rideId: string) => {
             },
             bookings: {
                 where: {
-                    status: {
-                        in: [
-                            'PAYMENT_PENDING',
-                            'DRIVER_PENDING',
-                            'CONFIRMED',
-                            'IN_PROGRESS',
-                            'COMPLETED',
-                        ],
-                    },
+                status: {
+                    in: [
+                        'PAYMENT_PENDING',
+                        'DRIVER_PENDING',
+                        'CONFIRMED',
+                        'WAITING_FOR_PICKUP',
+                        'DRIVER_ARRIVED',
+                        'OTP_PENDING',
+                        'IN_PROGRESS',
+                        'ONBOARD',
+                        'DROP_PENDING',
+                        'DRIVER_DROPPED',
+                        'NO_SHOW',
+                        'DRIVER_MISSED_PICKUP',
+                        'COMPLETED',
+                        'CANCELLED',
+                        'DISPUTED',
+                    ],
+                },
                 },
                 orderBy: { createdAt: 'desc' },
                 include: {
@@ -229,31 +261,43 @@ export const getRideById = async (driverId: string, rideId: string) => {
             enhanced.pickupLocation = pickupWaypoint ? {
                 address: pickupWaypoint.address,
                 placeId: pickupWaypoint.placeId,
+                lat: pickupWaypoint.lat,
+                lng: pickupWaypoint.lng,
                 estimatedArrivalTime: (pickupWaypoint as any).estimatedArrivalTime,
             } : {
                 address: ride.originAddress,
                 placeId: ride.originPlaceId,
+                lat: ride.originLat,
+                lng: ride.originLng,
                 estimatedArrivalTime: ride.departureTime,
             };
 
             enhanced.dropoffLocation = dropoffWaypoint ? {
                 address: dropoffWaypoint.address,
                 placeId: dropoffWaypoint.placeId,
+                lat: dropoffWaypoint.lat,
+                lng: dropoffWaypoint.lng,
                 estimatedArrivalTime: (dropoffWaypoint as any).estimatedArrivalTime,
             } : {
                 address: ride.destinationAddress,
                 placeId: ride.destinationPlaceId,
+                lat: ride.destinationLat,
+                lng: ride.destinationLng,
                 estimatedArrivalTime: (ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF') as any)?.estimatedArrivalTime || null,
             };
         } else {
             enhanced.pickupLocation = {
                 address: ride.originAddress,
                 placeId: ride.originPlaceId,
+                lat: ride.originLat,
+                lng: ride.originLng,
                 estimatedArrivalTime: ride.departureTime,
             };
             enhanced.dropoffLocation = {
                 address: ride.destinationAddress,
                 placeId: ride.destinationPlaceId,
+                lat: ride.destinationLat,
+                lng: ride.destinationLng,
                 estimatedArrivalTime: (ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF') as any)?.estimatedArrivalTime || null,
             };
         }
@@ -353,10 +397,14 @@ export const cancelRide = async (driverId: string, rideId: string) => {
                 userId: booking.passengerId,
                 type: 'booking.cancelled.driver_cancelled_ride',
                 title: 'Ride cancelled by driver',
-                body: 'Your driver cancelled the ride. A full refund has been initiated.',
+                body: `Your driver cancelled the ride from ${ride.originAddress} to ${ride.destinationAddress}. A full refund has been initiated.`,
                 data: {
                     bookingId: booking.id,
                     rideId,
+                    originAddress: ride.originAddress,
+                    destinationAddress: ride.destinationAddress,
+                    departureDate: ride.departureDate.toISOString(),
+                    departureTime: ride.departureTime,
                     refundPercent: '100',
                     deepLink: `app://booking/${booking.id}`,
                 },

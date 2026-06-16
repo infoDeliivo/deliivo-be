@@ -18,22 +18,32 @@ import {
   UserCheck,
   Navigation,
   Radio,
+  Trash2,
+  TestTube2,
+  Sparkles,
 } from 'lucide-react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import GoogleMap from '@/components/GoogleMap';
-import { searchRidesApi, bookingsApi, driverBookingApi, rideOpsApi, RideDetails, Booking } from '@/lib/api';
-import { getSocket, onSocketEvent, LocationUpdate } from '@/lib/socket';
+import { driverBookingApi, rideOpsApi, publishRideApi, disputesApi, DriverPublishedRide, DriverRideBooking } from '@/lib/api';
+import { getSocket, emitSocketEvent, onSocketEvent, LocationUpdate, NotificationPayload, BookingUpdatedPayload, RideUpdatedPayload } from '@/lib/socket';
+import { useAuth } from '@/lib/auth-context';
 
-type RidePhase = 'loading' | 'published' | 'in_progress' | 'completed' | 'error';
+type RidePhase = 'loading' | 'published' | 'in_progress' | 'completed' | 'cancelled' | 'error';
 
 function ManageRideContent() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
 
-  const [ride, setRide] = useState<RideDetails | null>(null);
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [ride, setRide] = useState<DriverPublishedRide | null>(null);
+  const [bookings, setBookings] = useState<DriverRideBooking[]>([]);
   const [phase, setPhase] = useState<RidePhase>('loading');
-  const [error, setError] = useState('');
+const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState('');
+  const [rejectTarget, setRejectTarget] = useState<DriverRideBooking | null>(null);
+  const [rejectReasonPreset, setRejectReasonPreset] = useState('NO_SEATS');
+  const [rejectCustomReason, setRejectCustomReason] = useState('');
+  const allowRideSimulation = process.env.NEXT_PUBLIC_ALLOW_RIDE_SIMULATION === 'true';
+  const [devBusy, setDevBusy] = useState<string | null>(null);
 
   // Live location tracking
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -89,29 +99,81 @@ function ManageRideContent() {
     return unsub;
   }, [id]);
 
+  useEffect(() => {
+    if (!id || !user) return;
+
+    const unsub = onSocketEvent<NotificationPayload>('notification:new', (payload) => {
+      const rideId = payload.data.data?.rideId;
+      if (rideId === id) {
+        loadData();
+      }
+    });
+
+    return unsub;
+  }, [id, user?.id]);
+
+  useEffect(() => {
+    if (!id || !user) return;
+    getSocket();
+
+    const unsubBooking = onSocketEvent<BookingUpdatedPayload>('booking:updated', (payload) => {
+      if (payload.rideId !== id) return;
+      setBookings((prev) =>
+        prev.map((booking) =>
+          booking.id === payload.bookingId
+            ? {
+                ...booking,
+                status: payload.status,
+                displayStatus: payload.status,
+              }
+            : booking
+        )
+      );
+    });
+
+    const unsubRide = onSocketEvent<RideUpdatedPayload>('ride:updated', (payload) => {
+      if (payload.rideId !== id) return;
+
+      setRide((prev) => (prev ? { ...prev, status: payload.status } : prev));
+      if (payload.status === 'IN_PROGRESS') setPhase('in_progress');
+      else if (payload.status === 'COMPLETED') setPhase('completed');
+      else if (payload.status === 'CANCELLED') setPhase('cancelled');
+      else setPhase('published');
+    });
+
+    return () => {
+      unsubBooking();
+      unsubRide();
+    };
+  }, [id, user?.id]);
+
   useEffect(() => { if (id) loadData(); }, [id]);
+
+  useEffect(() => {
+    if (!id || !user) return;
+    const joinRideRoom = () => getSocket()?.emit('ride:join', { rideId: id });
+    joinRideRoom();
+    const socket = getSocket();
+    socket?.on('connect', joinRideRoom);
+    return () => {
+      socket?.off('connect', joinRideRoom);
+      emitSocketEvent('ride:leave', { rideId: id });
+    };
+  }, [id, user?.id]);
 
   async function loadData() {
     setPhase('loading');
     try {
-      const rideRes = await searchRidesApi.getDetails(id);
+      const rideRes = await publishRideApi.getRideById(id);
       setRide(rideRes.data);
+      setBookings(rideRes.data.bookings || []);
 
       // Determine phase from status
       const status = rideRes.data.status;
       if (status === 'COMPLETED') setPhase('completed');
+      else if (status === 'CANCELLED') setPhase('cancelled');
       else if (status === 'IN_PROGRESS') setPhase('in_progress');
       else setPhase('published');
-
-      // Load bookings for this ride
-      try {
-        const bookRes = await bookingsApi.list(undefined, 1, 50);
-        // Filter to this ride's bookings (the API might not filter by rideId)
-        const rideBookings = (bookRes.data.bookings || []).filter(b => b.rideId === id);
-        setBookings(rideBookings);
-      } catch {
-        // Bookings load is best-effort
-      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load ride');
       setPhase('error');
@@ -124,6 +186,7 @@ function ManageRideContent() {
       await rideOpsApi.startRide(id);
       setPhase('in_progress');
       if (ride) setRide({ ...ride, status: 'IN_PROGRESS' });
+      await loadData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to start ride');
     } finally {
@@ -137,8 +200,25 @@ function ManageRideContent() {
       await rideOpsApi.finishRide(id);
       setPhase('completed');
       if (ride) setRide({ ...ride, status: 'COMPLETED' });
+      await loadData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to finish ride');
+    } finally {
+      setActionLoading('');
+    }
+  }
+
+  async function handleCancelRide() {
+    const ok = window.confirm('Cancel this ride and refund any active bookings?');
+    if (!ok) return;
+    setActionLoading('cancel-ride');
+    try {
+      await publishRideApi.cancelRide(id);
+      setPhase('cancelled');
+      setRide((prev) => (prev ? { ...prev, status: 'CANCELLED' } : prev));
+      setBookings((prev) => prev.map((b) => ({ ...b, status: 'CANCELLED' })));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to cancel ride');
     } finally {
       setActionLoading('');
     }
@@ -149,6 +229,7 @@ function ManageRideContent() {
     try {
       await driverBookingApi.accept(bookingId);
       setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'CONFIRMED' } : b));
+      await loadData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to accept');
     } finally {
@@ -156,16 +237,144 @@ function ManageRideContent() {
     }
   }
 
-  async function handleRejectBooking(bookingId: string) {
+  async function handleRejectBooking(bookingId: string, reason: string) {
     setActionLoading(`reject-${bookingId}`);
     try {
-      await driverBookingApi.reject(bookingId);
+      await driverBookingApi.reject(bookingId, reason);
       setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'REJECTED' } : b));
+      setRejectTarget(null);
+      setRejectCustomReason('');
+      await loadData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to reject');
     } finally {
       setActionLoading('');
     }
+  }
+
+  async function handleDriverArrived(booking: DriverRideBooking) {
+    const bookingId = booking.id;
+    setActionLoading(`arrived-${bookingId}`);
+    try {
+      const location = driverLocation || getBookingPoint(booking, 'pickup');
+      await rideOpsApi.driverArrived(bookingId, location?.lat, location?.lng);
+      if (location?.lat != null && location?.lng != null) {
+        setDriverLocation({ lat: location.lat, lng: location.lng });
+      }
+      setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'DRIVER_ARRIVED' } : b));
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to mark arrival');
+    } finally {
+      setActionLoading('');
+    }
+  }
+
+  async function handleMarkNoShow(bookingId: string) {
+    setActionLoading(`noshow-${bookingId}`);
+    try {
+      await rideOpsApi.markNoShow(bookingId, driverLocation?.lat, driverLocation?.lng);
+      setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'NO_SHOW' } : b));
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to mark no-show');
+    } finally {
+      setActionLoading('');
+    }
+  }
+
+  async function handleReportPassengerIssue(booking: DriverRideBooking) {
+    const reason = window.prompt('Reason for report', booking.status === 'NO_SHOW' ? 'NO_SHOW' : 'OTHER');
+    if (!reason) return;
+    const description = window.prompt('Add details for support', '') || undefined;
+    setActionLoading(`report-${booking.id}`);
+    setError('');
+    try {
+      await disputesApi.create({
+        rideId: id,
+        bookingId: booking.id,
+        reason,
+        description,
+      });
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to report issue');
+    } finally {
+      setActionLoading('');
+    }
+  }
+
+  async function submitSimulatedLocation(point?: { lat?: number; lng?: number } | null) {
+    if (point?.lat == null || point?.lng == null) return;
+    setDriverLocation({ lat: point.lat, lng: point.lng });
+    await rideOpsApi.submitLocation(id, point.lat, point.lng);
+  }
+
+  function getBookingPoint(booking: DriverRideBooking, type: 'pickup' | 'dropoff') {
+    return type === 'pickup' ? booking.pickupLocation : booking.dropoffLocation;
+  }
+
+  async function handleDevDriverArrived(booking: DriverRideBooking) {
+    setDevBusy(`arrived-${booking.id}`);
+    try {
+      const point = getBookingPoint(booking, 'pickup');
+      await submitSimulatedLocation(point);
+      await rideOpsApi.driverArrived(booking.id, point?.lat, point?.lng);
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to simulate driver arrival');
+    } finally {
+      setDevBusy(null);
+    }
+  }
+
+  async function handleDevPickup(booking: DriverRideBooking) {
+    setDevBusy(`pickup-${booking.id}`);
+    try {
+      const point = getBookingPoint(booking, 'pickup');
+      await submitSimulatedLocation(point);
+      await rideOpsApi.devSimulatePickup(booking.id, point?.lat, point?.lng);
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to simulate pickup');
+    } finally {
+      setDevBusy(null);
+    }
+  }
+
+  async function handleDevDropoff(booking: DriverRideBooking) {
+    setDevBusy(`dropoff-${booking.id}`);
+    try {
+      const point = getBookingPoint(booking, 'dropoff');
+      await submitSimulatedLocation(point);
+      await rideOpsApi.devSimulateDropoff(booking.id, point?.lat, point?.lng);
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to simulate drop-off');
+    } finally {
+      setDevBusy(null);
+    }
+  }
+
+  async function handleConfirmDropoff(booking: DriverRideBooking) {
+    const bookingId = booking.id;
+    setActionLoading(`dropoff-${bookingId}`);
+    try {
+      const point = getBookingPoint(booking, 'dropoff');
+      await rideOpsApi.confirmDropoff(bookingId, point?.lat, point?.lng);
+      setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'DROP_PENDING' } : b));
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to confirm drop-off');
+    } finally {
+      setActionLoading('');
+    }
+  }
+
+  function openRejectDialog(booking: DriverRideBooking) {
+    setRejectTarget(booking);
+    setRejectReasonPreset('NO_SEATS');
+    setRejectCustomReason('');
   }
 
   if (phase === 'loading') {
@@ -188,7 +397,20 @@ function ManageRideContent() {
 
   const dateLabel = new Date(ride.departureDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   const pendingBookings = bookings.filter(b => b.status === 'PENDING' || b.status === 'DRIVER_PENDING');
-  const confirmedBookings = bookings.filter(b => ['CONFIRMED', 'ACCEPTED', 'ONBOARD', 'DRIVER_ARRIVED'].includes(b.status));
+  const confirmedBookings = bookings.filter(b => [
+    'CONFIRMED',
+    'ACCEPTED',
+    'WAITING_FOR_PICKUP',
+    'DRIVER_ARRIVED',
+    'ONBOARD',
+    'DROP_PENDING',
+    'NO_SHOW',
+    'DRIVER_MISSED_PICKUP',
+    'COMPLETED',
+  ].includes(b.status));
+  const pickupOtpBookings = confirmedBookings.filter(b => ['WAITING_FOR_PICKUP', 'DRIVER_ARRIVED'].includes(b.status));
+  const requestCount = pendingBookings.length;
+  const passengerCount = confirmedBookings.length;
 
   return (
     <div className="min-h-screen bg-deliivo-cream">
@@ -205,7 +427,7 @@ function ManageRideContent() {
       <div className="mx-auto max-w-3xl px-4 py-6 space-y-6">
         {/* Ride status card */}
         <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
-          <div className={`px-5 py-4 ${phase === 'in_progress' ? 'bg-gradient-to-r from-green-500 to-green-600' : phase === 'completed' ? 'bg-gradient-to-r from-gray-500 to-gray-600' : 'bg-gradient-to-r from-deliivo-orange to-primary-600'}`}>
+          <div className={`px-5 py-4 ${phase === 'in_progress' ? 'bg-gradient-to-r from-green-500 to-green-600' : phase === 'completed' ? 'bg-gradient-to-r from-gray-500 to-gray-600' : phase === 'cancelled' ? 'bg-gradient-to-r from-red-500 to-red-600' : 'bg-gradient-to-r from-deliivo-orange to-primary-600'}`}>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-white/80">{dateLabel} at {ride.departureTime}</p>
@@ -213,21 +435,49 @@ function ManageRideContent() {
                   {ride.originAddress.split(',')[0]} → {ride.destinationAddress.split(',')[0]}
                 </p>
               </div>
-              <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${phase === 'in_progress' ? 'bg-white/20 text-white' : phase === 'completed' ? 'bg-white/20 text-white' : 'bg-white/20 text-white'}`}>
-                {phase === 'in_progress' ? 'IN PROGRESS' : phase === 'completed' ? 'COMPLETED' : 'PUBLISHED'}
+              <span className={`text-xs font-bold px-3 py-1.5 rounded-full bg-white/20 text-white`}>
+                {phase === 'in_progress' ? 'IN PROGRESS' : phase === 'completed' ? 'COMPLETED' : phase === 'cancelled' ? 'CANCELLED' : 'PUBLISHED'}
               </span>
             </div>
           </div>
 
           <div className="p-5">
-            <div className="flex flex-wrap gap-4 text-xs text-deliivo-gray">
+            <div className="grid grid-cols-2 gap-3 text-xs text-deliivo-gray sm:grid-cols-4">
               <span className="flex items-center gap-1"><Calendar size={13} /> {dateLabel}</span>
               <span className="flex items-center gap-1"><Clock size={13} /> {ride.departureTime}</span>
               <span className="flex items-center gap-1"><Users size={13} /> {ride.availableSeats}/{ride.totalSeats} available</span>
               <span className="flex items-center gap-1"><MapPin size={13} /> {ride.currency} {ride.basePricePerSeat.toFixed(2)}/seat</span>
             </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-xl bg-gray-50 px-3 py-2">
+                <p className="text-[11px] text-deliivo-gray">Requests</p>
+                <p className="text-sm font-semibold text-deliivo-dark">{requestCount}</p>
+              </div>
+              <div className="rounded-xl bg-gray-50 px-3 py-2">
+                <p className="text-[11px] text-deliivo-gray">Passengers</p>
+                <p className="text-sm font-semibold text-deliivo-dark">{passengerCount}</p>
+              </div>
+              <div className="rounded-xl bg-gray-50 px-3 py-2">
+                <p className="text-[11px] text-deliivo-gray">Status</p>
+                <p className="text-sm font-semibold text-deliivo-dark">{phase.toUpperCase().replace('_', ' ')}</p>
+              </div>
+              <div className="rounded-xl bg-gray-50 px-3 py-2">
+                <p className="text-[11px] text-deliivo-gray">Ride ID</p>
+                <p className="text-sm font-semibold text-deliivo-dark truncate">{ride.id.slice(0, 8)}</p>
+              </div>
+            </div>
           </div>
         </div>
+
+        {requestCount > 0 && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm font-semibold text-amber-900">New booking requests waiting</p>
+            <p className="text-xs text-amber-800 mt-1">
+              {requestCount} rider request{requestCount > 1 ? 's' : ''} need review before the ride moves forward.
+            </p>
+          </div>
+        )}
 
         {/* Error banner */}
         {error && (
@@ -268,24 +518,6 @@ function ManageRideContent() {
         )}
 
         {/* Ride actions */}
-        {phase === 'published' && (
-          <div className="rounded-2xl bg-white shadow-sm p-5 space-y-4">
-            <h3 className="text-sm font-semibold text-deliivo-dark flex items-center gap-2">
-              <Play size={16} className="text-green-500" /> Ready to start?
-            </h3>
-            <p className="text-xs text-deliivo-gray">When you&apos;re ready to begin the trip, start the ride. Passengers will be notified.</p>
-            <button
-              type="button"
-              onClick={handleStartRide}
-              disabled={actionLoading === 'start'}
-              className="btn-primary w-full py-3 text-base gap-2 bg-green-500 hover:bg-green-600 disabled:opacity-60"
-            >
-              {actionLoading === 'start' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-5 w-5" />}
-              Start Ride
-            </button>
-          </div>
-        )}
-
         {phase === 'in_progress' && (
           <div className="rounded-2xl bg-white shadow-sm p-5 space-y-4">
             <h3 className="text-sm font-semibold text-deliivo-dark flex items-center gap-2">
@@ -312,6 +544,14 @@ function ManageRideContent() {
           </div>
         )}
 
+        {phase === 'cancelled' && (
+          <div className="rounded-2xl bg-red-50 border border-red-200 p-5 text-center">
+            <XCircle className="h-10 w-10 text-red-500 mx-auto mb-2" />
+            <p className="text-base font-semibold text-red-800">Ride cancelled</p>
+            <p className="text-sm text-red-600 mt-1">The ride and any active requests were cancelled.</p>
+          </div>
+        )}
+
         {/* Pending booking requests */}
         {pendingBookings.length > 0 && (
           <div className="rounded-2xl bg-white shadow-sm p-5 space-y-4">
@@ -324,11 +564,19 @@ function ManageRideContent() {
                   key={booking.id}
                   booking={booking}
                   onAccept={() => handleAcceptBooking(booking.id)}
-                  onReject={() => handleRejectBooking(booking.id)}
+                  onReject={() => openRejectDialog(booking)}
                   loading={actionLoading === `accept-${booking.id}` || actionLoading === `reject-${booking.id}`}
                 />
               ))}
             </div>
+          </div>
+        )}
+        {pendingBookings.length === 0 && phase === 'published' && (
+          <div className="rounded-2xl bg-white shadow-sm p-5">
+            <p className="text-sm font-semibold text-deliivo-dark">No pending requests yet</p>
+            <p className="mt-1 text-xs text-deliivo-gray">
+              Once riders book, accept or reject them from this screen.
+            </p>
           </div>
         )}
 
@@ -344,24 +592,230 @@ function ManageRideContent() {
                   key={booking.id}
                   booking={booking}
                   ridePhase={phase}
+                  onDriverArrived={() => handleDriverArrived(booking)}
+                  onMarkNoShow={() => handleMarkNoShow(booking.id)}
+                  onReportIssue={() => handleReportPassengerIssue(booking)}
+                  onConfirmDropoff={() => handleConfirmDropoff(booking)}
+                  arrivedLoading={actionLoading === `arrived-${booking.id}`}
+                  noShowLoading={actionLoading === `noshow-${booking.id}`}
+                  reportLoading={actionLoading === `report-${booking.id}`}
+                  dropoffLoading={actionLoading === `dropoff-${booking.id}`}
                 />
               ))}
             </div>
           </div>
         )}
+        {confirmedBookings.length === 0 && phase !== 'completed' && (
+          <div className="rounded-2xl bg-white shadow-sm p-5">
+            <p className="text-sm font-semibold text-deliivo-dark">No confirmed passengers yet</p>
+            <p className="mt-1 text-xs text-deliivo-gray">
+              Accepted bookings will appear here once the request is approved.
+            </p>
+          </div>
+        )}
+
+        {phase === 'published' && (
+          <div className="rounded-2xl bg-white shadow-sm p-5 space-y-4">
+            <h3 className="text-sm font-semibold text-deliivo-dark flex items-center gap-2">
+              <Navigation size={16} className="text-deliivo-orange" /> Driver actions
+            </h3>
+            <p className="text-xs text-deliivo-gray">
+              Start the ride when boarding begins, or cancel it before departure if plans change.
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={handleStartRide}
+                disabled={actionLoading === 'start'}
+                className="btn-primary w-full py-3 text-base gap-2 disabled:opacity-60"
+              >
+                {actionLoading === 'start' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-5 w-5" />}
+                Start Ride
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelRide}
+                disabled={actionLoading === 'cancel-ride'}
+                className="w-full rounded-xl border border-red-200 px-4 py-3 text-base font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {actionLoading === 'cancel-ride' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-5 w-5" />}
+                Cancel Ride
+              </button>
+            </div>
+          </div>
+        )}
+
+        {allowRideSimulation && confirmedBookings.length > 0 && (
+          <div className="rounded-2xl border border-dashed border-deliivo-orange/30 bg-orange-50/40 p-5 space-y-4">
+            <h3 className="text-sm font-semibold text-deliivo-dark flex items-center gap-2">
+              <TestTube2 size={16} className="text-deliivo-orange" /> Dev ride simulator
+            </h3>
+            <p className="text-xs text-deliivo-gray">
+              Use this panel to move bookings through the ride lifecycle from a single browser session.
+            </p>
+            <div className="space-y-3">
+              {confirmedBookings.map((booking) => {
+                const pickupOtp = (booking as unknown as { pickupOtp?: string }).pickupOtp;
+                const isWaiting = booking.status === 'WAITING_FOR_PICKUP';
+                const isArrived = booking.status === 'DRIVER_ARRIVED';
+                const isOnboard = booking.status === 'ONBOARD';
+                const isDropPending = booking.status === 'DROP_PENDING';
+
+                return (
+                  <div key={booking.id} className="rounded-xl bg-white p-4 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-deliivo-dark">
+                          {booking.passenger?.name || 'Passenger'} <span className="text-xs font-normal text-deliivo-gray">#{booking.id.slice(0, 8)}</span>
+                        </p>
+                        <p className="text-xs text-deliivo-gray">
+                          Status: {booking.status}
+                          {pickupOtp ? ` | Pickup OTP: ${pickupOtp}` : ''}
+                        </p>
+                      </div>
+                      <Sparkles className="h-4 w-4 text-deliivo-orange" />
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {isWaiting && (
+                        <button
+                          type="button"
+                          onClick={() => handleDevDriverArrived(booking)}
+                          disabled={devBusy === `arrived-${booking.id}`}
+                          className="rounded-full border border-deliivo-orange px-3 py-1.5 text-xs font-semibold text-deliivo-orange hover:bg-orange-50 disabled:opacity-40"
+                        >
+                          {devBusy === `arrived-${booking.id}` ? 'Working...' : 'Simulate driver arrived'}
+                        </button>
+                      )}
+                      {isArrived && (
+                        <button
+                          type="button"
+                          onClick={() => handleDevPickup(booking)}
+                          disabled={devBusy === `pickup-${booking.id}`}
+                          className="rounded-full bg-deliivo-orange px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600 disabled:opacity-40"
+                        >
+                          {devBusy === `pickup-${booking.id}` ? 'Working...' : 'Simulate pickup'}
+                        </button>
+                      )}
+                      {isOnboard && (
+                        <button
+                          type="button"
+                          onClick={() => handleDevDropoff(booking)}
+                          disabled={devBusy === `dropoff-${booking.id}`}
+                          className="rounded-full border border-green-200 px-3 py-1.5 text-xs font-semibold text-green-700 hover:bg-green-50 disabled:opacity-40"
+                        >
+                          {devBusy === `dropoff-${booking.id}` ? 'Working...' : 'Simulate drop-off'}
+                        </button>
+                      )}
+                      {isDropPending && (
+                        <span className="rounded-full bg-green-50 px-3 py-1.5 text-xs font-semibold text-green-700 border border-green-200">
+                          Drop-off pending rider confirmation
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* OTP section for in_progress */}
-        {phase === 'in_progress' && confirmedBookings.length > 0 && (
+        {phase === 'in_progress' && pickupOtpBookings.length > 0 && (
           <div className="rounded-2xl bg-white shadow-sm p-5 space-y-4">
             <h3 className="text-sm font-semibold text-deliivo-dark flex items-center gap-2">
               <KeyRound size={16} className="text-deliivo-orange" /> OTP Verification
             </h3>
             <p className="text-xs text-deliivo-gray">
-              Enter the OTP shown on your passenger&apos;s app to verify pickup/drop-off.
+              Enter the pickup OTP shown on your passenger&apos;s app after you have reached the pickup point.
             </p>
-            {confirmedBookings.map(booking => (
-              <OtpVerifySection key={booking.id} booking={booking} />
+            {pickupOtpBookings.map(booking => (
+              <OtpVerifySection key={booking.id} booking={booking} onVerified={loadData} />
             ))}
+          </div>
+        )}
+
+        {rejectTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-deliivo-dark">Reject booking request</h3>
+                  <p className="mt-1 text-sm text-deliivo-gray">
+                    Choose a reason before declining this request. The rider will receive the cancellation notice.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRejectTarget(null)}
+                  className="rounded-full p-2 text-deliivo-gray hover:bg-gray-100 hover:text-deliivo-dark"
+                  aria-label="Close reject dialog"
+                >
+                  <XCircle className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {[
+                    ['NO_SEATS', 'No seats left'],
+                    ['ROUTE_CHANGED', 'Route changed'],
+                    ['TRIP_TOO_FULL', 'Trip is full'],
+                    ['NOT_A_GOOD_FIT', 'Not a good fit'],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setRejectReasonPreset(value)}
+                      className={`rounded-xl border px-3 py-2 text-sm font-medium text-left transition-colors ${
+                        rejectReasonPreset === value
+                          ? 'border-deliivo-orange bg-deliivo-orange-light text-deliivo-dark'
+                          : 'border-gray-200 bg-white text-deliivo-dark hover:bg-gray-50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <label className="block">
+                  <span className="text-xs font-medium text-deliivo-gray">Custom reason</span>
+                  <textarea
+                    value={rejectCustomReason}
+                    onChange={(e) => setRejectCustomReason(e.target.value)}
+                    placeholder="Optional custom reason"
+                    rows={3}
+                    className="mt-1 w-full rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm focus:border-deliivo-orange focus:outline-none focus:ring-2 focus:ring-deliivo-orange/20 resize-none"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-5 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRejectTarget(null)}
+                  className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-deliivo-dark hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const selectedReason = rejectCustomReason.trim() || {
+                      NO_SEATS: 'No seats left',
+                      ROUTE_CHANGED: 'Route changed',
+                      TRIP_TOO_FULL: 'Trip is full',
+                      NOT_A_GOOD_FIT: 'Not a good fit',
+                    }[rejectReasonPreset] || 'Driver rejected booking';
+                    handleRejectBooking(rejectTarget.id, selectedReason);
+                  }}
+                  disabled={actionLoading === `reject-${rejectTarget.id}`}
+                  className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {actionLoading === `reject-${rejectTarget.id}` ? 'Rejecting...' : 'Reject booking'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -377,18 +831,36 @@ function BookingRequestCard({
   onReject,
   loading,
 }: {
-  booking: Booking;
+  booking: DriverRideBooking;
   onAccept: () => void;
   onReject: () => void;
   loading: boolean;
 }) {
-  const riderName = booking.ride?.driver?.name || 'Passenger';
-
+  const statusLabel = booking.displayStatus || booking.status;
+  const deadlineLabel = booking.decisionDeadline && !booking.decisionDeadline.isExpired
+    ? formatCountdown(booking.decisionDeadline.timeRemainingSeconds)
+    : null;
   return (
-    <div className="flex items-center justify-between rounded-xl border border-gray-100 p-4">
-      <div>
-        <p className="text-sm font-semibold text-deliivo-dark">{riderName}</p>
-        <p className="text-xs text-deliivo-gray">{booking.seatsBooked} seat{booking.seatsBooked > 1 ? 's' : ''} requested</p>
+    <div className="rounded-xl border border-gray-100 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-deliivo-dark">
+            {booking.passenger?.name || 'Passenger request'}
+          </p>
+          <p className="text-xs text-deliivo-gray">
+            {booking.seatsBooked} seat{booking.seatsBooked > 1 ? 's' : ''} requested
+            {booking.totalPrice ? ` • ${booking.totalPrice.toFixed(2)}` : ''}
+          </p>
+          <p className="text-[11px] text-deliivo-gray">Booking #{booking.id.slice(0, 8)} • {statusLabel}</p>
+        </div>
+        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 border border-amber-200">
+          Pending
+        </span>
+      </div>
+      <div className="grid gap-2 text-xs text-deliivo-gray sm:grid-cols-2">
+        <p><span className="font-medium text-deliivo-dark">Pickup:</span> {booking.pickupLocation?.address || 'Full route pickup'}</p>
+        <p><span className="font-medium text-deliivo-dark">Drop-off:</span> {booking.dropoffLocation?.address || 'Full route drop-off'}</p>
+        {deadlineLabel && <p className="sm:col-span-2"><span className="font-medium text-deliivo-dark">Respond in:</span> {deadlineLabel}</p>}
       </div>
       <div className="flex items-center gap-2">
         <button
@@ -415,40 +887,137 @@ function BookingRequestCard({
 
 // ─── Passenger Card ───────────────────────────────────────────────────────────
 
-function PassengerCard({ booking, ridePhase }: { booking: Booking; ridePhase: RidePhase }) {
+function PassengerCard({
+  booking,
+  ridePhase,
+  onDriverArrived,
+  onMarkNoShow,
+  onReportIssue,
+  onConfirmDropoff,
+  arrivedLoading,
+  noShowLoading,
+  reportLoading,
+  dropoffLoading,
+}: {
+  booking: DriverRideBooking;
+  ridePhase: RidePhase;
+  onDriverArrived: () => void;
+  onMarkNoShow: () => void;
+  onReportIssue: () => void;
+  onConfirmDropoff: () => void;
+  arrivedLoading: boolean;
+  noShowLoading: boolean;
+  reportLoading: boolean;
+  dropoffLoading: boolean;
+}) {
   const statusLabel: Record<string, string> = {
     CONFIRMED: 'Confirmed',
     ACCEPTED: 'Accepted',
+    WAITING_FOR_PICKUP: 'Waiting for pickup',
     DRIVER_ARRIVED: 'Waiting at pickup',
     ONBOARD: 'On board',
+    DROP_PENDING: 'Drop-off pending',
+    NO_SHOW: 'No-show',
+    DRIVER_MISSED_PICKUP: 'Missed pickup',
+    COMPLETED: 'Completed',
   };
 
   return (
+    <>
     <div className="flex items-center justify-between rounded-xl border border-gray-100 p-4">
       <div>
         <p className="text-sm font-semibold text-deliivo-dark">
-          Passenger
+          {booking.passenger?.name || 'Passenger'}
         </p>
         <p className="text-xs text-deliivo-gray">
           {booking.seatsBooked} seat{booking.seatsBooked > 1 ? 's' : ''} &middot; {statusLabel[booking.status] || booking.status}
         </p>
+        <p className="text-[11px] text-deliivo-gray">
+          {booking.pickupLocation?.address || 'Pickup not set'} → {booking.dropoffLocation?.address || 'Drop-off not set'}
+        </p>
       </div>
       <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-        booking.status === 'ONBOARD' ? 'bg-green-50 text-green-700 border border-green-200'
+        booking.status === 'ONBOARD' || booking.status === 'COMPLETED' ? 'bg-green-50 text-green-700 border border-green-200'
+        : booking.status === 'NO_SHOW' || booking.status === 'DRIVER_MISSED_PICKUP' ? 'bg-red-50 text-red-700 border border-red-200'
+        : booking.status === 'DROP_PENDING' ? 'bg-purple-50 text-purple-700 border border-purple-200'
         : booking.status === 'DRIVER_ARRIVED' ? 'bg-amber-50 text-amber-700 border border-amber-200'
         : 'bg-blue-50 text-blue-700 border border-blue-200'
       }`}>
         {statusLabel[booking.status] || booking.status}
       </span>
     </div>
+
+    {ridePhase === 'in_progress' && ['WAITING_FOR_PICKUP', 'DRIVER_ARRIVED'].includes(booking.status) && (
+      <div className="mt-3 flex flex-wrap gap-2">
+        {booking.status === 'WAITING_FOR_PICKUP' && (
+          <button
+            type="button"
+            onClick={onDriverArrived}
+            disabled={arrivedLoading}
+            className="inline-flex items-center gap-2 rounded-full border border-deliivo-orange px-4 py-2 text-sm font-semibold text-deliivo-orange hover:bg-orange-50 disabled:opacity-40"
+          >
+            {arrivedLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Navigation className="h-3.5 w-3.5" />}
+            Driver arrived
+          </button>
+        )}
+        {booking.status === 'DRIVER_ARRIVED' && (
+          <button
+            type="button"
+            onClick={onMarkNoShow}
+            disabled={noShowLoading}
+            className="inline-flex items-center gap-2 rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-40"
+          >
+            {noShowLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+            Mark no-show
+          </button>
+        )}
+      </div>
+    )}
+
+    {ridePhase === 'in_progress' && booking.status === 'ONBOARD' && (
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={onConfirmDropoff}
+          disabled={dropoffLoading}
+          className="inline-flex items-center gap-2 rounded-full border border-green-200 px-4 py-2 text-sm font-semibold text-green-700 hover:bg-green-50 disabled:opacity-40"
+        >
+          {dropoffLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
+          Confirm drop-off
+        </button>
+      </div>
+    )}
+
+    {['NO_SHOW', 'DRIVER_MISSED_PICKUP', 'DROP_PENDING', 'COMPLETED'].includes(booking.status) && (
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={onReportIssue}
+          disabled={reportLoading}
+          className="inline-flex items-center gap-2 rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-40"
+        >
+          {reportLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertCircle className="h-3.5 w-3.5" />}
+          Report issue
+        </button>
+      </div>
+    )}
+    </>
   );
+}
+
+function formatCountdown(totalSeconds: number) {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${seconds}s`;
 }
 
 // ─── OTP Verification Section ─────────────────────────────────────────────────
 
-function OtpVerifySection({ booking }: { booking: Booking }) {
+function OtpVerifySection({ booking, onVerified }: { booking: DriverRideBooking; onVerified: () => void }) {
   const [otp, setOtp] = useState('');
-  const [mode, setMode] = useState<'pickup' | 'dropoff'>('pickup');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
@@ -459,14 +1028,10 @@ function OtpVerifySection({ booking }: { booking: Booking }) {
     setError('');
     setSuccess('');
     try {
-      if (mode === 'pickup') {
-        await driverBookingApi.verifyPickupOtp(booking.id, otp);
-        setSuccess('Pickup verified! Passenger boarded.');
-      } else {
-        await driverBookingApi.verifyDropOtp(booking.id, otp);
-        setSuccess('Drop-off verified! Passenger delivered.');
-      }
+      await rideOpsApi.verifyPickupOtp(booking.id, otp);
+      setSuccess('Pickup verified! Passenger boarded.');
       setOtp('');
+      onVerified();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Invalid OTP');
     } finally {
@@ -478,38 +1043,23 @@ function OtpVerifySection({ booking }: { booking: Booking }) {
     <div className="rounded-xl border border-gray-100 p-4 space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-deliivo-dark">Booking #{booking.id.slice(0, 8)}</p>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={() => { setMode('pickup'); setSuccess(''); setError(''); }}
-            className={`text-xs px-3 py-1 rounded-full font-medium ${mode === 'pickup' ? 'bg-deliivo-orange text-white' : 'bg-gray-100 text-deliivo-gray'}`}
-          >
-            Pickup
-          </button>
-          <button
-            type="button"
-            onClick={() => { setMode('dropoff'); setSuccess(''); setError(''); }}
-            className={`text-xs px-3 py-1 rounded-full font-medium ${mode === 'dropoff' ? 'bg-deliivo-orange text-white' : 'bg-gray-100 text-deliivo-gray'}`}
-          >
-            Drop-off
-          </button>
-        </div>
+        <span className="text-xs px-3 py-1 rounded-full font-medium bg-deliivo-orange text-white">Pickup</span>
       </div>
 
       <div className="flex gap-2">
         <input
           type="text"
           inputMode="numeric"
-          maxLength={4}
+          maxLength={6}
           value={otp}
           onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
-          placeholder="Enter 4-digit OTP"
+          placeholder="Enter 6-digit OTP"
           className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-center text-lg font-bold tracking-widest focus:border-deliivo-orange focus:outline-none focus:ring-2 focus:ring-deliivo-orange/20"
         />
         <button
           type="button"
           onClick={handleVerify}
-          disabled={loading || otp.length < 4}
+          disabled={loading || otp.length < 6}
           className="btn-primary px-5 py-2.5 disabled:opacity-40"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Verify'}

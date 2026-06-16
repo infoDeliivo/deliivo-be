@@ -2,6 +2,8 @@ import { prisma } from '../../config/index.js';
 import { getStripeClient } from '../payments/stripe.service.js';
 import { recordTransfer } from '../ledger/ledger.service.js';
 import { PAYMENT_STATUSES, markTransferCreated, markPayoutCompleted } from '../payments/payment.service.js';
+import { openDisputeWhereForPaymentEligibility } from '../dispute/dispute-settlement.service.js';
+import { OPEN_DISPUTE_STATUSES } from '../dispute/dispute.constants.js';
 
 const DISPUTE_WINDOW_HOURS = 48;
 
@@ -17,6 +19,7 @@ export const checkAndMarkEligible = async () => {
         where: {
             status: PAYMENT_STATUSES.HELD_IN_ESCROW,
             updatedAt: { lt: cutoff },
+            booking: openDisputeWhereForPaymentEligibility,
         },
     });
 
@@ -40,7 +43,14 @@ export const processDriverPayout = async (driverId: string) => {
     const payments = await prisma.payment.findMany({
         where: {
             status: PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
-            booking: { ride: { driverId } },
+            booking: {
+                ride: { driverId },
+                disputes: {
+                    none: {
+                        status: { in: OPEN_DISPUTE_STATUSES },
+                    },
+                },
+            },
         },
         include: { booking: { select: { id: true, rideId: true, ride: { select: { driverId: true } } } } },
     });
@@ -70,6 +80,38 @@ export const processDriverPayout = async (driverId: string) => {
             },
         },
     });
+
+    if (process.env.STRIPE_CONNECT_MOCK_MODE === 'true') {
+        for (const payment of payments) {
+            await markTransferCreated(payment.id);
+        }
+
+        for (const payment of payments) {
+            await recordTransfer({
+                paymentId: payment.id,
+                bookingId: payment.bookingId,
+                driverId,
+                transferAmount: payment.fareAmount,
+                currency: payment.currency,
+            });
+        }
+
+        await prisma.payoutBatch.update({
+            where: { id: batch.id },
+            data: { status: 'COMPLETED', stripeTransferId: `tr_mock_${batch.id}` },
+        });
+
+        for (const payment of payments) {
+            await markPayoutCompleted(payment.id);
+        }
+
+        await prisma.payoutItem.updateMany({
+            where: { payoutBatchId: batch.id },
+            data: { status: 'COMPLETED' },
+        });
+
+        return { driverId, status: 'COMPLETED', batchId: batch.id, stripeTransferId: `tr_mock_${batch.id}`, amount: totalAmount };
+    }
 
     // Get driver's Stripe account
     const driver = await prisma.user.findUnique({ where: { id: driverId }, select: { stripeAccountId: true } });

@@ -67,6 +67,7 @@ describe('handleStripeWebhook', () => {
         mockPrisma.rideBooking.findUnique.mockResolvedValue({
             id: 'booking-1',
             rideId: 'ride-1',
+            passengerId: 'passenger-1',
             seatsBooked: 1,
             totalPrice: 12,
             paymentCurrency: 'INR',
@@ -79,6 +80,8 @@ describe('handleStripeWebhook', () => {
                 driverId: 'driver-1',
                 originAddress: 'Mathura',
                 destinationAddress: 'Delhi',
+                departureDate: new Date('2026-04-02T00:00:00.000Z'),
+                departureTime: '12:00',
                 currency: 'INR',
                 waypoints: [],
             },
@@ -97,6 +100,12 @@ describe('handleStripeWebhook', () => {
             expect.objectContaining({
                 userId: 'driver-1',
                 type: 'booking.request.driver_decision',
+            })
+        );
+        expect(mockCreateNotification).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: 'passenger-1',
+                type: 'booking.request.sent',
             })
         );
         expect(res.status).toHaveBeenCalledWith(200);
@@ -124,8 +133,16 @@ describe('handleStripeWebhook', () => {
                 findUnique: jest.fn().mockResolvedValue({
                     id: 'booking-2',
                     rideId: 'ride-2',
+                    passengerId: 'passenger-2',
                     seatsBooked: 2,
                     status: 'PAYMENT_PENDING',
+                    ride: {
+                        id: 'ride-2',
+                        originAddress: 'Mathura',
+                        destinationAddress: 'Delhi',
+                        departureDate: new Date('2026-04-03T00:00:00.000Z'),
+                        departureTime: '13:00',
+                    },
                 }),
                 update: jest.fn().mockResolvedValue({}),
             },
@@ -148,6 +165,12 @@ describe('handleStripeWebhook', () => {
         expect(tx.ride.update).toHaveBeenCalledWith(
             expect.objectContaining({
                 data: { availableSeats: { increment: 2 } },
+            })
+        );
+        expect(mockCreateNotification).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: 'passenger-2',
+                type: 'booking.payment.failed',
             })
         );
         expect(res.status).toHaveBeenCalledWith(200);

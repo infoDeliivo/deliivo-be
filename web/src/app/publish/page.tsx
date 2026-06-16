@@ -554,7 +554,7 @@ function StepSeats({
 
   useEffect(() => {
     vehicleApi.list()
-      .then(res => { setVehicles(res.data || []); })
+      .then(res => { setVehicles(res.data?.vehicles || []); })
       .catch(() => {})
       .finally(() => setVehiclesLoading(false));
   }, []);

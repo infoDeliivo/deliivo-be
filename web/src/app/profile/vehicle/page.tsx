@@ -36,7 +36,7 @@ function VehicleContent() {
 
   // Draft form state
   const [step, setStep] = useState(1);
-  const [licenseCountry, setLicenseCountry] = useState('UK');
+  const [licenseCountry, setLicenseCountry] = useState('EE');
   const [licenseNumber, setLicenseNumber] = useState('');
   const [brand, setBrand] = useState('');
   const [modelNum, setModelNum] = useState('');
@@ -54,7 +54,7 @@ function VehicleContent() {
   const fetchVehicles = async () => {
     try {
       const res = await vehicleApi.list();
-      setVehicles(res.data || []);
+      setVehicles(res.data?.vehicles || []);
     } catch {
       // ignore
     } finally {
@@ -138,6 +138,7 @@ function VehicleContent() {
   };
 
   const resetForm = () => {
+    setLicenseCountry('EE');
     setLicenseNumber('');
     setBrand('');
     setModelNum('');
@@ -205,11 +206,11 @@ function VehicleContent() {
             <form onSubmit={handleCreateDraft} className="space-y-4">
               <div>
                 <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Country</label>
-                <input type="text" value={licenseCountry} onChange={(e) => setLicenseCountry(e.target.value)} className="input-field" required />
+                <input type="text" value={licenseCountry} onChange={(e) => setLicenseCountry(e.target.value)} placeholder="EE, LV, or LT" className="input-field" required />
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">License Number</label>
-                <input type="text" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} placeholder="AB12 CDE" className="input-field" required />
+                <input type="text" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} placeholder="123ABC" className="input-field" required />
               </div>
               {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
               <div className="flex gap-3">

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, CreditCard, Plus, Trash2, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import { useStripe, useElements, CardElement } from '@stripe/react-stripe-js';
-import { StripeProvider } from '@/lib/stripe';
+import { isStripeConfigured, StripeProvider } from '@/lib/stripe';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { paymentMethodsApi, PaymentMethod } from '@/lib/api';
 
@@ -101,10 +101,22 @@ function PaymentMethodsContent() {
         ))}
 
         {showAddCard ? (
-          <AddCardForm
-            onSuccess={() => { setShowAddCard(false); loadMethods(); }}
-            onCancel={() => setShowAddCard(false)}
-          />
+          isStripeConfigured() ? (
+            <AddCardForm
+              onSuccess={() => { setShowAddCard(false); loadMethods(); }}
+              onCancel={() => setShowAddCard(false)}
+            />
+          ) : (
+            <div className="rounded-2xl border border-yellow-100 bg-yellow-50 p-5">
+              <h3 className="text-sm font-semibold text-yellow-900">Stripe publishable key required</h3>
+              <p className="mt-1 text-sm text-yellow-800">
+                Add NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY to the root .env file, then rebuild the web app to enable card entry.
+              </p>
+              <button type="button" onClick={() => setShowAddCard(false)} className="mt-4 btn-outline py-2 text-sm">
+                Back
+              </button>
+            </div>
+          )
         ) : (
           <button onClick={() => setShowAddCard(true)} className="btn-primary w-full py-3 gap-2">
             <Plus className="w-4 h-4" /> Add payment method
@@ -131,18 +143,25 @@ function AddCardForm({ onSuccess, onCancel }: { onSuccess: () => void; onCancel:
     try {
       // Get setup intent client secret from backend
       const res = await paymentMethodsApi.createSetupIntent();
-      const { clientSecret } = res.data;
+      const { clientSecret, customerId } = res.data;
 
       const cardElement = elements.getElement(CardElement);
       if (!cardElement) throw new Error('Card element not found');
 
-      const { error: stripeError } = await stripe.confirmCardSetup(clientSecret, {
+      const { error: stripeError, setupIntent } = await stripe.confirmCardSetup(clientSecret, {
         payment_method: { card: cardElement },
       });
 
       if (stripeError) {
         setError(stripeError.message || 'Card setup failed');
       } else {
+        const paymentMethodId = typeof setupIntent.payment_method === 'string'
+          ? setupIntent.payment_method
+          : setupIntent.payment_method?.id;
+        if (!paymentMethodId) {
+          throw new Error('Stripe did not return a payment method');
+        }
+        await paymentMethodsApi.save(paymentMethodId, customerId);
         onSuccess();
       }
     } catch (err: unknown) {

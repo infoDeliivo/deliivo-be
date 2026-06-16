@@ -19,6 +19,11 @@ const addUserSocket = async (userId: string, socketId: string) => {
     await redis.set(`socket:${socketId}`, userId, 'EX', SOCKET_SET_TTL);
 };
 
+const refreshUserSocket = async (userId: string, socketId: string) => {
+    await redis.expire(`sockets:${userId}`, SOCKET_SET_TTL);
+    await redis.expire(`socket:${socketId}`, SOCKET_SET_TTL);
+};
+
 const removeUserSocket = async (socketId: string): Promise<string | null> => {
     const userId = await redis.get(`socket:${socketId}`);
     if (userId) {
@@ -29,7 +34,12 @@ const removeUserSocket = async (socketId: string): Promise<string | null> => {
 };
 
 export const getUserSocketIds = async (userId: string): Promise<string[]> => {
-    return redis.smembers(`sockets:${userId}`);
+    const socketIds = await redis.smembers(`sockets:${userId}`);
+    if (socketIds.length > 0) {
+        await redis.expire(`sockets:${userId}`, SOCKET_SET_TTL);
+        await Promise.all(socketIds.map((socketId) => redis.expire(`socket:${socketId}`, SOCKET_SET_TTL)));
+    }
+    return socketIds;
 };
 
 // Module-level io reference for external access
@@ -45,6 +55,25 @@ export const emitToRide = (rideId: string, event: string, data: unknown) => {
     if (ioInstance) {
         ioInstance.to(`ride:${rideId}`).emit(event, data);
     }
+};
+
+/**
+ * Emit an event to all active sockets for specific users.
+ * Uses the Redis-backed user -> socket mapping so it works across Socket.IO
+ * Redis adapter processes.
+ */
+export const emitToUsers = async (userIds: string[], event: string, data: unknown) => {
+    if (!ioInstance) return;
+
+    const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+    await Promise.all(
+        uniqueUserIds.map(async (userId) => {
+            const socketIds = await getUserSocketIds(userId);
+            socketIds.forEach((socketId) => {
+                ioInstance?.to(socketId).emit(event, data);
+            });
+        })
+    );
 };
 
 // ============ SOCKET.IO INITIALIZATION ============
@@ -321,8 +350,24 @@ export const initSocket = async (server: http.Server) => {
             }
         });
 
+        // ============ RIDE ROOMS ============
+        socket.on('ride:join', async (data) => {
+            const rideId = typeof data === 'string' ? data : data?.rideId;
+            if (!rideId) return;
+            await socket.join(`ride:${rideId}`);
+            logger.info(`👥 User ${userId} joined ride room ride:${rideId}`);
+        });
+
+        socket.on('ride:leave', async (data) => {
+            const rideId = typeof data === 'string' ? data : data?.rideId;
+            if (!rideId) return;
+            await socket.leave(`ride:${rideId}`);
+            logger.info(`👋 User ${userId} left ride room ride:${rideId}`);
+        });
+
         // ============ PRESENCE: HEARTBEAT ============
         socket.on('presence:ping', async () => {
+            await refreshUserSocket(userId, socket.id);
             await PresenceService.refreshPresence(userId, socket.id);
         });
 

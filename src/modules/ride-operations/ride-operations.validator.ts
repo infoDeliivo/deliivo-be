@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 
 // ============ PARAM SCHEMAS ============
 export const rideIdParamSchema = z.object({
@@ -14,13 +15,18 @@ const latitude = z.number().min(-90).max(90);
 const longitude = z.number().min(-180).max(180);
 const isoTimestamp = z.string().datetime({ offset: true, message: 'timestamp must be an ISO 8601 date-time string' });
 
-// ============ RIDE EVENT BODY (start / finish / dropoff confirmations / missed pickup) ============
-export const rideEventSchema = z.object({
-    actionId: z.string().uuid('actionId must be a UUID (client-generated for idempotency)'),
+const rideEventFields = {
+    actionId: z.string().uuid('actionId must be a UUID (client-generated for idempotency)').default(() => randomUUID()),
     lat: latitude.optional(),
     lng: longitude.optional(),
-    clientTimestamp: isoTimestamp,
-});
+    clientTimestamp: isoTimestamp.default(() => new Date().toISOString()),
+};
+
+// ============ RIDE EVENT BODY (start / finish / dropoff confirmations / missed pickup) ============
+export const rideEventSchema = z.preprocess(
+    (value) => value ?? {},
+    z.object(rideEventFields)
+);
 
 // ============ LOCATION BODY (driver GPS ping) ============
 export const locationSchema = z.object({
@@ -33,9 +39,13 @@ export const locationSchema = z.object({
 });
 
 // ============ VERIFY PICKUP OTP BODY ============
-export const verifyPickupOtpSchema = rideEventSchema.extend({
-    otp: z.string().regex(/^[0-9]{6}$/, 'OTP must be 6 digits'),
-});
+export const verifyPickupOtpSchema = z.preprocess(
+    (value) => value ?? {},
+    z.object({
+        ...rideEventFields,
+        otp: z.string().regex(/^[0-9]{6}$/, 'OTP must be 6 digits'),
+    })
+);
 
 // ============ OFFLINE SYNC BODY ============
 export const offlineSyncSchema = z.object({

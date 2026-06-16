@@ -37,7 +37,7 @@ export default function AdminDashboardPage() {
     { label: 'Total Users', value: stats?.totalUsers?.toLocaleString() || '0', icon: Users, bg: 'bg-blue-50', iconColor: 'text-blue-500' },
     { label: 'Total Rides', value: stats?.totalRides?.toLocaleString() || '0', icon: Car, bg: 'bg-orange-50', iconColor: 'text-[#F97316]' },
     { label: 'Total Bookings', value: stats?.totalBookings?.toLocaleString() || '0', icon: CalendarCheck, bg: 'bg-purple-50', iconColor: 'text-purple-500' },
-    { label: 'Total Revenue', value: `$${(stats?.totalRevenue || 0).toFixed(2)}`, icon: DollarSign, bg: 'bg-green-50', iconColor: 'text-green-500' },
+    { label: 'Total Revenue', value: `EUR ${(stats?.totalRevenue || 0).toFixed(2)}`, icon: DollarSign, bg: 'bg-green-50', iconColor: 'text-green-500' },
   ]
 
   return (

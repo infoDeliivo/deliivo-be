@@ -1,11 +1,11 @@
 export enum Chattiness {
-  LOW = 'LOW',
-  MEDIUM = 'MEDIUM',
-  HIGH = 'HIGH',
+  LOW = 'quiet',
+  MEDIUM = 'chatty_when_comfortable',
+  HIGH = 'chatterbox',
 }
 
 export enum PetsPreference {
-  YES = 'YES',
-  NO = 'NO',
-  SOMETIMES = 'SOMETIMES',
+  YES = 'love_pets',
+  NO = 'no_pets',
+  SOMETIMES = 'depends_on_animal',
 }

@@ -1,21 +1,9 @@
 import { prisma } from '../../config/index.js';
+import { DISPUTE_STATUSES, OPEN_DISPUTE_STATUSES } from './dispute.constants.js';
+import { createNotification } from '../notification/notification.service.js';
+import { emitToUsers } from '../../socket/index.js';
 
-// ============================================================
-//  DISPUTE STATUSES
-// ============================================================
-
-export const DISPUTE_STATUSES = {
-    OPEN: 'OPEN',
-    EVIDENCE_COLLECTED: 'EVIDENCE_COLLECTED',
-    AUTO_RESOLVED_RIDER_REFUND: 'AUTO_RESOLVED_RIDER_REFUND',
-    AUTO_RESOLVED_DRIVER_PAYOUT: 'AUTO_RESOLVED_DRIVER_PAYOUT',
-    NEEDS_MANUAL_REVIEW: 'NEEDS_MANUAL_REVIEW',
-    WAITING_FOR_USER_RESPONSE: 'WAITING_FOR_USER_RESPONSE',
-    RESOLVED_REFUND: 'RESOLVED_REFUND',
-    RESOLVED_PAYOUT: 'RESOLVED_PAYOUT',
-    RESOLVED_SPLIT: 'RESOLVED_SPLIT',
-    ESCALATED: 'ESCALATED',
-} as const;
+export { DISPUTE_STATUSES };
 
 // ============================================================
 //  CREATE DISPUTE
@@ -31,7 +19,18 @@ export const createDispute = async (params: {
     // Verify booking exists and belongs to the ride
     const booking = await prisma.rideBooking.findUnique({
         where: { id: params.bookingId },
-        select: { id: true, rideId: true, passengerId: true, ride: { select: { driverId: true } } },
+        select: {
+            id: true,
+            rideId: true,
+            passengerId: true,
+            ride: {
+                select: {
+                    driverId: true,
+                    originAddress: true,
+                    destinationAddress: true,
+                },
+            },
+        },
     });
 
     if (!booking) throw new Error('BOOKING_NOT_FOUND');
@@ -46,7 +45,7 @@ export const createDispute = async (params: {
     const existing = await prisma.dispute.findFirst({
         where: {
             bookingId: params.bookingId,
-            status: { in: [DISPUTE_STATUSES.OPEN, DISPUTE_STATUSES.EVIDENCE_COLLECTED, DISPUTE_STATUSES.NEEDS_MANUAL_REVIEW] },
+            status: { in: OPEN_DISPUTE_STATUSES },
         },
     });
     if (existing) throw new Error('DISPUTE_ALREADY_EXISTS');
@@ -60,6 +59,35 @@ export const createDispute = async (params: {
             description: params.description ?? null,
             status: DISPUTE_STATUSES.OPEN,
         },
+    });
+
+    const otherPartyId = params.raisedBy === booking.passengerId
+        ? booking.ride.driverId
+        : booking.passengerId;
+    const route = `${booking.ride.originAddress.split(',')[0]} to ${booking.ride.destinationAddress.split(',')[0]}`;
+
+    await createNotification({
+        userId: otherPartyId,
+        type: 'dispute.created',
+        title: 'New dispute opened',
+        body: `A dispute was opened for ${route}.`,
+        data: {
+            disputeId: dispute.id,
+            bookingId: booking.id,
+            rideId: booking.rideId,
+            reason: params.reason,
+            deepLink: `app://booking/${booking.id}`,
+        },
+    });
+
+    await emitToUsers([booking.passengerId, booking.ride.driverId], 'dispute:updated', {
+        disputeId: dispute.id,
+        bookingId: booking.id,
+        rideId: booking.rideId,
+        status: dispute.status,
+        reason: dispute.reason,
+        raisedBy: dispute.raisedBy,
+        updatedAt: dispute.createdAt.toISOString(),
     });
 
     return dispute;
@@ -246,7 +274,15 @@ export const resolveDispute = async (disputeId: string, params: {
 export const getDisputeById = async (disputeId: string) => {
     return prisma.dispute.findUnique({
         where: { id: disputeId },
-        include: { booking: true, ride: true },
+        include: {
+            booking: {
+                include: {
+                    passenger: { select: { id: true, name: true, avatarUrl: true } },
+                    payment: true,
+                },
+            },
+            ride: true,
+        },
     });
 };
 
@@ -267,7 +303,7 @@ export const listDisputes = async (params: {
             skip,
             take: limit,
             include: {
-                booking: { select: { id: true, passengerId: true, totalPrice: true } },
+                booking: { select: { id: true, passengerId: true, totalPrice: true, status: true, payment: true } },
                 ride: { select: { id: true, driverId: true, originAddress: true, destinationAddress: true } },
             },
         }),
@@ -279,7 +315,17 @@ export const listDisputes = async (params: {
 
 export const getUserDisputes = async (userId: string) => {
     return prisma.dispute.findMany({
-        where: { raisedBy: userId },
+        where: {
+            OR: [
+                { raisedBy: userId },
+                { booking: { passengerId: userId } },
+                { ride: { driverId: userId } },
+            ],
+        },
         orderBy: { createdAt: 'desc' },
+        include: {
+            booking: { select: { id: true, passengerId: true, totalPrice: true, status: true } },
+            ride: { select: { id: true, driverId: true, originAddress: true, destinationAddress: true, departureDate: true, departureTime: true } },
+        },
     });
 };

@@ -2,7 +2,26 @@ import { Response } from 'express';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { HttpStatus, sendError, sendSuccess, logError } from '../../utils/index.js';
 import { emitToRide } from '../../socket/index.js';
+import { deleteCache, deleteCachePattern } from '../../services/cache.service.js';
 import * as RideOpsService from './ride-operations.service.js';
+
+const cacheKeys = {
+    bookingPattern: (id: string) => `booking:${id}:*`,
+    ride: (id: string) => `ride:${id}`,
+    rideDetailsPattern: (id: string) => `ride:details:${id}:*`,
+};
+
+const invalidateRideCaches = async (rideId: string) => {
+    await deleteCache(cacheKeys.ride(rideId));
+    await deleteCachePattern(cacheKeys.rideDetailsPattern(rideId));
+};
+
+const invalidateBookingRideCaches = async (bookingId: string, rideId?: string) => {
+    await deleteCachePattern(cacheKeys.bookingPattern(bookingId));
+    if (rideId) {
+        await invalidateRideCaches(rideId);
+    }
+};
 
 // ============================================================
 //  ERROR MAPPING
@@ -21,14 +40,18 @@ const mapRideOpsError = (error: Error) => {
             return { status: HttpStatus.CONFLICT, message: 'Ride is not in a valid state for this transition' };
         case 'RIDE_NOT_IN_PROGRESS':
             return { status: HttpStatus.CONFLICT, message: 'Ride is not in progress' };
+        case 'RIDE_TOO_EARLY':
+            return { status: HttpStatus.CONFLICT, message: 'Ride cannot be started before the scheduled departure time' };
+        case 'DEV_SIMULATION_DISABLED':
+            return { status: HttpStatus.FORBIDDEN, message: 'Ride simulation is disabled' };
         case 'BOOKINGS_NOT_ALL_TERMINAL':
             return { status: HttpStatus.CONFLICT, message: 'All bookings must be completed, dropped, or cancelled before finishing the ride' };
         case 'BOOKING_NOT_WAITING_FOR_PICKUP':
             return { status: HttpStatus.CONFLICT, message: 'Booking is not waiting for pickup' };
-        case 'BOOKING_NOT_READY_FOR_OTP':
-            return { status: HttpStatus.CONFLICT, message: 'Booking is not ready for OTP verification' };
         case 'BOOKING_NOT_AT_PICKUP':
             return { status: HttpStatus.CONFLICT, message: 'Booking is not at the pickup stage' };
+        case 'BOOKING_NOT_READY_FOR_OTP':
+            return { status: HttpStatus.CONFLICT, message: 'Booking is not ready for OTP verification' };
         case 'BOOKING_NOT_ONBOARD':
             return { status: HttpStatus.CONFLICT, message: 'Passenger is not onboard' };
         case 'BOOKING_NOT_DROP_PENDING':
@@ -61,6 +84,7 @@ export const startRide = async (req: AuthRequest, res: Response) => {
     try {
         const rideId = req.params.rideId as string;
         const result = await RideOpsService.startRide(req.user.id, rideId, req.body);
+        await invalidateRideCaches(result.rideId);
         return sendSuccess(res, { message: 'Ride started', data: result });
     } catch (error) {
         return handleError(res, error, 'startRide');
@@ -71,6 +95,7 @@ export const finishRide = async (req: AuthRequest, res: Response) => {
     try {
         const rideId = req.params.rideId as string;
         const result = await RideOpsService.finishRide(req.user.id, rideId, req.body);
+        await invalidateRideCaches(result.rideId);
         return sendSuccess(res, { message: 'Ride completed', data: result });
     } catch (error) {
         return handleError(res, error, 'finishRide');
@@ -88,7 +113,7 @@ export const submitLocation = async (req: AuthRequest, res: Response) => {
         // Real-time push to everyone watching this ride's room
         emitToRide(rideId, 'ride:location', result);
 
-        return sendSuccess(res, { message: 'Location recorded', data: { recorded: true } });
+        return sendSuccess(res, { message: 'Location recorded', data: result });
     } catch (error) {
         return handleError(res, error, 'submitLocation');
     }
@@ -114,9 +139,21 @@ export const driverArrived = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
         const result = await RideOpsService.driverArrived(req.user.id, { ...req.body, bookingId });
+        await invalidateBookingRideCaches(result.bookingId, result.rideId);
         return sendSuccess(res, { message: 'Driver marked as arrived', data: result });
     } catch (error) {
         return handleError(res, error, 'driverArrived');
+    }
+};
+
+export const riderArrivedAtPickup = async (req: AuthRequest, res: Response) => {
+    try {
+        const bookingId = req.params.id as string;
+        const result = await RideOpsService.riderArrivedAtPickup(req.user.id, bookingId, req.body);
+        await invalidateBookingRideCaches(result.bookingId, result.rideId);
+        return sendSuccess(res, { message: 'Rider arrival recorded', data: result });
+    } catch (error) {
+        return handleError(res, error, 'riderArrivedAtPickup');
     }
 };
 
@@ -125,6 +162,7 @@ export const verifyPickupOtp = async (req: AuthRequest, res: Response) => {
         const bookingId = req.params.id as string;
         const { otp } = req.body as { otp: string };
         const result = await RideOpsService.verifyPickupAndBoard(req.user.id, bookingId, otp, req.body);
+        await invalidateBookingRideCaches(result.bookingId, result.rideId);
         return sendSuccess(res, { message: 'Pickup verified, passenger onboard', data: result });
     } catch (error) {
         return handleError(res, error, 'verifyPickupOtp');
@@ -135,6 +173,7 @@ export const markNoShow = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
         const result = await RideOpsService.markNoShow(req.user.id, { ...req.body, bookingId });
+        await invalidateBookingRideCaches(result.bookingId, result.rideId);
         return sendSuccess(res, { message: 'Passenger marked as no-show', data: result });
     } catch (error) {
         return handleError(res, error, 'markNoShow');
@@ -145,9 +184,32 @@ export const confirmDropoff = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
         const result = await RideOpsService.confirmDropoff(req.user.id, { ...req.body, bookingId });
+        await invalidateBookingRideCaches(result.bookingId, result.rideId);
         return sendSuccess(res, { message: 'Drop-off confirmed by driver', data: result });
     } catch (error) {
         return handleError(res, error, 'confirmDropoff');
+    }
+};
+
+export const devSimulatePickup = async (req: AuthRequest, res: Response) => {
+    try {
+        const bookingId = req.params.id as string;
+        const result = await RideOpsService.devSimulatePickup(req.user.id, bookingId, req.body);
+        await invalidateBookingRideCaches(result.bookingId, result.rideId);
+        return sendSuccess(res, { message: 'Dev pickup simulated', data: result });
+    } catch (error) {
+        return handleError(res, error, 'devSimulatePickup');
+    }
+};
+
+export const devSimulateDropoff = async (req: AuthRequest, res: Response) => {
+    try {
+        const bookingId = req.params.id as string;
+        const result = await RideOpsService.devSimulateDropoff(req.user.id, bookingId, req.body);
+        await invalidateBookingRideCaches(result.bookingId, result.rideId);
+        return sendSuccess(res, { message: 'Dev drop-off simulated', data: result });
+    } catch (error) {
+        return handleError(res, error, 'devSimulateDropoff');
     }
 };
 
@@ -155,6 +217,7 @@ export const riderConfirmDropoff = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
         const result = await RideOpsService.riderConfirmDropoff(req.user.id, bookingId, req.body);
+        await invalidateBookingRideCaches(result.bookingId, result.rideId);
         return sendSuccess(res, { message: 'Drop-off confirmed', data: result });
     } catch (error) {
         return handleError(res, error, 'riderConfirmDropoff');
@@ -165,6 +228,7 @@ export const reportMissedPickup = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
         const result = await RideOpsService.reportMissedPickup(req.user.id, bookingId, req.body);
+        await invalidateBookingRideCaches(result.bookingId, result.rideId);
         return sendSuccess(res, { message: 'Missed pickup reported', data: result });
     } catch (error) {
         return handleError(res, error, 'reportMissedPickup');

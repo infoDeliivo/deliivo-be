@@ -7,6 +7,38 @@ const hashToken = (token: string): string => {
     return createHash('sha256').update(token).digest('hex');
 };
 
+const toRadians = (value: number) => value * Math.PI / 180;
+
+const distanceMeters = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+    const earthRadius = 6371e3;
+    const dLat = toRadians(b.lat - a.lat);
+    const dLng = toRadians(b.lng - a.lng);
+    const lat1 = toRadians(a.lat);
+    const lat2 = toRadians(b.lat);
+
+    const h = Math.sin(dLat / 2) ** 2
+        + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+
+    return earthRadius * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+};
+
+const buildEta = (
+    from: { lat: number; lng: number } | null,
+    to: { lat: number; lng: number } | null,
+    speedKmh = 35
+) => {
+    if (!from || !to) return null;
+    const meters = Math.round(distanceMeters(from, to));
+    const minutes = Math.max(1, Math.round((meters / 1000) / speedKmh * 60));
+    return {
+        distanceMeters: meters,
+        minutes,
+        label: minutes < 60
+            ? `${minutes} min`
+            : `${Math.floor(minutes / 60)}h ${minutes % 60}m`,
+    };
+};
+
 // ============================================================
 //  CREATE TRACKING LINK
 // ============================================================
@@ -71,13 +103,28 @@ export const getTrackingData = async (token: string) => {
                     status: true,
                     pickupAddress: true,
                     dropoffAddress: true,
+                    pickupWaypointId: true,
+                    dropoffWaypointId: true,
                     ride: {
                         select: {
                             id: true,
                             status: true,
                             originAddress: true,
+                            originLat: true,
+                            originLng: true,
                             destinationAddress: true,
+                            destinationLat: true,
+                            destinationLng: true,
+                            departureDate: true,
                             departureTime: true,
+                            waypoints: {
+                                select: {
+                                    id: true,
+                                    lat: true,
+                                    lng: true,
+                                    estimatedArrivalTime: true,
+                                },
+                            },
                         },
                     },
                 },
@@ -96,13 +143,38 @@ export const getTrackingData = async (token: string) => {
         select: { lat: true, lng: true, speed: true, heading: true, timestamp: true },
     });
 
+    const pickupWaypoint = link.booking.pickupWaypointId
+        ? link.booking.ride.waypoints.find((waypoint) => waypoint.id === link.booking.pickupWaypointId)
+        : null;
+    const dropoffWaypoint = link.booking.dropoffWaypointId
+        ? link.booking.ride.waypoints.find((waypoint) => waypoint.id === link.booking.dropoffWaypointId)
+        : null;
+    const pickupPoint = pickupWaypoint
+        ? { lat: pickupWaypoint.lat, lng: pickupWaypoint.lng }
+        : { lat: link.booking.ride.originLat, lng: link.booking.ride.originLng };
+    const dropoffPoint = dropoffWaypoint
+        ? { lat: dropoffWaypoint.lat, lng: dropoffWaypoint.lng }
+        : { lat: link.booking.ride.destinationLat, lng: link.booking.ride.destinationLng };
+    const currentPoint = latestLocation ? { lat: latestLocation.lat, lng: latestLocation.lng } : null;
+
     return {
+        rideId: link.booking.rideId,
+        bookingId: link.booking.id,
         bookingStatus: link.booking.status,
         rideStatus: link.booking.ride.status,
+        originAddress: link.booking.ride.originAddress,
+        destinationAddress: link.booking.ride.destinationAddress,
         pickup: link.booking.pickupAddress,
         dropoff: link.booking.dropoffAddress,
+        departureDate: link.booking.ride.departureDate,
         departureTime: link.booking.ride.departureTime,
         location: latestLocation,
+        eta: {
+            pickup: buildEta(currentPoint, pickupPoint),
+            dropoff: buildEta(currentPoint, dropoffPoint),
+            scheduledPickupTime: pickupWaypoint?.estimatedArrivalTime ?? link.booking.ride.departureTime,
+            scheduledDropoffTime: dropoffWaypoint?.estimatedArrivalTime ?? null,
+        },
         accessScope: link.accessScope,
     };
 };

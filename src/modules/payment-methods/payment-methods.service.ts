@@ -79,6 +79,11 @@ export const savePaymentMethod = async (userId: string, stripePaymentMethodId: s
 // ============================================================
 
 export const setDefaultPaymentMethod = async (userId: string, paymentMethodId: string) => {
+    const paymentMethod = await prisma.paymentMethod.findFirst({
+        where: { id: paymentMethodId, userId, status: 'ACTIVE' },
+    });
+    if (!paymentMethod) throw new Error('PAYMENT_METHOD_NOT_FOUND');
+
     // Unset current default
     await prisma.paymentMethod.updateMany({
         where: { userId, isDefault: true },
@@ -86,7 +91,7 @@ export const setDefaultPaymentMethod = async (userId: string, paymentMethodId: s
     });
 
     return prisma.paymentMethod.update({
-        where: { id: paymentMethodId, userId },
+        where: { id: paymentMethodId },
         data: { isDefault: true },
     });
 };
@@ -101,9 +106,10 @@ export const removePaymentMethod = async (userId: string, paymentMethodId: strin
     });
     if (!pm) throw new Error('PAYMENT_METHOD_NOT_FOUND');
 
-    // Detach from Stripe
-    const stripe = getStripeClient();
-    await stripe.paymentMethods.detach(pm.stripePaymentMethodId);
+    if (process.env.STRIPE_PAYMENT_METHODS_MOCK_MODE !== 'true') {
+        const stripe = getStripeClient();
+        await stripe.paymentMethods.detach(pm.stripePaymentMethodId);
+    }
 
     return prisma.paymentMethod.update({
         where: { id: paymentMethodId },

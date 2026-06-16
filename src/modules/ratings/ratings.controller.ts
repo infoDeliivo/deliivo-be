@@ -17,7 +17,7 @@ const mapRatingError = (error: Error) => {
     case 'BOOKING_NOT_COMPLETED':
       return {
         status: HttpStatus.CONFLICT,
-        message: 'Rating is allowed only after trip completion',
+        message: 'Rating is allowed only after trip completion or a failed pickup outcome',
       };
     case 'RATING_ALREADY_SUBMITTED':
       return {

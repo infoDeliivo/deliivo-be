@@ -9,6 +9,7 @@
     "dev:sms-worker": "NODE_ENV=staging nodemon --watch 'src/**/*.ts' --exec 'node --loader ts-node/esm' src/modules/sms/sms.worker.ts",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:worker\" \"npm run dev:sms-worker\"",
     "test:twilio": "node --loader ts-node/esm src/scripts/test-twilio-integration.ts",
+    "db:seed": "node --loader ts-node/esm src/scripts/seed.ts",
     "build": "tsc && prisma generate",
     "openapi:lint": "redocly lint docs/api/openapi/openapi.yaml",
     "openapi:bundle": "redocly bundle docs/api/openapi/openapi.yaml -o docs/api/openapi/dist/openapi.json --ext json",
@@ -32,6 +33,9 @@
     "test:e2e:watch": "jest --config jest.e2e.config.js --runInBand --watch",
     "test:e2e:run": "bash scripts/run-e2e.sh",
     "test:e2e:docker": "bash scripts/run-e2e.sh --down-after"
+  },
+  "prisma": {
+    "seed": "node --loader ts-node/esm src/scripts/seed.ts"
   },
   "keywords": [],
   "author": "",

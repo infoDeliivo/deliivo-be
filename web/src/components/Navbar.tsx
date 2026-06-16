@@ -1,19 +1,36 @@
 'use client';
 
 import Link from "next/link";
-import { useState } from "react";
-import { Menu, X, ChevronDown, User, LogOut, Car, Wallet } from "lucide-react";
+import { useEffect, useState, type ComponentType } from "react";
+import { Menu, X, ChevronDown, User, LogOut, Car, Wallet, Bell } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { notificationsApi } from "@/lib/api";
 
 export default function Navbar() {
   const { user, loading, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  const navLinks = [
+  type NavLink = {
+    label: string;
+    href: string;
+    icon?: ComponentType<{ size?: number }>;
+    badge?: number;
+  };
+
+  useEffect(() => {
+    if (!user) return;
+    notificationsApi.getUnreadCount()
+      .then((res) => setUnreadCount(res.data.unreadCount || 0))
+      .catch(() => setUnreadCount(0));
+  }, [user]);
+
+  const navLinks: NavLink[] = [
     { label: "Search a ride", href: "/search" },
     { label: "Offer a ride", href: "/publish" },
     { label: "Your rides", href: "/rides" },
+    { label: "Notifications", href: "/profile/notifications", icon: Bell, badge: unreadCount > 0 ? unreadCount : 0 },
     { label: "Messages", href: "/chat" },
   ];
 
@@ -32,15 +49,16 @@ export default function Navbar() {
 
         {/* Desktop nav links */}
         <nav className="hidden md:flex items-center gap-8">
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="text-sm font-medium text-deliivo-gray transition-colors hover:text-deliivo-orange"
-            >
+              {navLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="flex items-center gap-2 text-sm font-medium text-deliivo-gray transition-colors hover:text-deliivo-orange"
+                >
               {link.label}
-            </Link>
-          ))}
+              {link.badge ? <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-deliivo-orange px-1.5 py-0.5 text-[10px] font-semibold text-white">{link.badge}</span> : null}
+                </Link>
+              ))}
         </nav>
 
         {/* Desktop right side */}
@@ -143,7 +161,7 @@ export default function Navbar() {
                 className="rounded-xl px-3 py-2.5 text-sm font-medium text-deliivo-gray hover:bg-primary-50 hover:text-deliivo-orange transition-colors"
                 onClick={() => setMobileOpen(false)}
               >
-                {link.label}
+            {link.label}
               </Link>
             ))}
           </nav>

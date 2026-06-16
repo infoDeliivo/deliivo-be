@@ -6,6 +6,10 @@ import { loadStripe, Stripe } from '@stripe/stripe-js';
 
 const STRIPE_PK = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '';
 
+export function isStripeConfigured() {
+  return Boolean(STRIPE_PK);
+}
+
 let stripePromise: Promise<Stripe | null> | null = null;
 
 export function getStripe() {

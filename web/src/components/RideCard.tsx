@@ -76,7 +76,7 @@ export default function RideCard({ ride }: RideCardProps) {
           <span>{ride.departureDate}</span>
           {ride.femaleOnly && (
             <span className="ml-1 rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-600">
-              Female only
+              Women only
             </span>
           )}
         </div>
@@ -121,7 +121,7 @@ export default function RideCard({ ride }: RideCardProps) {
       <div className="flex shrink-0 flex-row items-center justify-between gap-3 sm:flex-col sm:items-end sm:justify-start">
         <div className="text-right">
           <p className="text-xl font-bold text-primary-500">
-            ${ride.pricePerSeat}
+            EUR {ride.pricePerSeat}
           </p>
           <p className="text-xs text-deliivo-gray">per seat</p>
         </div>

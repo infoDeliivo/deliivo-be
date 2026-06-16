@@ -49,11 +49,21 @@ export default function AdminReportsPage() {
   }
 
   async function handleResolve(id: string, resolution: string) {
+    const refundPercent = resolution === 'SPLIT'
+      ? Number(window.prompt('Refund percentage for rider? Driver payout will use the remaining fare amount.', '50'))
+      : undefined
+    if (resolution === 'SPLIT' && (refundPercent == null || Number.isNaN(refundPercent) || refundPercent < 0 || refundPercent > 100)) {
+      setError('Split refund percentage must be between 0 and 100')
+      setOpenMenu(null)
+      return
+    }
     setActionLoading(id)
     try {
-      await adminApi.resolveDispute(id, resolution)
+      await adminApi.resolveDispute(id, resolution, refundPercent)
       loadDisputes()
-    } catch { /* ignore */ }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to resolve dispute')
+    }
     finally { setActionLoading(null); setOpenMenu(null) }
   }
 
@@ -62,7 +72,9 @@ export default function AdminReportsPage() {
     try {
       await adminApi.collectEvidence(id)
       loadDisputes()
-    } catch { /* ignore */ }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to collect evidence')
+    }
     finally { setActionLoading(null); setOpenMenu(null) }
   }
 
@@ -71,7 +83,9 @@ export default function AdminReportsPage() {
     try {
       await adminApi.evaluateDispute(id)
       loadDisputes()
-    } catch { /* ignore */ }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to evaluate dispute')
+    }
     finally { setActionLoading(null); setOpenMenu(null) }
   }
 
@@ -124,7 +138,8 @@ export default function AdminReportsPage() {
                     <th className="text-left px-6 py-3 font-medium">ID</th>
                     <th className="text-left px-4 py-3 font-medium">Reason</th>
                     <th className="text-left px-4 py-3 font-medium">Route</th>
-                    <th className="text-left px-4 py-3 font-medium">Date</th>
+                    <th className="text-left px-4 py-3 font-medium">Decision</th>
+                    <th className="text-left px-4 py-3 font-medium">Payment</th>
                     <th className="text-left px-4 py-3 font-medium">Status</th>
                     <th className="text-right px-6 py-3 font-medium">Actions</th>
                   </tr>
@@ -136,12 +151,30 @@ export default function AdminReportsPage() {
                       <td className="px-4 py-3">
                         <span className="text-xs font-medium text-gray-800">{d.reason.replace(/_/g, ' ')}</span>
                         {d.description && <p className="text-xs text-gray-400 truncate max-w-xs mt-0.5">{d.description}</p>}
+                        <p className="text-[11px] text-gray-400 mt-1">Raised by {d.raisedBy?.slice(0, 8) || '-'}</p>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
                         {d.ride ? `${d.ride.originAddress.split(',')[0]} → ${d.ride.destinationAddress.split(',')[0]}` : '-'}
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
-                        {new Date(d.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      <td className="px-4 py-3 text-xs text-gray-600">
+                        {d.recommendation ? (
+                          <div>
+                            <p className="font-medium">{d.recommendation.replace(/_/g, ' ')}</p>
+                            {d.riskScore != null && <p className="text-gray-400">Risk {Math.round(d.riskScore * 100)}%</p>}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">Not evaluated</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-600">
+                        {d.booking?.payment ? (
+                          <div>
+                            <p className="font-medium">{d.booking.payment.status.replace(/_/g, ' ')}</p>
+                            <p className="text-gray-400">{d.booking.payment.currency} {d.booking.payment.amountTotal.toFixed(2)}</p>
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">No payment</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-medium px-2 py-1 rounded-full ${statusStyle[d.status] || 'bg-gray-100 text-gray-600'}`}>

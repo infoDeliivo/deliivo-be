@@ -9,4 +9,5 @@ export const createDisputeSchema = z.object({
 
 export const resolveDisputeSchema = z.object({
     resolution: z.enum(['REFUND', 'PAYOUT', 'SPLIT', 'ESCALATE']),
+    refundPercent: z.coerce.number().min(0).max(100).optional(),
 });

@@ -24,6 +24,7 @@ import {
 import { getFuelPriceForCurrency } from '../../services/fuel-price.service.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
 import { validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { createNotification } from '../notification/notification.service.js';
 
 // ============================================================
 //  CONSTANTS
@@ -1206,6 +1207,23 @@ export const publishRide = async (driverId: string) => {
   // ---- Cleanup: Remove draft + route cache from Redis ---- //
   await redis.del(draftKey(driverId));
   await redis.del(routesCacheKey(driverId));
+
+  if (ride) {
+    await createNotification({
+      userId: driverId,
+      type: 'ride.published',
+      title: 'Ride published',
+      body: `Your ride from ${ride.originAddress} to ${ride.destinationAddress} is live.`,
+      data: {
+        rideId: ride.id,
+        originAddress: ride.originAddress,
+        destinationAddress: ride.destinationAddress,
+        departureDate: ride.departureDate.toISOString(),
+        departureTime: ride.departureTime,
+        deepLink: `app://ride/${ride.id}/manage`,
+      },
+    });
+  }
 
   return ride;
 };

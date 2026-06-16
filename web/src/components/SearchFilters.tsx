@@ -85,7 +85,7 @@ export default function SearchFilters({
             Max price / seat
           </label>
           <span className="text-sm font-bold text-primary-500">
-            ${filters.maxPrice === 200 ? '200+' : filters.maxPrice}
+            EUR {filters.maxPrice === 200 ? '200+' : filters.maxPrice}
           </span>
         </div>
         <input
@@ -100,8 +100,8 @@ export default function SearchFilters({
           className="w-full accent-primary-500"
         />
         <div className="flex justify-between text-xs text-deliivo-gray mt-1">
-          <span>$5</span>
-          <span>$200+</span>
+          <span>EUR 5</span>
+          <span>EUR 200+</span>
         </div>
       </div>
 
@@ -132,13 +132,13 @@ export default function SearchFilters({
         </div>
       </div>
 
-      {/* Female only */}
+      {/* Women only */}
       <div className="flex items-center justify-between">
         <label
           htmlFor="filter-female"
           className="text-sm font-medium text-deliivo-dark cursor-pointer"
         >
-          Female only
+          Women only
         </label>
         <button
           id="filter-female"

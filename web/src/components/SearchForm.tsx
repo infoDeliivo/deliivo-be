@@ -40,7 +40,7 @@ export default function SearchForm() {
           />
           <input
             type="text"
-            placeholder="Leaving from"
+            placeholder="Leaving from, e.g. Tallinn"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
             className="input-field pl-9"
@@ -65,7 +65,7 @@ export default function SearchForm() {
           />
           <input
             type="text"
-            placeholder="Going to"
+            placeholder="Going to, e.g. Riga"
             value={to}
             onChange={(e) => setTo(e.target.value)}
             className="input-field pl-9"
@@ -87,9 +87,9 @@ export default function SearchForm() {
         </div>
       </div>
 
-      {/* Second row: female toggle + search button */}
+      {/* Second row: women-only toggle + search button */}
       <div className="mt-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* Female only toggle */}
+        {/* Women-only toggle */}
         <label className="flex cursor-pointer items-center gap-2 select-none">
           <button
             type="button"
@@ -107,10 +107,7 @@ export default function SearchForm() {
             />
           </button>
           <span className="text-sm font-medium text-deliivo-dark">
-            Female only
-          </span>
-          <span className="text-lg">
-            {femaleOnly ? '🩷' : ''}
+            Women only
           </span>
         </label>
 

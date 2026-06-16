@@ -2,7 +2,6 @@ import { BookingStatus, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
 import { isOtpValid } from '../ride-booking/booking-otp.utils.js';
-import { isWithinGeofence } from './geofence.utils.js';
 import {
     RIDE_TRANSITIONS,
     TERMINAL_BOOKING_STATES,
@@ -15,6 +14,8 @@ import {
     MarkNoShowInput,
     ConfirmDropoffInput,
 } from './ride-operations.types.js';
+import { haversineDistance } from './geofence.utils.js';
+import { emitToRide, emitToUsers } from '../../socket/index.js';
 
 // ============================================================
 //  HELPERS
@@ -33,7 +34,11 @@ const recordEvent = async (
     eventType: string,
     actorType: string,
     actorId: string,
-    input: RideEventInput
+    input: RideEventInput,
+    options?: {
+        metadataJson?: Record<string, unknown>;
+        validationStatus?: 'VALID' | 'WARNING' | 'SUSPICIOUS';
+    }
 ) => {
     // Idempotency: if actionId already exists, skip
     const existing = await prisma.rideEvent.findUnique({
@@ -52,8 +57,95 @@ const recordEvent = async (
             lat: input.lat ?? null,
             lng: input.lng ?? null,
             clientTimestamp: new Date(input.clientTimestamp),
+            metadataJson: options?.metadataJson as any,
+            validationStatus: options?.validationStatus ?? 'VALID',
         },
     });
+};
+
+const resolvePickupPoint = (booking: {
+    pickupWaypointId: string | null;
+    ride: {
+        originLat: number;
+        originLng: number;
+        waypoints: Array<{ id: string; lat: number; lng: number; address: string }>;
+    };
+}) => {
+    if (booking.pickupWaypointId) {
+        const waypoint = booking.ride.waypoints.find((w) => w.id === booking.pickupWaypointId);
+        if (waypoint) {
+            return {
+                lat: waypoint.lat,
+                lng: waypoint.lng,
+                address: waypoint.address,
+                source: 'waypoint' as const,
+            };
+        }
+    }
+
+    return {
+        lat: booking.ride.originLat,
+        lng: booking.ride.originLng,
+        address: 'Origin pickup point',
+        source: 'origin' as const,
+    };
+};
+
+const resolveDropoffPoint = (booking: {
+    dropoffWaypointId: string | null;
+    ride: {
+        destinationLat: number;
+        destinationLng: number;
+        waypoints: Array<{ id: string; lat: number; lng: number; address: string }>;
+    };
+}) => {
+    if (booking.dropoffWaypointId) {
+        const waypoint = booking.ride.waypoints.find((w) => w.id === booking.dropoffWaypointId);
+        if (waypoint) {
+            return {
+                lat: waypoint.lat,
+                lng: waypoint.lng,
+                address: waypoint.address,
+                source: 'waypoint' as const,
+            };
+        }
+    }
+
+    return {
+        lat: booking.ride.destinationLat,
+        lng: booking.ride.destinationLng,
+        address: 'Destination drop-off point',
+        source: 'destination' as const,
+    };
+};
+
+const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date => {
+    const [hoursRaw, minutesRaw] = departureTime.split(':');
+    const hours = Number(hoursRaw);
+    const minutes = Number(minutesRaw);
+
+    if (
+        !Number.isInteger(hours) ||
+        !Number.isInteger(minutes) ||
+        hours < 0 ||
+        hours > 23 ||
+        minutes < 0 ||
+        minutes > 59
+    ) {
+        throw new Error('INVALID_RIDE_DEPARTURE_TIME');
+    }
+
+    return new Date(
+        Date.UTC(
+            departureDate.getUTCFullYear(),
+            departureDate.getUTCMonth(),
+            departureDate.getUTCDate(),
+            hours,
+            minutes,
+            0,
+            0
+        )
+    );
 };
 
 // ============================================================
@@ -72,6 +164,15 @@ export const startRide = async (driverId: string, rideId: string, input: RideEve
     // Allow starting from PUBLISHED or READY_TO_START
     if (ride.status !== RideStatus.PUBLISHED && ride.status !== RideStatus.READY_TO_START) {
         assertRideTransition(ride.status, RideStatus.IN_PROGRESS);
+    }
+
+    const allowRideSimulation = process.env.ALLOW_RIDE_SIMULATION === 'true';
+    const isProd = process.env.NODE_ENV === 'production';
+    if (isProd && !allowRideSimulation) {
+        const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
+        if (Date.now() < departureAt.getTime()) {
+            throw new Error('RIDE_TOO_EARLY');
+        }
     }
 
     const now = new Date();
@@ -101,7 +202,34 @@ export const startRide = async (driverId: string, rideId: string, input: RideEve
 
     // Notify all passengers
     const bookings = ride.bookings;
+    const passengerIds = bookings.map((booking) => booking.passengerId);
+
+    const rideUpdatedPayload = {
+        rideId,
+        status: updatedRide.status,
+        previousStatus: ride.status,
+        actor: 'driver',
+        action: 'ride.started',
+        updatedAt: now.toISOString(),
+    };
+
+    emitToRide(rideId, 'ride:updated', rideUpdatedPayload);
+    await emitToUsers([driverId, ...passengerIds], 'ride:updated', rideUpdatedPayload);
+
     for (const booking of bookings) {
+        if (booking.status === BookingStatus.CONFIRMED) {
+            await emitToUsers([driverId, booking.passengerId], 'booking:updated', {
+                bookingId: booking.id,
+                rideId,
+                passengerId: booking.passengerId,
+                status: BookingStatus.WAITING_FOR_PICKUP,
+                previousStatus: BookingStatus.CONFIRMED,
+                actor: 'driver',
+                action: 'ride.started',
+                updatedAt: now.toISOString(),
+            });
+        }
+
         await createNotification({
             userId: booking.passengerId,
             type: 'ride.started',
@@ -144,22 +272,12 @@ export const driverArrived = async (driverId: string, input: DriverArrivedInput)
         throw new Error('BOOKING_NOT_WAITING_FOR_PICKUP');
     }
 
-    // Geofence validation (warning only, don't block)
-    let geofenceValid = true;
-    if (input.lat != null && input.lng != null) {
-        // Find the pickup point coordinates
-        let pickupLat: number;
-        let pickupLng: number;
-        if (booking.pickupWaypointId) {
-            const wp = booking.ride.waypoints.find(w => w.id === booking.pickupWaypointId);
-            pickupLat = wp?.lat ?? booking.ride.originLat;
-            pickupLng = wp?.lng ?? booking.ride.originLng;
-        } else {
-            pickupLat = booking.ride.originLat;
-            pickupLng = booking.ride.originLng;
-        }
-        geofenceValid = isWithinGeofence(input.lat, input.lng, pickupLat, pickupLng, GEOFENCE_RADIUS_METERS);
-    }
+    const pickupPoint = resolvePickupPoint(booking);
+    const distanceMeters = input.lat != null && input.lng != null
+        ? Math.round(Math.max(0, haversineDistance(input.lat, input.lng, pickupPoint.lat, pickupPoint.lng)))
+        : null;
+    const geofenceValid = distanceMeters == null ? true : distanceMeters <= GEOFENCE_RADIUS_METERS;
+    const validationStatus = geofenceValid ? 'VALID' : 'WARNING';
 
     const now = new Date();
 
@@ -172,13 +290,48 @@ export const driverArrived = async (driverId: string, input: DriverArrivedInput)
         },
     });
 
+    const arrivedLocation = input.lat != null && input.lng != null
+        ? await prisma.locationUpdate.create({
+            data: {
+                rideId: booking.rideId,
+                driverId,
+                lat: input.lat,
+                lng: input.lng,
+                timestamp: now,
+            },
+        })
+        : null;
+
+    if (arrivedLocation) {
+        emitToRide(booking.rideId, 'ride:location', {
+            rideId: booking.rideId,
+            lat: arrivedLocation.lat,
+            lng: arrivedLocation.lng,
+            speed: arrivedLocation.speed,
+            heading: arrivedLocation.heading,
+            accuracy: arrivedLocation.accuracy,
+            timestamp: arrivedLocation.timestamp,
+            source: 'driver_arrived',
+        });
+    }
+
     await recordEvent(
         booking.rideId,
         input.bookingId,
         'DRIVER_ARRIVED',
         'DRIVER',
         driverId,
-        { ...input, ...(geofenceValid ? {} : { }) }
+        input,
+        {
+            validationStatus,
+            metadataJson: {
+                pickupPoint,
+                pickupRadiusMeters: GEOFENCE_RADIUS_METERS,
+                distanceMeters,
+                geofenceValid,
+                actor: 'driver',
+            },
+        }
     );
 
     // Notify passenger
@@ -194,12 +347,110 @@ export const driverArrived = async (driverId: string, input: DriverArrivedInput)
         },
     });
 
+    await emitToUsers([driverId, booking.passengerId], 'booking:updated', {
+        bookingId: booking.id,
+        rideId: booking.rideId,
+        passengerId: booking.passengerId,
+        status: BookingStatus.DRIVER_ARRIVED,
+        previousStatus: BookingStatus.WAITING_FOR_PICKUP,
+        actor: 'driver',
+        action: 'driver.arrived',
+        updatedAt: now.toISOString(),
+    });
+
     return {
         bookingId: booking.id,
+        rideId: booking.rideId,
         status: BookingStatus.DRIVER_ARRIVED,
         driverArrivedAt: now,
         geofenceValid,
+        distanceMeters,
+        pickupPoint,
         waitTimerStartedAt: now,
+        location: arrivedLocation ? {
+            rideId: arrivedLocation.rideId,
+            lat: arrivedLocation.lat,
+            lng: arrivedLocation.lng,
+            timestamp: arrivedLocation.timestamp,
+        } : null,
+    };
+};
+
+// ============================================================
+//  RIDER ARRIVED AT PICKUP
+// ============================================================
+
+export const riderArrivedAtPickup = async (passengerId: string, bookingId: string, input: RideEventInput) => {
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: {
+            ride: {
+                include: { waypoints: true },
+            },
+        },
+    });
+
+    if (!booking) throw new Error('BOOKING_NOT_FOUND');
+    if (booking.passengerId !== passengerId) throw new Error('FORBIDDEN_PASSENGER');
+
+    if (booking.status !== BookingStatus.WAITING_FOR_PICKUP && booking.status !== BookingStatus.DRIVER_ARRIVED) {
+        throw new Error('BOOKING_NOT_AT_PICKUP');
+    }
+
+    const pickupPoint = resolvePickupPoint(booking);
+    const distanceMeters = input.lat != null && input.lng != null
+        ? Math.round(Math.max(0, haversineDistance(input.lat, input.lng, pickupPoint.lat, pickupPoint.lng)))
+        : null;
+    const geofenceValid = distanceMeters == null ? true : distanceMeters <= GEOFENCE_RADIUS_METERS;
+
+    await recordEvent(
+        booking.rideId,
+        bookingId,
+        'RIDER_ARRIVED_AT_PICKUP',
+        'RIDER',
+        passengerId,
+        input,
+        {
+            validationStatus: geofenceValid ? 'VALID' : 'WARNING',
+            metadataJson: {
+                pickupPoint,
+                pickupRadiusMeters: GEOFENCE_RADIUS_METERS,
+                distanceMeters,
+                geofenceValid,
+                actor: 'rider',
+            },
+        }
+    );
+
+    await createNotification({
+        userId: booking.ride.driverId,
+        type: 'booking.rider_arrived',
+        title: 'Rider is at pickup',
+        body: 'Your rider marked that they are at the pickup point.',
+        data: {
+            rideId: booking.rideId,
+            bookingId: booking.id,
+            deepLink: `app://driver/booking-request/${booking.id}`,
+        },
+    });
+
+    await emitToUsers([booking.ride.driverId, passengerId], 'booking:updated', {
+        bookingId,
+        rideId: booking.rideId,
+        passengerId,
+        status: booking.status,
+        actor: 'rider',
+        action: 'rider.arrived_at_pickup',
+        updatedAt: new Date().toISOString(),
+    });
+
+    return {
+        bookingId,
+        rideId: booking.rideId,
+        status: booking.status,
+        geofenceValid,
+        distanceMeters,
+        pickupPoint,
     };
 };
 
@@ -249,8 +500,32 @@ export const verifyPickupAndBoard = async (driverId: string, bookingId: string, 
 
     await recordEvent(booking.rideId, bookingId, 'PICKUP_OTP_VERIFIED', 'DRIVER', driverId, input);
 
+    await createNotification({
+        userId: booking.passengerId,
+        type: 'booking.pickup_verified',
+        title: 'Pickup confirmed',
+        body: 'Your pickup OTP was verified and you are now onboard.',
+        data: {
+            rideId: booking.rideId,
+            bookingId: booking.id,
+            deepLink: `app://booking/${booking.id}`,
+        },
+    });
+
+    await emitToUsers([driverId, booking.passengerId], 'booking:updated', {
+        bookingId,
+        rideId: booking.rideId,
+        passengerId: booking.passengerId,
+        status: BookingStatus.ONBOARD,
+        previousStatus: booking.status,
+        actor: 'driver',
+        action: 'pickup.verified',
+        updatedAt: now.toISOString(),
+    });
+
     return {
         bookingId,
+        rideId: booking.rideId,
         status: BookingStatus.ONBOARD,
         onboardedAt: now,
     };
@@ -273,8 +548,10 @@ export const markNoShow = async (driverId: string, input: MarkNoShowInput) => {
         throw new Error('BOOKING_NOT_AT_PICKUP');
     }
 
-    // Validate wait time: driver must have waited at least WAIT_TIME_MINUTES
-    if (booking.waitTimerStartedAt) {
+    // Validate wait time: driver must have waited at least WAIT_TIME_MINUTES.
+    // Local simulations can bypass this so the full lifecycle is testable from one session.
+    const allowRideSimulation = process.env.ALLOW_RIDE_SIMULATION === 'true';
+    if (!allowRideSimulation && booking.waitTimerStartedAt) {
         const waitedMs = Date.now() - booking.waitTimerStartedAt.getTime();
         const waitedMinutes = waitedMs / 60_000;
         if (waitedMinutes < WAIT_TIME_MINUTES) {
@@ -307,8 +584,20 @@ export const markNoShow = async (driverId: string, input: MarkNoShowInput) => {
         },
     });
 
+    await emitToUsers([driverId, booking.passengerId], 'booking:updated', {
+        bookingId: booking.id,
+        rideId: booking.rideId,
+        passengerId: booking.passengerId,
+        status: BookingStatus.NO_SHOW,
+        previousStatus: booking.status,
+        actor: 'driver',
+        action: 'booking.no_show',
+        updatedAt: now.toISOString(),
+    });
+
     return {
         bookingId: booking.id,
+        rideId: booking.rideId,
         status: BookingStatus.NO_SHOW,
         noShowMarkedAt: now,
     };
@@ -334,20 +623,11 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
     }
 
     // Geofence check (warning only)
-    let geofenceValid = true;
-    if (input.lat != null && input.lng != null) {
-        let dropLat: number;
-        let dropLng: number;
-        if (booking.dropoffWaypointId) {
-            const wp = booking.ride.waypoints.find(w => w.id === booking.dropoffWaypointId);
-            dropLat = wp?.lat ?? booking.ride.destinationLat;
-            dropLng = wp?.lng ?? booking.ride.destinationLng;
-        } else {
-            dropLat = booking.ride.destinationLat;
-            dropLng = booking.ride.destinationLng;
-        }
-        geofenceValid = isWithinGeofence(input.lat, input.lng, dropLat, dropLng, GEOFENCE_RADIUS_METERS);
-    }
+    const dropoffPoint = resolveDropoffPoint(booking);
+    const distanceMeters = input.lat != null && input.lng != null
+        ? Math.round(Math.max(0, haversineDistance(input.lat, input.lng, dropoffPoint.lat, dropoffPoint.lng)))
+        : null;
+    const geofenceValid = distanceMeters == null ? true : distanceMeters <= GEOFENCE_RADIUS_METERS;
 
     const now = new Date();
 
@@ -374,11 +654,25 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
         },
     });
 
+    await emitToUsers([driverId, booking.passengerId], 'booking:updated', {
+        bookingId: booking.id,
+        rideId: booking.rideId,
+        passengerId: booking.passengerId,
+        status: BookingStatus.DROP_PENDING,
+        previousStatus: booking.status,
+        actor: 'driver',
+        action: 'driver.confirmed_dropoff',
+        updatedAt: now.toISOString(),
+    });
+
     return {
         bookingId: booking.id,
+        rideId: booking.rideId,
         status: BookingStatus.DROP_PENDING,
         dropoffConfirmedAt: now,
         geofenceValid,
+        distanceMeters,
+        dropoffPoint,
     };
 };
 
@@ -411,8 +705,32 @@ export const riderConfirmDropoff = async (passengerId: string, bookingId: string
 
     await recordEvent(booking.rideId, bookingId, 'DROPOFF_CONFIRMED_RIDER', 'RIDER', passengerId, input);
 
+    await createNotification({
+        userId: booking.ride.driverId,
+        type: 'booking.dropoff_confirmed',
+        title: 'Drop-off confirmed',
+        body: 'The rider confirmed they were dropped off.',
+        data: {
+            rideId: booking.rideId,
+            bookingId: booking.id,
+            deepLink: `app://driver/booking-request/${booking.id}`,
+        },
+    });
+
+    await emitToUsers([booking.ride.driverId, passengerId], 'booking:updated', {
+        bookingId,
+        rideId: booking.rideId,
+        passengerId,
+        status: BookingStatus.COMPLETED,
+        previousStatus: BookingStatus.DROP_PENDING,
+        actor: 'rider',
+        action: 'rider.confirmed_dropoff',
+        updatedAt: now.toISOString(),
+    });
+
     return {
         bookingId,
+        rideId: booking.rideId,
         status: BookingStatus.COMPLETED,
         completedAt: now,
     };
@@ -448,6 +766,7 @@ export const reportMissedPickup = async (passengerId: string, bookingId: string,
 
     return {
         bookingId,
+        rideId: booking.rideId,
         status: BookingStatus.DRIVER_MISSED_PICKUP,
     };
 };
@@ -491,6 +810,18 @@ export const finishRide = async (driverId: string, rideId: string, input: RideEv
 
     await recordEvent(rideId, null, 'RIDE_FINISHED', 'DRIVER', driverId, input);
 
+    const rideUpdatedPayload = {
+        rideId,
+        status: updatedRide.status,
+        previousStatus: ride.status,
+        actor: 'driver',
+        action: 'ride.finished',
+        updatedAt: now.toISOString(),
+    };
+
+    emitToRide(rideId, 'ride:updated', rideUpdatedPayload);
+    await emitToUsers([driverId], 'ride:updated', rideUpdatedPayload);
+
     return {
         rideId: updatedRide.id,
         status: updatedRide.status,
@@ -512,7 +843,7 @@ export const submitLocation = async (driverId: string, rideId: string, input: Lo
     if (ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
     if (ride.status !== RideStatus.IN_PROGRESS) throw new Error('RIDE_NOT_IN_PROGRESS');
 
-    await prisma.locationUpdate.create({
+    const location = await prisma.locationUpdate.create({
         data: {
             rideId,
             driverId,
@@ -525,7 +856,141 @@ export const submitLocation = async (driverId: string, rideId: string, input: Lo
         },
     });
 
-    return { rideId, recorded: true };
+    return {
+        rideId: location.rideId,
+        lat: location.lat,
+        lng: location.lng,
+        speed: location.speed,
+        heading: location.heading,
+        accuracy: location.accuracy,
+        timestamp: location.timestamp,
+        recorded: true,
+    };
+};
+
+const assertDevSimulationEnabled = () => {
+    if (process.env.ALLOW_RIDE_SIMULATION !== 'true') {
+        throw new Error('DEV_SIMULATION_DISABLED');
+    }
+};
+
+export const devSimulatePickup = async (driverId: string, bookingId: string, input: RideEventInput) => {
+    assertDevSimulationEnabled();
+
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: { ride: true },
+    });
+
+    if (!booking) throw new Error('BOOKING_NOT_FOUND');
+    if (booking.ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
+    if (booking.ride.status !== RideStatus.IN_PROGRESS) throw new Error('RIDE_NOT_IN_PROGRESS');
+    const pickupSimulationStatuses: BookingStatus[] = [BookingStatus.WAITING_FOR_PICKUP, BookingStatus.DRIVER_ARRIVED];
+    if (!pickupSimulationStatuses.includes(booking.status)) {
+        throw new Error('BOOKING_NOT_READY_FOR_OTP');
+    }
+
+    const now = new Date();
+
+    await prisma.rideBooking.update({
+        where: { id: bookingId },
+        data: {
+            status: BookingStatus.ONBOARD,
+            driverArrivedAt: booking.driverArrivedAt ?? now,
+            waitTimerStartedAt: booking.waitTimerStartedAt ?? now,
+            pickupOtpVerifiedAt: now,
+            onboardedAt: now,
+        },
+    });
+
+    await recordEvent(booking.rideId, bookingId, 'DEV_PICKUP_SIMULATED', 'DRIVER', driverId, input, {
+        validationStatus: 'WARNING',
+        metadataJson: { simulation: true, reason: 'ALLOW_RIDE_SIMULATION' },
+    });
+
+    await createNotification({
+        userId: booking.passengerId,
+        type: 'booking.pickup_simulated',
+        title: 'Pickup simulated in dev mode',
+        body: 'Your pickup was simulated for local testing.',
+        data: {
+            rideId: booking.rideId,
+            bookingId: booking.id,
+            deepLink: `app://booking/${booking.id}`,
+        },
+    });
+
+    await emitToUsers([driverId, booking.passengerId], 'booking:updated', {
+        bookingId,
+        rideId: booking.rideId,
+        passengerId: booking.passengerId,
+        status: BookingStatus.ONBOARD,
+        previousStatus: booking.status,
+        actor: 'driver',
+        action: 'dev.pickup_simulated',
+        updatedAt: now.toISOString(),
+    });
+
+    return { bookingId, rideId: booking.rideId, status: BookingStatus.ONBOARD, onboardedAt: now };
+};
+
+export const devSimulateDropoff = async (driverId: string, bookingId: string, input: RideEventInput) => {
+    assertDevSimulationEnabled();
+
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: { ride: true },
+    });
+
+    if (!booking) throw new Error('BOOKING_NOT_FOUND');
+    if (booking.ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
+    if (booking.ride.status !== RideStatus.IN_PROGRESS) throw new Error('RIDE_NOT_IN_PROGRESS');
+    const dropoffSimulationStatuses: BookingStatus[] = [BookingStatus.ONBOARD, BookingStatus.DROP_PENDING];
+    if (!dropoffSimulationStatuses.includes(booking.status)) {
+        throw new Error('BOOKING_NOT_ONBOARD');
+    }
+
+    const now = new Date();
+
+    await prisma.rideBooking.update({
+        where: { id: bookingId },
+        data: {
+            status: BookingStatus.COMPLETED,
+            dropoffConfirmedAt: booking.dropoffConfirmedAt ?? now,
+            riderDropoffConfirmedAt: now,
+            completedAt: now,
+        },
+    });
+
+    await recordEvent(booking.rideId, bookingId, 'DEV_DROPOFF_SIMULATED', 'DRIVER', driverId, input, {
+        validationStatus: 'WARNING',
+        metadataJson: { simulation: true, reason: 'ALLOW_RIDE_SIMULATION' },
+    });
+
+    await createNotification({
+        userId: booking.passengerId,
+        type: 'booking.dropoff_simulated',
+        title: 'Drop-off simulated in dev mode',
+        body: 'Your drop-off was simulated for local testing.',
+        data: {
+            rideId: booking.rideId,
+            bookingId: booking.id,
+            deepLink: `app://booking/${booking.id}`,
+        },
+    });
+
+    await emitToUsers([driverId, booking.passengerId], 'booking:updated', {
+        bookingId,
+        rideId: booking.rideId,
+        passengerId: booking.passengerId,
+        status: BookingStatus.COMPLETED,
+        previousStatus: booking.status,
+        actor: 'driver',
+        action: 'dev.dropoff_simulated',
+        updatedAt: now.toISOString(),
+    });
+
+    return { bookingId, rideId: booking.rideId, status: BookingStatus.COMPLETED, completedAt: now };
 };
 
 export const getLatestLocation = async (rideId: string) => {

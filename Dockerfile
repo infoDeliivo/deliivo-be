@@ -2,10 +2,13 @@ FROM node:20-alpine AS base
 
 WORKDIR /app
 
+ARG DATABASE_URL
+ENV DATABASE_URL=$DATABASE_URL
+
 # Install dependencies
 COPY package.json package-lock.json ./
 COPY prisma ./prisma/
-COPY prisma.config.mjs ./
+COPY prisma.config.ts ./
 RUN npm ci
 
 # Build
@@ -23,7 +26,7 @@ COPY --from=base /app/package.json /app/package-lock.json ./
 COPY --from=base /app/node_modules ./node_modules/
 COPY --from=base /app/dist ./dist/
 COPY --from=base /app/prisma ./prisma/
-COPY --from=base /app/prisma.config.mjs ./
+COPY --from=base /app/prisma.config.ts ./
 COPY --from=base /app/docs ./docs/
 
 EXPOSE 3000

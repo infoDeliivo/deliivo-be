@@ -17,18 +17,48 @@ import {
   Minus,
   Plus,
   MessageSquare,
+  Share2,
 } from 'lucide-react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import GoogleMap from '@/components/GoogleMap';
-import { searchRidesApi, bookingsApi, rideOpsApi, ratingsApi, RideDetails, PricePreview, Booking } from '@/lib/api';
+import { authApi, searchRidesApi, bookingsApi, rideOpsApi, ratingsApi, trackingApi, disputesApi, RideDetails, PricePreview, Booking, TrackingLink, Dispute } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { onSocketEvent, LocationUpdate } from '@/lib/socket';
+import { emitSocketEvent, getSocket, onSocketEvent, LocationUpdate, NotificationPayload, BookingUpdatedPayload, RideUpdatedPayload } from '@/lib/socket';
+
+const TOS_VERSION = '1.0';
+const PRIVACY_VERSION = '1.0';
+
+const REQUEST_EXPIRY_OPTIONS = [
+  { value: 'ONE_HOUR', label: '1 hour' },
+  { value: 'THREE_HOURS', label: '3 hours' },
+  { value: 'SIX_HOURS', label: '6 hours' },
+  { value: 'TWELVE_HOURS', label: '12 hours' },
+  { value: 'TWENTY_FOUR_HOURS', label: '24 hours' },
+  { value: 'BEFORE_DEPARTURE', label: 'Before departure' },
+] as const;
+
+function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+  const earthRadius = 6371e3;
+  const toRad = (value: number) => value * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function etaLabel(from: { lat: number; lng: number } | null, to: { lat: number; lng: number } | null) {
+  if (!from || !to) return null;
+  const minutes = Math.max(1, Math.round((distanceMeters(from, to) / 1000) / 35 * 60));
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 function RideDetailContent() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const segmentId = searchParams.get('segmentId') || undefined;
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
 
   const [ride, setRide] = useState<RideDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,18 +69,34 @@ function RideDetailContent() {
   const [preview, setPreview] = useState<PricePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [booking, setBooking] = useState(false);
-  const [booked, setBooked] = useState(false);
   const [bookError, setBookError] = useState('');
+  const [tosAcceptedForBooking, setTosAcceptedForBooking] = useState(false);
+  const [responseExpiryOption, setResponseExpiryOption] = useState<'ONE_HOUR' | 'THREE_HOURS' | 'SIX_HOURS' | 'TWELVE_HOURS' | 'TWENTY_FOUR_HOURS' | 'BEFORE_DEPARTURE'>('BEFORE_DEPARTURE');
 
   // Rider's existing booking for this ride
   const [myBooking, setMyBooking] = useState<Booking | null>(null);
   const [riderActionLoading, setRiderActionLoading] = useState(false);
+  const [withdrawReason, setWithdrawReason] = useState('');
+  const [pickupArrivalLoading, setPickupArrivalLoading] = useState(false);
+  const [pickupArrivalMessage, setPickupArrivalMessage] = useState('');
+  const [dropoffMessage, setDropoffMessage] = useState('');
+  const [trackingLinks, setTrackingLinks] = useState<TrackingLink[]>([]);
+  const [trackingBusy, setTrackingBusy] = useState(false);
+  const [trackingMessage, setTrackingMessage] = useState('');
 
   // Rating
   const [ratingStars, setRatingStars] = useState(0);
   const [ratingText, setRatingText] = useState('');
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [ratingLoading, setRatingLoading] = useState(false);
+
+  // Disputes / reports
+  const [missedPickupLoading, setMissedPickupLoading] = useState(false);
+  const [disputeReason, setDisputeReason] = useState('NO_SHOW');
+  const [disputeDescription, setDisputeDescription] = useState('');
+  const [disputeLoading, setDisputeLoading] = useState(false);
+  const [disputeMessage, setDisputeMessage] = useState('');
+  const [myDisputes, setMyDisputes] = useState<Dispute[]>([]);
 
   // Live driver location (for passengers)
   const [driverLiveLocation, setDriverLiveLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -61,9 +107,93 @@ function RideDetailContent() {
     loadMyBooking();
   }, [id]);
 
+  useEffect(() => {
+    if (!myBooking) {
+      setTrackingLinks([]);
+      setMyDisputes([]);
+      return;
+    }
+    loadTrackingLinks(myBooking.id);
+    loadMyDisputes(myBooking.id);
+  }, [myBooking?.id]);
+
+  useEffect(() => {
+    if (!id || !user) return;
+    const socket = getSocket();
+    const joinRideRoom = () => socket?.emit('ride:join', { rideId: id });
+    joinRideRoom();
+    socket?.on('connect', joinRideRoom);
+    return () => {
+      socket?.off('connect', joinRideRoom);
+      emitSocketEvent('ride:leave', { rideId: id });
+    };
+  }, [id, user?.id]);
+
+  useEffect(() => {
+    if (!id || !user) return;
+
+    const unsub = onSocketEvent<NotificationPayload>('notification:new', (payload) => {
+      const rideId = payload.data.data?.rideId;
+      const bookingId = payload.data.data?.bookingId;
+
+      if (rideId === id || bookingId === myBooking?.id) {
+        loadRide();
+        loadMyBooking();
+      }
+    });
+
+    return unsub;
+  }, [id, myBooking?.id, user?.id]);
+
+  useEffect(() => {
+    if (!id || !user) return;
+    getSocket();
+
+    const unsubBooking = onSocketEvent<BookingUpdatedPayload>('booking:updated', (payload) => {
+      if (payload.rideId !== id && payload.bookingId !== myBooking?.id) return;
+
+      setMyBooking((prev) =>
+        prev && prev.id === payload.bookingId
+          ? {
+              ...prev,
+              status: payload.status,
+              displayStatus: payload.status,
+              updatedAt: payload.updatedAt,
+            }
+          : prev
+      );
+    });
+
+    const unsubRide = onSocketEvent<RideUpdatedPayload>('ride:updated', (payload) => {
+      if (payload.rideId !== id) return;
+
+      setRide((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: payload.status,
+            }
+          : prev
+      );
+      setMyBooking((prev) =>
+        prev?.ride
+          ? {
+              ...prev,
+              ride: { ...prev.ride, status: payload.status },
+            }
+          : prev
+      );
+    });
+
+    return () => {
+      unsubBooking();
+      unsubRide();
+    };
+  }, [id, myBooking?.id, user?.id]);
+
   // Subscribe to driver's live location via socket
   useEffect(() => {
-    if (!id) return;
+    if (!id || !user) return;
     const unsub = onSocketEvent<LocationUpdate>('ride:location', (data) => {
       if (data.rideId === id) {
         setDriverLiveLocation({ lat: data.lat, lng: data.lng });
@@ -74,24 +204,168 @@ function RideDetailContent() {
       if (res.data) setDriverLiveLocation({ lat: res.data.lat, lng: res.data.lng });
     }).catch(() => {});
     return unsub;
-  }, [id]);
+  }, [id, user?.id]);
 
   async function loadMyBooking() {
     try {
       const res = await bookingsApi.list();
       const match = (res.data.bookings || []).find((b: Booking) => b.rideId === id);
-      if (match) setMyBooking(match);
-    } catch { /* ignore */ }
+      if (!match) {
+        setMyBooking(null);
+        return;
+      }
+
+      const detail = await bookingsApi.getById(match.id);
+      setMyBooking(detail.data || match);
+    } catch {
+      setMyBooking(null);
+    }
+  }
+
+  async function loadTrackingLinks(bookingId: string) {
+    try {
+      const res = await trackingApi.listLinks(bookingId);
+      setTrackingLinks(res.data || []);
+    } catch {
+      setTrackingLinks([]);
+    }
+  }
+
+  async function loadMyDisputes(bookingId: string) {
+    try {
+      const res = await disputesApi.getMyDisputes();
+      setMyDisputes((res.data || []).filter((dispute) => dispute.bookingId === bookingId));
+    } catch {
+      setMyDisputes([]);
+    }
+  }
+
+  function trackingUrlFor(link: TrackingLink) {
+    const path = link.trackingUrl || `/tracking/${link.token}`;
+    if (typeof window === 'undefined') return path;
+    return new URL(path, window.location.origin).toString();
+  }
+
+  async function handleCreateTrackingLink() {
+    if (!myBooking) return;
+    setTrackingBusy(true);
+    setTrackingMessage('');
+    try {
+      const res = await trackingApi.createLink(myBooking.id, 24);
+      const nextLinks = [res.data, ...trackingLinks];
+      setTrackingLinks(nextLinks);
+      const url = trackingUrlFor(res.data);
+      await navigator.clipboard?.writeText(url);
+      setTrackingMessage('Live sharing link copied.');
+    } catch (err: unknown) {
+      setTrackingMessage(err instanceof Error ? err.message : 'Failed to create tracking link');
+    } finally {
+      setTrackingBusy(false);
+    }
+  }
+
+  async function handleCopyTrackingLink(link: TrackingLink) {
+    try {
+      await navigator.clipboard?.writeText(trackingUrlFor(link));
+      setTrackingMessage('Live sharing link copied.');
+    } catch {
+      setTrackingMessage(trackingUrlFor(link));
+    }
   }
 
   async function handleRiderConfirmDropoff() {
     if (!myBooking) return;
     setRiderActionLoading(true);
+    setDropoffMessage('');
+    setBookError('');
     try {
       await rideOpsApi.riderConfirmDropoff(myBooking.id);
-      loadMyBooking();
-    } catch { /* */ }
-    finally { setRiderActionLoading(false); }
+      setDropoffMessage('Drop-off confirmed. Thanks for confirming the ride completion.');
+      await loadMyBooking();
+      await loadRide();
+    } catch (err: unknown) {
+      setBookError(err instanceof Error ? err.message : 'Failed to confirm drop-off');
+    } finally {
+      setRiderActionLoading(false);
+    }
+  }
+
+  function getBookedPickupPoint() {
+    const segment = myBooking?.segmentRide;
+    if (segment?.originLat != null && segment?.originLng != null) {
+      return { lat: segment.originLat, lng: segment.originLng };
+    }
+    const fullRide = myBooking?.fullRide || myBooking?.ride;
+    if (fullRide && 'originLat' in fullRide && 'originLng' in fullRide) {
+      const originLat = (fullRide as { originLat?: number }).originLat;
+      const originLng = (fullRide as { originLng?: number }).originLng;
+      if (originLat != null && originLng != null) return { lat: originLat, lng: originLng };
+    }
+    return null;
+  }
+
+  function getBookedDropoffPoint() {
+    const segment = myBooking?.segmentRide;
+    if (segment?.destinationLat != null && segment?.destinationLng != null) {
+      return { lat: segment.destinationLat, lng: segment.destinationLng };
+    }
+    const fullRide = myBooking?.fullRide || myBooking?.ride;
+    if (fullRide && 'destinationLat' in fullRide && 'destinationLng' in fullRide) {
+      const destinationLat = (fullRide as { destinationLat?: number }).destinationLat;
+      const destinationLng = (fullRide as { destinationLng?: number }).destinationLng;
+      if (destinationLat != null && destinationLng != null) return { lat: destinationLat, lng: destinationLng };
+    }
+    return null;
+  }
+
+  async function getCurrentPositionOrNull() {
+    return new Promise<{ lat: number; lng: number } | null>((resolve) => {
+      if (!navigator.geolocation) return resolve(null);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+      );
+    });
+  }
+
+  async function handleRiderArrivedAtPickup(simulate = false) {
+    if (!myBooking) return;
+    setPickupArrivalLoading(true);
+    setPickupArrivalMessage('');
+    setBookError('');
+    try {
+      const position = simulate
+        ? getBookedPickupPoint()
+        : await getCurrentPositionOrNull();
+      await rideOpsApi.riderArrivedAtPickup(myBooking.id, position?.lat, position?.lng);
+      setPickupArrivalMessage(simulate ? 'Pickup arrival simulated.' : 'Pickup arrival recorded.');
+      await loadMyBooking();
+    } catch (err: unknown) {
+      setBookError(err instanceof Error ? err.message : 'Failed to record arrival');
+    } finally {
+      setPickupArrivalLoading(false);
+    }
+  }
+
+  async function handleReportMissedPickup(simulate = false) {
+    if (!myBooking) return;
+    setMissedPickupLoading(true);
+    setPickupArrivalMessage('');
+    setBookError('');
+    try {
+      const position = simulate ? getBookedPickupPoint() : await getCurrentPositionOrNull();
+      await rideOpsApi.reportMissedPickup(myBooking.id, position?.lat, position?.lng);
+      setPickupArrivalMessage('Missed pickup report submitted. You can add a dispute note below if support needs more detail.');
+      setMyBooking((prev) => prev ? { ...prev, status: 'DRIVER_MISSED_PICKUP', displayStatus: 'DRIVER_MISSED_PICKUP' } : prev);
+      setDisputeReason('DRIVER_MISSED_PICKUP');
+      await loadMyBooking();
+      await loadRide();
+    } catch (err: unknown) {
+      setBookError(err instanceof Error ? err.message : 'Failed to report missed pickup');
+    } finally {
+      setMissedPickupLoading(false);
+    }
   }
 
   async function handleSubmitRating() {
@@ -102,6 +376,28 @@ function RideDetailContent() {
       setRatingSubmitted(true);
     } catch { /* */ }
     finally { setRatingLoading(false); }
+  }
+
+  async function handleCreateDispute() {
+    if (!myBooking || !ride) return;
+    setDisputeLoading(true);
+    setDisputeMessage('');
+    setBookError('');
+    try {
+      await disputesApi.create({
+        rideId: ride.id,
+        bookingId: myBooking.id,
+        reason: disputeReason,
+        description: disputeDescription.trim() || undefined,
+      });
+      setDisputeMessage('Report submitted. Support can review the ride, booking, event, and location evidence.');
+      setDisputeDescription('');
+      await loadMyDisputes(myBooking.id);
+    } catch (err: unknown) {
+      setBookError(err instanceof Error ? err.message : 'Failed to submit report');
+    } finally {
+      setDisputeLoading(false);
+    }
   }
 
   async function loadRide() {
@@ -144,19 +440,64 @@ function RideDetailContent() {
     setBooking(true);
     setBookError('');
     try {
-      await bookingsApi.create({
+      if (needsTosAcceptance) {
+        await authApi.acceptTos(TOS_VERSION, PRIVACY_VERSION);
+        await refreshUser();
+      }
+      const res = await bookingsApi.create({
         rideId: ride.id,
         segmentId,
         seatsBooked: seats,
         pickupWaypointId: ride.bookingContext?.pickupWaypointId || undefined,
         dropoffWaypointId: ride.bookingContext?.dropoffWaypointId || undefined,
+        responseExpiryOption,
       });
-      setBooked(true);
+      setMyBooking(res.data);
     } catch (err: unknown) {
-      setBookError(err instanceof Error ? err.message : 'Booking failed');
+      const message = err instanceof Error ? err.message : 'Booking failed';
+      setBookError(message.includes('TOS_NOT_ACCEPTED')
+        ? 'You must accept the Terms of Service before booking this ride.'
+        : message);
     } finally {
       setBooking(false);
     }
+  }
+
+  async function handleWithdrawBooking() {
+    if (!myBooking) return;
+    setRiderActionLoading(true);
+    try {
+      await bookingsApi.cancel(myBooking.id, withdrawReason.trim() || undefined);
+      loadMyBooking();
+    } catch (err: unknown) {
+      setBookError(err instanceof Error ? err.message : 'Failed to cancel booking');
+    } finally {
+      setRiderActionLoading(false);
+    }
+  }
+
+  async function handleCancelBooking() {
+    if (!myBooking) return;
+    setRiderActionLoading(true);
+    try {
+      await bookingsApi.cancel(myBooking.id);
+      loadMyBooking();
+    } catch (err: unknown) {
+      setBookError(err instanceof Error ? err.message : 'Failed to cancel booking');
+    } finally {
+      setRiderActionLoading(false);
+    }
+  }
+
+  function formatDeadline(deadline?: Booking['decisionDeadline']) {
+    if (!deadline) return '';
+    if (deadline.isExpired) return 'Expired';
+    const seconds = Math.max(0, Math.floor(deadline.timeRemainingSeconds));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m remaining`;
+    if (minutes > 0) return `${minutes}m remaining`;
+    return `${seconds}s remaining`;
   }
 
   if (loading) {
@@ -177,26 +518,6 @@ function RideDetailContent() {
     );
   }
 
-  if (booked) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-deliivo-cream px-4">
-        <div className="w-full max-w-md text-center">
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-green-500 shadow-xl shadow-green-500/30">
-            <CheckCircle className="h-10 w-10 text-white" />
-          </div>
-          <h1 className="mb-2 text-2xl font-bold text-deliivo-dark">Booking requested!</h1>
-          <p className="mb-8 text-deliivo-gray">
-            Your booking request has been sent to the driver. You&apos;ll be notified when they respond.
-          </p>
-          <div className="flex flex-col gap-3">
-            <Link href="/rides" className="btn-primary w-full py-3 text-base">View my rides</Link>
-            <Link href="/search" className="btn-outline w-full py-3 text-base">Search more rides</Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const driverName = ride.driver?.name || 'Driver';
   const initials = driverName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
   const vehicleLabel = ride.vehicle ? [ride.vehicle.brand, ride.vehicle.model_name].filter(Boolean).join(' ') : null;
@@ -204,7 +525,23 @@ function RideDetailContent() {
   const durationMin = ride.routeDurationSeconds ? Math.round(ride.routeDurationSeconds / 60) : null;
   const distanceKm = ride.routeDistanceMeters ? (ride.routeDistanceMeters / 1000).toFixed(1) : null;
   const price = ride.segment?.segmentFare ?? ride.basePricePerSeat;
+  const previewBreakdown = preview?.priceBreakdown;
   const isOwnRide = user?.id === ride.driverId;
+  const needsTosAcceptance = !user?.tosAcceptedAt || !user?.privacyAcceptedAt;
+  const allowRideSimulation = process.env.NEXT_PUBLIC_ALLOW_RIDE_SIMULATION === 'true';
+  const routeWaypoints = [...(ride.waypoints || [])].sort((a, b) => a.orderIndex - b.orderIndex);
+  const routeMarkers = routeWaypoints.length >= 2
+    ? [
+        { lat: routeWaypoints[0].lat, lng: routeWaypoints[0].lng, color: 'green' as const },
+        { lat: routeWaypoints[routeWaypoints.length - 1].lat, lng: routeWaypoints[routeWaypoints.length - 1].lng, color: 'red' as const },
+      ]
+    : [];
+  const pickupEta = etaLabel(driverLiveLocation, getBookedPickupPoint());
+  const dropoffEta = etaLabel(driverLiveLocation, getBookedDropoffPoint());
+  const isTrackableBooking = myBooking && ['IN_PROGRESS', 'WAITING_FOR_PICKUP', 'DRIVER_ARRIVED', 'ONBOARD', 'DROP_PENDING'].includes(myBooking.status);
+  const rateableBookingStatuses = ['COMPLETED', 'NO_SHOW', 'DRIVER_MISSED_PICKUP'];
+  const disputeEligibleStatuses = ['NO_SHOW', 'DRIVER_MISSED_PICKUP', 'DROP_PENDING', 'COMPLETED', 'DISPUTED'];
+  const openDispute = myDisputes.find((dispute) => ['OPEN', 'EVIDENCE_COLLECTED', 'NEEDS_MANUAL_REVIEW', 'WAITING_FOR_USER_RESPONSE', 'ESCALATED'].includes(dispute.status));
 
   return (
     <div className="min-h-screen bg-deliivo-cream">
@@ -297,39 +634,76 @@ function RideDetailContent() {
               <p className="text-sm text-deliivo-dark">{ride.notes}</p>
             </div>
           )}
-          {ride.femaleOnly && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-pink-50 px-3 py-1 text-xs font-semibold text-pink-600">
-              <CheckCircle className="h-3 w-3" /> Women only ride
-            </span>
+        {ride.femaleOnly && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-pink-50 px-3 py-1 text-xs font-semibold text-pink-600">
+            <CheckCircle className="h-3 w-3" /> Women only ride
+          </span>
+        )}
+      </div>
+
+      {(routeMarkers.length > 0 || driverLiveLocation) && (
+        <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-deliivo-dark flex items-center gap-2">
+              <MapPin size={14} className={driverLiveLocation ? 'text-green-500 animate-pulse' : 'text-deliivo-orange'} />
+              {driverLiveLocation ? 'Route and live driver location' : 'Route map'}
+            </h3>
+            {isTrackableBooking && (
+              <span className="text-xs font-medium text-deliivo-gray">
+                {driverLiveLocation ? 'Live' : 'Waiting for live location'}
+              </span>
+            )}
+          </div>
+          <GoogleMap
+            markers={routeMarkers}
+            liveLocation={driverLiveLocation}
+            center={driverLiveLocation || (routeMarkers[0] ? { lat: routeMarkers[0].lat, lng: routeMarkers[0].lng } : { lat: 56.95, lng: 24.11 })}
+            zoom={12}
+            className="h-56 w-full"
+          />
+          {!driverLiveLocation && isTrackableBooking && (
+            <div className="border-t border-gray-100 px-5 py-3 text-xs text-deliivo-gray">
+              Waiting for the driver to start location sharing.
+            </div>
+          )}
+          {isTrackableBooking && (
+            <div className="grid gap-3 border-t border-gray-100 px-5 py-3 text-xs sm:grid-cols-2">
+              <div>
+                <p className="font-semibold text-deliivo-dark">ETA to pickup</p>
+                <p className="mt-0.5 text-deliivo-gray">{pickupEta || 'Waiting for driver location'}</p>
+              </div>
+              <div>
+                <p className="font-semibold text-deliivo-dark">ETA to drop-off</p>
+                <p className="mt-0.5 text-deliivo-gray">{dropoffEta || 'Available after live location'}</p>
+              </div>
+            </div>
           )}
         </div>
+      )}
 
         {/* Live driver map — shown when ride is in progress */}
-        {!isOwnRide && myBooking && ['IN_PROGRESS', 'CONFIRMED', 'ACCEPTED'].includes(myBooking.status) && driverLiveLocation && (
-          <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
-            <div className="px-5 py-3 border-b border-gray-100">
-              <h3 className="text-sm font-semibold text-deliivo-dark flex items-center gap-2">
-                <MapPin size={14} className="text-green-500 animate-pulse" />
-                Driver&apos;s live location
-              </h3>
-            </div>
-            <GoogleMap
-              liveLocation={driverLiveLocation}
-              markers={[
-                { lat: ride.waypoints?.[0]?.lat || 0, lng: ride.waypoints?.[0]?.lng || 0, color: 'green' },
-                { lat: ride.waypoints?.[ride.waypoints.length - 1]?.lat || 0, lng: ride.waypoints?.[ride.waypoints.length - 1]?.lng || 0, color: 'red' },
-              ]}
-              center={driverLiveLocation}
-              zoom={14}
-              className="h-48 w-full"
-            />
-          </div>
-        )}
-
         {/* Booking section */}
-        {!isOwnRide && ride.availableSeats > 0 && (
+        {!isOwnRide && !myBooking && ride.availableSeats > 0 && (
           <div className="rounded-2xl bg-white shadow-sm p-5 space-y-4">
             <h3 className="text-sm font-semibold text-deliivo-dark">Book this ride</h3>
+
+            {needsTosAcceptance && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                <p className="text-sm font-medium text-amber-900">Accept the Terms of Service and Privacy Policy to continue.</p>
+                <label className="flex items-start gap-3 text-sm text-amber-900">
+                  <input
+                    type="checkbox"
+                    checked={tosAcceptedForBooking}
+                    onChange={(e) => setTosAcceptedForBooking(e.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-amber-300 text-deliivo-orange focus:ring-deliivo-orange"
+                  />
+                  <span>
+                    I accept the <Link href="/terms" className="underline">Terms of Service</Link> and{' '}
+                    <Link href="/privacy" className="underline">Privacy Policy</Link> for this booking.
+                  </span>
+                </label>
+              </div>
+            )}
 
             {/* Seat selector */}
             <div className="flex items-center justify-between">
@@ -345,14 +719,28 @@ function RideDetailContent() {
               </div>
             </div>
 
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-deliivo-dark">Request expires</span>
+              <select
+                value={responseExpiryOption}
+                onChange={(e) => setResponseExpiryOption(e.target.value as typeof responseExpiryOption)}
+                className="min-w-44 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-deliivo-dark focus:border-deliivo-orange focus:outline-none focus:ring-2 focus:ring-deliivo-orange/20"
+              >
+                {REQUEST_EXPIRY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+
             {/* Price preview */}
             {previewLoading ? (
               <div className="flex items-center gap-2 text-sm text-deliivo-gray"><Loader2 className="h-4 w-4 animate-spin" /> Calculating...</div>
             ) : preview ? (
               <div className="rounded-xl bg-primary-50 border border-primary-100 p-4 space-y-2">
-                <div className="flex justify-between text-sm"><span className="text-deliivo-gray">Base fare ({seats} seat{seats > 1 ? 's' : ''})</span><span className="font-medium">{preview.currency} {preview.baseFare.toFixed(2)}</span></div>
-                {preview.serviceFee > 0 && <div className="flex justify-between text-sm"><span className="text-deliivo-gray">Service fee</span><span className="font-medium">{preview.currency} {preview.serviceFee.toFixed(2)}</span></div>}
-                <div className="flex justify-between text-base font-bold pt-2 border-t border-primary-200"><span>Total</span><span className="text-primary-500">{preview.currency} {preview.total.toFixed(2)}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-deliivo-gray">Base fare ({seats} seat{seats > 1 ? 's' : ''})</span><span className="font-medium">{previewBreakdown?.currency} {previewBreakdown?.subtotal?.toFixed(2)}</span></div>
+                {previewBreakdown && previewBreakdown.serviceFee > 0 && <div className="flex justify-between text-sm"><span className="text-deliivo-gray">Service fee</span><span className="font-medium">{previewBreakdown.currency} {previewBreakdown.serviceFee.toFixed(2)}</span></div>}
+                {previewBreakdown && previewBreakdown.luggageFee > 0 && <div className="flex justify-between text-sm"><span className="text-deliivo-gray">Luggage fee</span><span className="font-medium">{previewBreakdown.currency} {previewBreakdown.luggageFee.toFixed(2)}</span></div>}
+                <div className="flex justify-between text-base font-bold pt-2 border-t border-primary-200"><span>Total</span><span className="text-primary-500">{previewBreakdown?.currency} {previewBreakdown?.totalPrice?.toFixed(2)}</span></div>
               </div>
             ) : null}
 
@@ -366,11 +754,11 @@ function RideDetailContent() {
             <button
               type="button"
               onClick={handleBook}
-              disabled={booking}
+              disabled={booking || (needsTosAcceptance && !tosAcceptedForBooking)}
               className="btn-primary w-full py-3.5 text-base gap-2 disabled:opacity-60"
             >
               {booking ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-5 w-5" />}
-              {booking ? 'Booking...' : `Request to book · ${preview ? `${preview.currency} ${preview.total.toFixed(2)}` : ''}`}
+              {booking ? 'Booking...' : `Request to book - ${previewBreakdown ? `${previewBreakdown.currency} ${previewBreakdown.totalPrice.toFixed(2)}` : ''}`}
             </button>
 
             <p className="text-center text-xs text-deliivo-gray">
@@ -380,19 +768,199 @@ function RideDetailContent() {
         )}
 
         {/* Rider booking panel — show OTP, actions */}
-        {!isOwnRide && myBooking && !booked && (
+        {!isOwnRide && myBooking && (
           <div className="rounded-2xl bg-white shadow-sm p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-deliivo-dark">Your Booking</h3>
               <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
                 myBooking.status === 'ACCEPTED' || myBooking.status === 'CONFIRMED' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
                 myBooking.status === 'COMPLETED' ? 'bg-green-50 text-green-700 border border-green-200' :
+                myBooking.status === 'NO_SHOW' || myBooking.status === 'DRIVER_MISSED_PICKUP' ? 'bg-red-50 text-red-700 border border-red-200' :
+                myBooking.status === 'DISPUTED' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
                 'bg-yellow-50 text-yellow-700 border border-yellow-200'
               }`}>{myBooking.status}</span>
             </div>
 
+            {myBooking.status === 'DRIVER_PENDING' && myBooking.decisionDeadline && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-1">
+                <p className="text-sm font-semibold text-amber-900">Waiting for driver response</p>
+                <p className="text-xs text-amber-800">Expires in {formatDeadline(myBooking.decisionDeadline)}</p>
+              </div>
+            )}
+
+            {myBooking.segmentRide && (
+              <div className="rounded-xl bg-gray-50 border border-gray-100 p-4 space-y-2">
+                <p className="text-sm font-semibold text-deliivo-dark">Booked segment</p>
+                <div className="text-sm text-deliivo-dark space-y-1">
+                  <p><span className="font-medium text-deliivo-gray">Pickup:</span> {myBooking.segmentRide.originAddress}</p>
+                  <p><span className="font-medium text-deliivo-gray">Drop-off:</span> {myBooking.segmentRide.destinationAddress}</p>
+                  {myBooking.segmentRide.segment?.segmentFare !== undefined && (
+                    <p><span className="font-medium text-deliivo-gray">Segment fare:</span> {ride.currency} {myBooking.segmentRide.segment.segmentFare.toFixed(2)}</p>
+                  )}
+                  {myBooking.segmentRide.bookingContext && (
+                    <p className="text-xs text-deliivo-gray">
+                      Waypoints: {myBooking.segmentRide.bookingContext.pickupWaypointId || 'origin'} - {myBooking.segmentRide.bookingContext.dropoffWaypointId || 'destination'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {['WAITING_FOR_PICKUP', 'DRIVER_ARRIVED'].includes(myBooking.status) && (
+              <div className="rounded-xl border border-dashed border-deliivo-orange/30 bg-orange-50/50 p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-deliivo-dark">Pickup point</p>
+                  <p className="text-xs text-deliivo-gray mt-1">
+                    Mark your arrival here when you are physically at the pickup point. The app will store your GPS evidence for support and disputes.
+                  </p>
+                </div>
+                <div className="rounded-lg bg-white border border-orange-100 p-3 text-sm text-deliivo-dark">
+                  <p className="font-medium">
+                    {myBooking.segmentRide?.segment?.pickupAddress || myBooking.segmentRide?.originAddress || myBooking.fullRide?.originAddress || ride.originAddress}
+                  </p>
+                  {myBooking.segmentRide?.bookingContext?.pickupWaypointId && (
+                    <p className="text-xs text-deliivo-gray mt-1 break-all">
+                      Waypoint: {myBooking.segmentRide.bookingContext.pickupWaypointId}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRiderArrivedAtPickup(false)}
+                  disabled={pickupArrivalLoading || missedPickupLoading}
+                  className="w-full rounded-xl border border-deliivo-orange px-4 py-2.5 text-sm font-semibold text-deliivo-orange hover:bg-orange-50 disabled:opacity-50"
+                >
+                  {pickupArrivalLoading ? 'Recording...' : 'I am at pickup point'}
+                </button>
+                {allowRideSimulation && (
+                  <button
+                    type="button"
+                    onClick={() => handleRiderArrivedAtPickup(true)}
+                    disabled={pickupArrivalLoading || missedPickupLoading}
+                    className="w-full rounded-xl border border-dashed border-deliivo-orange px-4 py-2.5 text-sm font-semibold text-deliivo-orange hover:bg-orange-50 disabled:opacity-50"
+                  >
+                    {pickupArrivalLoading ? 'Recording...' : 'Simulate pickup arrival'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleReportMissedPickup(false)}
+                  disabled={pickupArrivalLoading || missedPickupLoading}
+                  className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {missedPickupLoading ? 'Submitting...' : 'Report driver missed pickup'}
+                </button>
+                {allowRideSimulation && (
+                  <button
+                    type="button"
+                    onClick={() => handleReportMissedPickup(true)}
+                    disabled={pickupArrivalLoading || missedPickupLoading}
+                    className="w-full rounded-xl border border-dashed border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    {missedPickupLoading ? 'Submitting...' : 'Simulate missed pickup'}
+                  </button>
+                )}
+                {pickupArrivalMessage && <p className="text-xs font-medium text-green-700">{pickupArrivalMessage}</p>}
+              </div>
+            )}
+
+            <div className="rounded-xl bg-gray-50 border border-gray-100 p-4 space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-deliivo-gray">Seats</span>
+                <span className="font-medium text-deliivo-dark">{myBooking.seatsBooked}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-deliivo-gray">Total</span>
+                <span className="font-medium text-deliivo-dark">{ride.currency} {myBooking.totalPrice.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-deliivo-gray">Booking ID</span>
+                <span className="font-medium text-deliivo-dark">{myBooking.id.slice(0, 8)}</span>
+              </div>
+            </div>
+
+            {['CONFIRMED', 'WAITING_FOR_PICKUP', 'DRIVER_ARRIVED', 'ONBOARD', 'DROP_PENDING', 'IN_PROGRESS'].includes(myBooking.status) && (
+              <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-deliivo-dark">Live sharing link</p>
+                    <p className="mt-1 text-xs text-deliivo-gray">
+                      Share a read-only tracking page with family or friends. It expires automatically.
+                    </p>
+                  </div>
+                  <Share2 className="h-4 w-4 text-blue-600" />
+                </div>
+
+                {trackingLinks.length > 0 ? (
+                  <div className="space-y-2">
+                    {trackingLinks.slice(0, 2).map((link) => (
+                      <div key={link.id} className="flex items-center justify-between gap-2 rounded-lg bg-white border border-blue-100 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium text-deliivo-dark">{trackingUrlFor(link)}</p>
+                          <p className="text-[11px] text-deliivo-gray">Expires {new Date(link.expiresAt).toLocaleString()}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyTrackingLink(link)}
+                          className="shrink-0 rounded-full border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-deliivo-gray">No active sharing link yet.</p>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleCreateTrackingLink}
+                  disabled={trackingBusy}
+                  className="w-full rounded-xl border border-blue-200 px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                >
+                  {trackingBusy ? 'Creating...' : 'Create and copy live link'}
+                </button>
+                {trackingMessage && <p className="text-xs text-deliivo-gray">{trackingMessage}</p>}
+              </div>
+            )}
+
+            {(myBooking.status === 'PENDING' || myBooking.status === 'PAYMENT_PENDING' || myBooking.status === 'DRIVER_PENDING') && (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-deliivo-gray">Cancel reason</label>
+                  <textarea
+                    value={withdrawReason}
+                    onChange={(e) => setWithdrawReason(e.target.value)}
+                    placeholder="Optional reason for cancelling this request"
+                    rows={2}
+                    className="mt-1 w-full rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm focus:border-deliivo-orange focus:outline-none focus:ring-2 focus:ring-deliivo-orange/20 resize-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleWithdrawBooking}
+                  disabled={riderActionLoading}
+                  className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-deliivo-dark hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {riderActionLoading ? 'Working...' : 'Cancel request'}
+                </button>
+              </div>
+            )}
+
+            {(myBooking.status === 'ACCEPTED' || myBooking.status === 'CONFIRMED') && (
+              <button
+                type="button"
+                onClick={handleCancelBooking}
+                disabled={riderActionLoading}
+                className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+              >
+                {riderActionLoading ? 'Working...' : 'Cancel booking'}
+              </button>
+            )}
+
             {/* OTP Display */}
-            {['ACCEPTED', 'CONFIRMED', 'IN_PROGRESS'].includes(myBooking.status) && (myBooking as unknown as { pickupOtp?: string }).pickupOtp && (
+            {['ACCEPTED', 'CONFIRMED', 'WAITING_FOR_PICKUP', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(myBooking.status) && (myBooking as unknown as { pickupOtp?: string }).pickupOtp && (
               <div className="rounded-xl bg-orange-50 border border-orange-100 p-4">
                 <p className="text-xs text-deliivo-gray font-medium mb-1">Pickup OTP — share with driver</p>
                 <p className="text-2xl font-bold text-deliivo-orange tracking-widest text-center">
@@ -401,28 +969,81 @@ function RideDetailContent() {
               </div>
             )}
 
-            {(myBooking as unknown as { dropOtp?: string }).dropOtp && (
-              <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
-                <p className="text-xs text-deliivo-gray font-medium mb-1">Drop-off OTP — share with driver</p>
-                <p className="text-2xl font-bold text-blue-600 tracking-widest text-center">
-                  {(myBooking as unknown as { dropOtp: string }).dropOtp}
-                </p>
+            {/* Confirm Dropoff */}
+            {myBooking.status === 'DROP_PENDING' && (
+              <div className="space-y-2">
+                <button
+                  onClick={handleRiderConfirmDropoff}
+                  disabled={riderActionLoading}
+                  className="w-full py-2.5 text-sm font-semibold rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  {riderActionLoading ? 'Confirming...' : 'Confirm I was dropped off'}
+                </button>
+                {allowRideSimulation && (
+                  <button
+                    type="button"
+                    onClick={handleRiderConfirmDropoff}
+                    disabled={riderActionLoading}
+                    className="w-full rounded-xl border border-dashed border-deliivo-orange px-4 py-2.5 text-sm font-semibold text-deliivo-orange hover:bg-orange-50 disabled:opacity-50"
+                  >
+                    {riderActionLoading ? 'Working...' : 'Simulate drop-off confirmation'}
+                  </button>
+                )}
+                {dropoffMessage && <p className="text-xs font-medium text-green-700">{dropoffMessage}</p>}
               </div>
             )}
 
-            {/* Confirm Dropoff */}
-            {myBooking.status === 'IN_PROGRESS' && (
-              <button
-                onClick={handleRiderConfirmDropoff}
-                disabled={riderActionLoading}
-                className="w-full py-2.5 text-sm font-semibold rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
-              >
-                {riderActionLoading ? 'Confirming...' : 'Confirm I was dropped off'}
-              </button>
+            {disputeEligibleStatuses.includes(myBooking.status) && (
+              <div className="pt-3 border-t border-gray-100 space-y-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-deliivo-dark">Report an issue</h4>
+                  <p className="mt-1 text-xs text-deliivo-gray">
+                    Add context for support. The backend links this report to ride events, location history, and booking evidence.
+                  </p>
+                </div>
+                {openDispute && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3">
+                    <p className="text-xs font-semibold text-amber-900">Existing report: {openDispute.status.replace(/_/g, ' ')}</p>
+                    <p className="mt-1 text-xs text-amber-800">{openDispute.reason.replace(/_/g, ' ')}</p>
+                    {openDispute.resolution && <p className="mt-1 text-xs text-amber-800">Resolution: {openDispute.resolution}</p>}
+                  </div>
+                )}
+                <select
+                  value={disputeReason}
+                  onChange={(e) => setDisputeReason(e.target.value)}
+                  disabled={!!openDispute}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-deliivo-dark focus:border-deliivo-orange focus:outline-none focus:ring-2 focus:ring-deliivo-orange/20"
+                >
+                  <option value="NO_SHOW">Passenger or driver no-show</option>
+                  <option value="DRIVER_MISSED_PICKUP">Driver missed pickup</option>
+                  <option value="WRONG_PICKUP_LOCATION">Wrong pickup location</option>
+                  <option value="DROP_OFF_ISSUE">Drop-off issue</option>
+                  <option value="PAYMENT_OR_REFUND">Payment or refund issue</option>
+                  <option value="SAFETY">Safety concern</option>
+                  <option value="OTHER">Other</option>
+                </select>
+                <textarea
+                  value={disputeDescription}
+                  onChange={(e) => setDisputeDescription(e.target.value)}
+                  placeholder="What happened? Include timing, pickup point, and any useful details."
+                  rows={3}
+                  disabled={!!openDispute}
+                  className="w-full rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm focus:border-deliivo-orange focus:outline-none focus:ring-2 focus:ring-deliivo-orange/20 resize-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateDispute}
+                  disabled={disputeLoading || !!openDispute}
+                  className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {openDispute ? 'Report already open' : disputeLoading ? 'Submitting...' : 'Submit report'}
+                </button>
+                {disputeMessage && <p className="text-xs font-medium text-green-700">{disputeMessage}</p>}
+              </div>
             )}
 
             {/* Rating form — after ride completed */}
-            {myBooking.status === 'COMPLETED' && !ratingSubmitted && (
+            {rateableBookingStatuses.includes(myBooking.status) && !ratingSubmitted && (
               <div className="pt-3 border-t border-gray-100">
                 <h4 className="text-sm font-semibold text-deliivo-dark mb-2">Rate this ride</h4>
                 <div className="flex gap-1 mb-3">

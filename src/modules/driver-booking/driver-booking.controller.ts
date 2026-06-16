@@ -6,6 +6,7 @@ import * as DriverBookingService from './driver-booking.service.js';
 
 const cacheKeys = {
     booking: (id: string) => `booking:${id}`,
+    bookingPattern: (id: string) => `booking:${id}:*`,
     ride: (id: string) => `ride:${id}`,
     rideDetailsPattern: (id: string) => `ride:details:${id}:*`,
     userBookings: (userId: string) => `user:${userId}:bookings`,
@@ -13,6 +14,7 @@ const cacheKeys = {
 
 const invalidateBookingCaches = async (bookingId: string, rideId: string, passengerId: string) => {
     await deleteCache(cacheKeys.booking(bookingId));
+    await deleteCachePattern(cacheKeys.bookingPattern(bookingId));
     await deleteCache(cacheKeys.ride(rideId));
     await deleteCache(cacheKeys.userBookings(passengerId));
     await deleteCachePattern(cacheKeys.rideDetailsPattern(rideId));

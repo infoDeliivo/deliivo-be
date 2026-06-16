@@ -10,9 +10,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Deliivo - Carpool Together, Go Further",
+  title: "Deliivo - Baltic Carpooling",
   description:
-    "Deliivo connects drivers and passengers for affordable, eco-friendly carpooling. Share rides, split costs, and travel smarter together.",
+    "Deliivo connects drivers and passengers across Estonia, Latvia, and Lithuania for affordable regional carpooling.",
 };
 
 export default function RootLayout({

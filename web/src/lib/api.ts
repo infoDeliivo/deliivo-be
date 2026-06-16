@@ -46,7 +46,7 @@ async function refreshAccessToken(): Promise<TokenPair> {
 
   const res = await fetch(`${getApiBaseUrl()}/api/v1/auth/access-token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken: tokens.refreshToken }),
   });
 
@@ -64,6 +64,40 @@ async function refreshAccessToken(): Promise<TokenPair> {
   return newTokens;
 }
 
+async function parseApiResponse(res: Response): Promise<{ json: unknown; rawText: string; isJson: boolean }> {
+  const rawText = await res.text();
+  if (!rawText) {
+    return { json: null, rawText, isJson: false };
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  const expectsJson = contentType.includes('application/json') || contentType.includes('+json');
+
+  try {
+    return { json: JSON.parse(rawText), rawText, isJson: true };
+  } catch {
+    if (expectsJson) {
+      throw new ApiError('Invalid JSON response from API', res.status, rawText.slice(0, 300));
+    }
+    return { json: null, rawText, isJson: false };
+  }
+}
+
+function getResponseMessage(json: unknown, rawText: string, status: number): string {
+  if (json && typeof json === 'object') {
+    const body = json as { message?: string; error?: string };
+    if (body.message) return body.message;
+    if (body.error) return body.error;
+  }
+
+  const trimmed = rawText.trim();
+  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
+    return `API returned HTML instead of JSON (${status}). Check that the backend is running and the web proxy points to the API.`;
+  }
+
+  return trimmed.slice(0, 180) || 'Request failed';
+}
+
 // Main API fetch wrapper
 export async function apiFetch<T = unknown>(
   path: string,
@@ -73,6 +107,7 @@ export async function apiFetch<T = unknown>(
   const tokens = getTokens();
   const isFormData = options.body instanceof FormData;
   const headers: Record<string, string> = {
+    'Accept': 'application/json',
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string> || {}),
   };
@@ -105,10 +140,14 @@ export async function apiFetch<T = unknown>(
     }
   }
 
-  const json = await res.json();
+  const { json, rawText, isJson } = await parseApiResponse(res);
 
   if (!res.ok) {
-    throw new ApiError(json.message || 'Request failed', res.status, json);
+    throw new ApiError(getResponseMessage(json, rawText, res.status), res.status, json ?? rawText);
+  }
+
+  if (!isJson) {
+    throw new ApiError(getResponseMessage(json, rawText, res.status), res.status, rawText);
   }
 
   return json as T;
@@ -242,7 +281,7 @@ export interface Rating {
 // Vehicle API
 export const vehicleApi = {
   list(page = 1, limit = 10) {
-    return apiFetch<{ data: Vehicle[] }>(`/api/v1/vehicles?page=${page}&limit=${limit}`);
+    return apiFetch<{ data: { vehicles: Vehicle[]; pagination: Pagination } }>(`/api/v1/vehicles?page=${page}&limit=${limit}`);
   },
 
   get(id: string) {
@@ -441,6 +480,10 @@ export const publishRideApi = {
     });
   },
 
+  getRideById(rideId: string) {
+    return apiFetch<{ data: DriverPublishedRide }>(`/api/v1/publish-ride/${rideId}`);
+  },
+
   // Get current draft
   getDraft() {
     return apiFetch<{ data: DraftRide | null }>('/api/v1/publish-ride/draft');
@@ -450,7 +493,13 @@ export const publishRideApi = {
   getUserRides(status?: string, page = 1, limit = 10) {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
     if (status) params.set('status', status);
-    return apiFetch<{ data: PublishedRide[] }>(`/api/v1/publish-ride?${params}`);
+    return apiFetch<{ data: { rides: PublishedRide[]; pagination: Pagination } }>(`/api/v1/publish-ride?${params}`);
+  },
+
+  cancelRide(rideId: string) {
+    return apiFetch(`/api/v1/publish-ride/${rideId}`, {
+      method: 'DELETE',
+    });
   },
 
   // Get fuel price
@@ -464,7 +513,7 @@ export const publishRideApi = {
 // Search Rides API
 export const searchRidesApi = {
   createAlert(data: { originLat: number; originLng: number; destinationLat: number; destinationLng: number; departureDate: string; originAddress?: string; destinationAddress?: string }) {
-    return apiFetch<{ data: { id: string } }>('/api/v1/search-ride/notify', {
+    return apiFetch<{ data: { id: string } }>('/api/v1/search-rides/notify', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -485,16 +534,16 @@ export const searchRidesApi = {
     if (params.page) query.set('page', String(params.page));
     if (params.limit) query.set('limit', String(params.limit));
     if (params.radiusKm) query.set('radiusKm', String(params.radiusKm));
-    return apiFetch<{ data: SearchRidesResponse }>(`/api/v1/search-ride/advanced?${query}`);
+    return apiFetch<{ data: SearchRidesResponse }>(`/api/v1/search-rides/advanced?${query}`);
   },
 
   getDetails(id: string, segmentId?: string) {
     const query = segmentId ? `?segmentId=${segmentId}` : '';
-    return apiFetch<{ data: RideDetails }>(`/api/v1/search-ride/${id}${query}`);
+    return apiFetch<{ data: RideDetails }>(`/api/v1/search-rides/${id}${query}`);
   },
 
   getRecent(limit = 5) {
-    return apiFetch<{ data: RecentSearch[] }>(`/api/v1/search-ride/user/recent?limit=${limit}`);
+    return apiFetch<{ data: RecentSearch[] }>(`/api/v1/search-rides/user/recent?limit=${limit}`);
   },
 };
 
@@ -531,9 +580,10 @@ export const bookingsApi = {
     });
   },
 
-  cancel(id: string) {
+  cancel(id: string, reason?: string) {
     return apiFetch<{ data: Booking }>(`/api/v1/bookings/${id}/cancel`, {
       method: 'POST',
+      body: JSON.stringify({ reason }),
     });
   },
 
@@ -550,8 +600,10 @@ export const driverBookingApi = {
     return apiFetch<{ data: DriverBookingResult }>(`/api/v1/driver/bookings/${bookingId}/accept`, { method: 'POST' });
   },
   reject(bookingId: string, reason?: string) {
+    const body = reason ? JSON.stringify({ reason }) : undefined;
     return apiFetch<{ data: DriverBookingResult }>(`/api/v1/driver/bookings/${bookingId}/reject`, {
-      method: 'POST', body: JSON.stringify({ reason: reason || '' }),
+      method: 'POST',
+      ...(body ? { body } : {}),
     });
   },
   verifyPickupOtp(bookingId: string, otp: string) {
@@ -567,44 +619,101 @@ export const driverBookingApi = {
 };
 
 // Ride Operations API (start/finish/location)
+function createEventMeta() {
+  return {
+    actionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    clientTimestamp: new Date().toISOString(),
+  };
+}
+
+function createEventMetaWithLocation(lat?: number, lng?: number) {
+  return {
+    ...createEventMeta(),
+    ...(lat != null && lng != null ? { lat, lng } : {}),
+  };
+}
+
 export const rideOpsApi = {
   startRide(rideId: string) {
     return apiFetch<{ message: string }>(`/api/v1/rides/${rideId}/start`, {
-      method: 'POST', body: JSON.stringify({}),
+      method: 'POST', body: JSON.stringify(createEventMeta()),
     });
   },
   finishRide(rideId: string) {
     return apiFetch<{ message: string }>(`/api/v1/rides/${rideId}/finish`, {
-      method: 'POST', body: JSON.stringify({}),
+      method: 'POST', body: JSON.stringify(createEventMeta()),
     });
   },
   submitLocation(rideId: string, lat: number, lng: number) {
     return apiFetch(`/api/v1/rides/${rideId}/locations`, {
-      method: 'POST', body: JSON.stringify({ lat, lng }),
+      method: 'POST', body: JSON.stringify({ lat, lng, timestamp: new Date().toISOString() }),
     });
   },
   getLatestLocation(rideId: string) {
-    return apiFetch<{ data: { lat: number; lng: number; updatedAt: string } | null }>(`/api/v1/rides/${rideId}/latest-location`);
+    return apiFetch<{ data: LocationUpdateRecord | null }>(`/api/v1/rides/${rideId}/latest-location`);
   },
-  driverArrived(bookingId: string) {
+  driverArrived(bookingId: string, lat?: number, lng?: number) {
     return apiFetch(`/api/v1/bookings/${bookingId}/driver-arrived`, {
-      method: 'POST', body: JSON.stringify({}),
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+    });
+  },
+  markNoShow(bookingId: string, lat?: number, lng?: number) {
+    return apiFetch(`/api/v1/bookings/${bookingId}/mark-no-show`, {
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
     });
   },
   verifyPickupOtp(bookingId: string, otp: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/verify-pickup-otp`, {
-      method: 'POST', body: JSON.stringify({ otp }),
+      method: 'POST', body: JSON.stringify({ otp, ...createEventMeta() }),
     });
   },
-  confirmDropoff(bookingId: string) {
+  riderArrivedAtPickup(bookingId: string, lat?: number, lng?: number) {
+    return apiFetch(`/api/v1/bookings/${bookingId}/rider-arrived`, {
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+    });
+  },
+  reportMissedPickup(bookingId: string, lat?: number, lng?: number) {
+    return apiFetch(`/api/v1/bookings/${bookingId}/report-missed-pickup`, {
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+    });
+  },
+  confirmDropoff(bookingId: string, lat?: number, lng?: number) {
     return apiFetch(`/api/v1/bookings/${bookingId}/confirm-dropoff`, {
-      method: 'POST', body: JSON.stringify({}),
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
     });
   },
   riderConfirmDropoff(bookingId: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/rider-confirm-dropoff`, {
-      method: 'POST', body: JSON.stringify({}),
+      method: 'POST', body: JSON.stringify(createEventMeta()),
     });
+  },
+  devSimulatePickup(bookingId: string, lat?: number, lng?: number) {
+    return apiFetch(`/api/v1/bookings/${bookingId}/dev-simulate-pickup`, {
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+    });
+  },
+  devSimulateDropoff(bookingId: string, lat?: number, lng?: number) {
+    return apiFetch(`/api/v1/bookings/${bookingId}/dev-simulate-dropoff`, {
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+    });
+  },
+};
+
+export const trackingApi = {
+  createLink(bookingId: string, ttlHours = 24, accessScope = 'LOCATION_ONLY') {
+    return apiFetch<{ data: TrackingLink }>(`/api/v1/tracking/links`, {
+      method: 'POST',
+      body: JSON.stringify({ bookingId, ttlHours, accessScope }),
+    });
+  },
+  listLinks(bookingId: string) {
+    return apiFetch<{ data: TrackingLink[] }>(`/api/v1/tracking/bookings/${bookingId}/links`);
+  },
+  revokeLink(linkId: string) {
+    return apiFetch(`/api/v1/tracking/links/${linkId}`, { method: 'DELETE' });
+  },
+  getPublic(token: string) {
+    return apiFetch<{ data: PublicTrackingData }>(`/api/v1/tracking/${token}`);
   },
 };
 
@@ -631,6 +740,30 @@ export const chatApi = {
   markRead(conversationId: string, lastReadMessageId: string) {
     return apiFetch(`/api/v1/chat/${conversationId}/read`, {
       method: 'POST', body: JSON.stringify({ lastReadMessageId }),
+    });
+  },
+};
+
+// Notifications API
+export const notificationsApi = {
+  list(cursor?: string, limit = 20) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    return apiFetch<{ data: { notifications: NotificationRecord[]; nextCursor: string | null; hasMore: boolean } }>(`/api/v1/notifications?${params}`);
+  },
+  getUnreadCount() {
+    return apiFetch<{ data: { unreadCount: number } }>('/api/v1/notifications/unread-count');
+  },
+  markRead(notificationIds: string[]) {
+    return apiFetch<{ data: { markedCount: number } }>('/api/v1/notifications/mark-read', {
+      method: 'POST',
+      body: JSON.stringify({ notificationIds }),
+    });
+  },
+  registerDevice(platform: 'ios' | 'android' | 'web', token: string) {
+    return apiFetch<{ data: { id: string; platform: string; token: string; userId: string } }>('/api/v1/notifications/device-token', {
+      method: 'POST',
+      body: JSON.stringify({ platform, token }),
     });
   },
 };
@@ -693,19 +826,24 @@ export const payoutsApi = {
 // Payment Methods API
 export const paymentMethodsApi = {
   list() {
-    return apiFetch<{ data: PaymentMethod[] }>('/api/v1/payments/methods');
+    return apiFetch<{ data: PaymentMethod[] }>('/api/v1/payment-methods');
   },
   createSetupIntent() {
-    return apiFetch<{ data: { clientSecret: string } }>('/api/v1/payments/setup-intent', { method: 'POST' });
+    return apiFetch<{ data: { clientSecret: string; customerId: string; setupIntentId: string } }>('/api/v1/payment-methods/setup-intent', { method: 'POST' });
+  },
+  save(stripePaymentMethodId: string, stripeCustomerId: string) {
+    return apiFetch<{ data: PaymentMethod }>('/api/v1/payment-methods/save', {
+      method: 'POST',
+      body: JSON.stringify({ stripePaymentMethodId, stripeCustomerId }),
+    });
   },
   setDefault(paymentMethodId: string) {
-    return apiFetch('/api/v1/payments/methods/default', {
+    return apiFetch(`/api/v1/payment-methods/${paymentMethodId}/default`, {
       method: 'POST',
-      body: JSON.stringify({ paymentMethodId }),
     });
   },
   remove(paymentMethodId: string) {
-    return apiFetch(`/api/v1/payments/methods/${paymentMethodId}`, { method: 'DELETE' });
+    return apiFetch(`/api/v1/payment-methods/${paymentMethodId}`, { method: 'DELETE' });
   },
 };
 
@@ -758,9 +896,9 @@ export const adminApi = {
     if (params?.limit) query.set('limit', String(params.limit));
     return apiFetch<{ data: { disputes: AdminDispute[]; pagination: Pagination } }>(`/api/v1/admin/disputes?${query}`);
   },
-  resolveDispute(id: string, resolution: string) {
+  resolveDispute(id: string, resolution: string, refundPercent?: number) {
     return apiFetch<{ data: AdminDispute }>(`/api/v1/admin/disputes/${id}/resolve`, {
-      method: 'POST', body: JSON.stringify({ resolution }),
+      method: 'POST', body: JSON.stringify({ resolution, ...(refundPercent != null ? { refundPercent } : {}) }),
     });
   },
   collectEvidence(id: string) {
@@ -829,16 +967,19 @@ export interface AdminDispute {
   id: string;
   rideId: string;
   bookingId: string;
-  reporterId: string;
+  raisedBy: string;
   reason: string;
   description?: string;
   status: string;
+  evidenceJson?: unknown;
+  recommendation?: string;
+  riskScore?: number;
   resolution?: string;
   resolvedBy?: string;
   resolvedAt?: string;
   createdAt: string;
   updatedAt: string;
-  booking?: { id: string; passengerId: string; totalPrice: number; status: string };
+  booking?: { id: string; passengerId: string; totalPrice: number; status: string; payment?: { id: string; status: string; amountTotal: number; fareAmount: number; currency: string } | null };
   ride?: { id: string; driverId: string; originAddress: string; destinationAddress: string };
 }
 
@@ -896,12 +1037,17 @@ export interface Dispute {
   id: string;
   rideId: string;
   bookingId: string;
+  raisedBy?: string;
   reason: string;
   description?: string;
   status: string;
+  recommendation?: string;
+  riskScore?: number;
   resolution?: string;
   createdAt: string;
   updatedAt: string;
+  booking?: { id: string; passengerId: string; totalPrice: number; status: string };
+  ride?: { id: string; driverId: string; originAddress: string; destinationAddress: string; departureDate?: string; departureTime?: string };
 }
 
 export interface PaymentMethod {
@@ -911,6 +1057,58 @@ export interface PaymentMethod {
   expMonth: number;
   expYear: number;
   isDefault: boolean;
+}
+
+export interface LocationUpdateRecord {
+  rideId: string;
+  lat: number;
+  lng: number;
+  speed?: number | null;
+  heading?: number | null;
+  accuracy?: number | null;
+  timestamp: string;
+  recorded?: boolean;
+}
+
+export interface TrackingLink {
+  id: string;
+  token: string;
+  expiresAt: string;
+  accessScope: string;
+  trackingUrl?: string;
+  createdAt?: string;
+}
+
+export interface PublicTrackingData {
+  rideId: string;
+  bookingId: string;
+  bookingStatus: string;
+  rideStatus: string;
+  originAddress: string;
+  destinationAddress: string;
+  pickup: string | null;
+  dropoff: string | null;
+  departureDate?: string;
+  departureTime: string;
+  location: LocationUpdateRecord | null;
+  eta?: {
+    pickup: { distanceMeters: number; minutes: number; label: string } | null;
+    dropoff: { distanceMeters: number; minutes: number; label: string } | null;
+    scheduledPickupTime?: string | null;
+    scheduledDropoffTime?: string | null;
+  };
+  accessScope: string;
+}
+
+export interface NotificationRecord {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown> | null;
+  isRead: boolean;
+  readAt: string | null;
+  createdAt: string;
 }
 
 // Search & Booking types
@@ -996,11 +1194,32 @@ export interface RecentSearch {
 }
 
 export interface PricePreview {
-  baseFare: number;
-  serviceFee: number;
-  total: number;
-  currency: string;
-  seatsBooked: number;
+  priceBreakdown: {
+    basePricePerSeat: number;
+    seatsBooked: number;
+    subtotal: number;
+    luggageFee: number;
+    serviceFee: number;
+    totalPrice: number;
+    currency: string;
+  };
+  ride: {
+    id: string;
+    originAddress: string;
+    destinationAddress: string;
+    basePricePerSeat: number;
+    currency: string;
+    availableSeats: number;
+  };
+  segmentRide?: {
+    originAddress: string;
+    originLat?: number;
+    originLng?: number;
+    destinationAddress: string;
+    destinationLat?: number;
+    destinationLng?: number;
+    basePricePerSeat: number;
+  } | null;
 }
 
 export interface CreateBookingInput {
@@ -1011,6 +1230,7 @@ export interface CreateBookingInput {
   pickupWaypointId?: string;
   dropoffWaypointId?: string;
   notes?: string;
+  responseExpiryOption?: 'ONE_HOUR' | 'THREE_HOURS' | 'SIX_HOURS' | 'TWELVE_HOURS' | 'TWENTY_FOUR_HOURS' | 'BEFORE_DEPARTURE';
 }
 
 export interface Booking {
@@ -1020,19 +1240,65 @@ export interface Booking {
   seatsBooked: number;
   totalPrice: number;
   status: string;
+  displayStatus?: string;
   pickupWaypointId: string | null;
   dropoffWaypointId: string | null;
   notes?: string;
   createdAt: string;
+  updatedAt?: string;
+  luggageCount?: number;
+  decisionDeadline?: {
+    deadlineAt: string;
+    timeRemainingMs: number;
+    timeRemainingSeconds: number;
+    isExpired: boolean;
+    canExtend?: boolean;
+    hasBeenExtended?: boolean;
+    autoCancelAt?: string | null;
+    autoCancelTimeRemainingMs?: number | null;
+    autoCancelTimeRemainingSeconds?: number | null;
+  } | null;
+  payment?: {
+    provider: 'stripe';
+    paymentIntentId: string;
+    clientSecret?: string;
+    currency?: string;
+  } | null;
   ride?: {
     id: string;
     originAddress: string;
+    originLat?: number;
+    originLng?: number;
     destinationAddress: string;
+    destinationLat?: number;
+    destinationLng?: number;
     departureDate: string;
     departureTime: string;
+    status?: string;
     driver?: { name: string | null; avatarUrl: string | null };
     vehicle?: { brand: string | null; model_name: string | null; color: string | null } | null;
   };
+  fullRide?: Booking['ride'];
+  segmentRide?: {
+    originAddress: string;
+    originLat?: number;
+    originLng?: number;
+    destinationAddress: string;
+    destinationLat?: number;
+    destinationLng?: number;
+    basePricePerSeat: number;
+    bookingContext?: {
+      pickupWaypointId: string | null;
+      dropoffWaypointId: string | null;
+    };
+    segment?: {
+      segmentFare: number;
+      pickupAddress?: string;
+      dropoffAddress?: string;
+    };
+  } | null;
+  pickupOtp?: string | null;
+  dropOtp?: string | null;
 }
 
 // Types
@@ -1121,6 +1387,39 @@ export interface PublishedRide {
   routeDurationSeconds?: number;
 }
 
+export interface DriverRideBooking {
+  id: string;
+  rideId: string;
+  passengerId: string;
+  passenger?: { id: string; name: string | null; avatarUrl: string | null };
+  seatsBooked: number;
+  totalPrice: number;
+  status: string;
+  displayStatus?: string;
+  decisionDeadline?: {
+    deadlineAt: string;
+    timeRemainingMs: number;
+    timeRemainingSeconds: number;
+    isExpired: boolean;
+    canExtend?: boolean;
+    hasBeenExtended?: boolean;
+    autoCancelAt?: string | null;
+    autoCancelTimeRemainingMs?: number | null;
+    autoCancelTimeRemainingSeconds?: number | null;
+  } | null;
+  pickupWaypointId: string | null;
+  dropoffWaypointId: string | null;
+  pickupLocation?: { address: string; placeId: string; lat?: number; lng?: number; estimatedArrivalTime?: string | null };
+  dropoffLocation?: { address: string; placeId: string; lat?: number; lng?: number; estimatedArrivalTime?: string | null };
+  createdAt?: string;
+}
+
+export interface DriverPublishedRide extends PublishedRide {
+  waypoints?: WaypointInfo[];
+  bookings?: DriverRideBooking[];
+  vehicle?: { id: string; brand: string | null; model_num: string | null; model_name: string | null; type: string | null; color: string | null; year: number | null; imageUrl: string | null; isVerified: boolean } | null;
+}
+
 // Types
 export interface UserProfile {
   id: string;
@@ -1132,6 +1431,8 @@ export interface UserProfile {
   role: 'USER' | 'ADMIN';
   onboardingStatus: 'PENDING' | 'COMPLETED';
   isVerified: boolean;
+  tosAcceptedAt?: string | null;
+  privacyAcceptedAt?: string | null;
 }
 
 export interface UserFullProfile extends UserProfile {
@@ -1215,5 +1516,5 @@ export interface TravelPreferenceUpdate {
   pets?: PetsPreference;
 }
 
-export type Chattiness = 'LOW' | 'MEDIUM' | 'HIGH';
-export type PetsPreference = 'YES' | 'NO' | 'SOMETIMES';
+export type Chattiness = 'quiet' | 'chatty_when_comfortable' | 'chatterbox';
+export type PetsPreference = 'love_pets' | 'no_pets' | 'depends_on_animal';

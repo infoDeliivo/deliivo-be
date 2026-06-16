@@ -3,25 +3,53 @@
 import { useEffect, useState } from 'react';
 import { onSocketEvent, getSocket, NotificationPayload } from '@/lib/socket';
 import { Bell, X } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { getBrowserNotificationStatus, registerBrowserPushDevice, showBrowserNotification } from '@/lib/web-push';
+
+type ToastNotification = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  data: Record<string, string>;
+  createdAt: string;
+};
 
 export default function NotificationToast() {
-  const [notifications, setNotifications] = useState<NotificationPayload[]>([]);
+  const [notifications, setNotifications] = useState<ToastNotification[]>([]);
+  const { user } = useAuth();
 
   useEffect(() => {
+    if (!user) return;
+
     // Connect socket when component mounts
     getSocket();
 
-    const unsub = onSocketEvent<NotificationPayload>('notification', (payload) => {
-      setNotifications(prev => [payload, ...prev].slice(0, 5));
+    if (getBrowserNotificationStatus() === 'enabled') {
+      registerBrowserPushDevice().catch(() => {});
+    }
+
+    const unsub = onSocketEvent<NotificationPayload>('notification:new', (payload) => {
+      const notification = {
+        id: payload.data.id,
+        type: payload.data.notificationType,
+        title: payload.data.title,
+        body: payload.data.body,
+        data: payload.data.data || {},
+        createdAt: payload.data.createdAt,
+      };
+
+      setNotifications(prev => [notification, ...prev].slice(0, 5));
+      showBrowserNotification(notification);
 
       // Auto-dismiss after 6 seconds
       setTimeout(() => {
-        setNotifications(prev => prev.filter(n => n.id !== payload.id));
+        setNotifications(prev => prev.filter(n => n.id !== payload.data.id));
       }, 6000);
     });
 
     return unsub;
-  }, []);
+  }, [user?.id]);
 
   function dismiss(id: string) {
     setNotifications(prev => prev.filter(n => n.id !== id));

@@ -120,7 +120,7 @@ export default function AdminPayoutsPage() {
               Status: {result.status}
             </p>
             {result.amount !== undefined && (
-              <p className="text-xs text-gray-600 mt-1">Amount: ${result.amount.toFixed(2)}</p>
+              <p className="text-xs text-gray-600 mt-1">Amount: EUR {result.amount.toFixed(2)}</p>
             )}
             {result.batchId && (
               <p className="text-xs text-gray-400 mt-0.5">Batch: {result.batchId}</p>

@@ -15,6 +15,16 @@ export const processPayoutHandler = async (req: Request, res: Response) => {
     }
 };
 
+export const requestOwnPayoutHandler = async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).user.id;
+        const result = await processDriverPayout(userId);
+        res.json({ success: true, data: result });
+    } catch (err: any) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+};
+
 export const checkEligibilityHandler = async (_req: Request, res: Response) => {
     try {
         const result = await checkAndMarkEligible();

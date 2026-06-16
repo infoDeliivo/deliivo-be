@@ -8,6 +8,13 @@ import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
 export const connectOnboard = async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user.id;
+        if (process.env.STRIPE_CONNECT_MOCK_MODE === 'true') {
+            return sendSuccess(res, {
+                message: 'Stripe Connect mock onboarding link created',
+                data: { url: `${process.env.APP_BASE_URL ?? 'http://localhost:8080'}/profile/earnings?stripe_connect=mock` },
+            });
+        }
+
         const user = await prisma.user.findUnique({
             where: { id: userId },
             select: { stripeAccountId: true },
@@ -48,6 +55,20 @@ export const connectOnboard = async (req: AuthRequest, res: Response) => {
 export const connectStatus = async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user.id;
+        if (process.env.STRIPE_CONNECT_MOCK_MODE === 'true') {
+            return sendSuccess(res, {
+                message: 'Connect status fetched',
+                data: {
+                    connected: true,
+                    onboardingComplete: true,
+                    accountId: 'acct_mock_local',
+                    chargesEnabled: true,
+                    payoutsEnabled: true,
+                    detailsSubmitted: true,
+                },
+            });
+        }
+
         const user = await prisma.user.findUnique({
             where: { id: userId },
             select: { stripeAccountId: true, stripeOnboardingComplete: true },

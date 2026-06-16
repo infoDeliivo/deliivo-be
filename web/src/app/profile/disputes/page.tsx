@@ -17,9 +17,15 @@ import { disputesApi, Dispute } from '@/lib/api';
 
 const STATUS_CONFIG: Record<string, { label: string; className: string; icon: typeof Clock }> = {
   OPEN: { label: 'Open', className: 'bg-yellow-50 text-yellow-700 border border-yellow-200', icon: Clock },
-  UNDER_REVIEW: { label: 'Under Review', className: 'bg-blue-50 text-blue-700 border border-blue-200', icon: Clock },
-  RESOLVED: { label: 'Resolved', className: 'bg-green-50 text-green-700 border border-green-200', icon: CheckCircle2 },
-  CLOSED: { label: 'Closed', className: 'bg-gray-50 text-gray-600 border border-gray-200', icon: X },
+  EVIDENCE_COLLECTED: { label: 'Evidence Collected', className: 'bg-blue-50 text-blue-700 border border-blue-200', icon: Clock },
+  NEEDS_MANUAL_REVIEW: { label: 'Manual Review', className: 'bg-orange-50 text-orange-700 border border-orange-200', icon: Clock },
+  WAITING_FOR_USER_RESPONSE: { label: 'Needs Response', className: 'bg-amber-50 text-amber-700 border border-amber-200', icon: Clock },
+  AUTO_RESOLVED_RIDER_REFUND: { label: 'Refund Approved', className: 'bg-green-50 text-green-700 border border-green-200', icon: CheckCircle2 },
+  AUTO_RESOLVED_DRIVER_PAYOUT: { label: 'Payout Approved', className: 'bg-green-50 text-green-700 border border-green-200', icon: CheckCircle2 },
+  RESOLVED_REFUND: { label: 'Refunded', className: 'bg-green-50 text-green-700 border border-green-200', icon: CheckCircle2 },
+  RESOLVED_PAYOUT: { label: 'Paid Out', className: 'bg-green-50 text-green-700 border border-green-200', icon: CheckCircle2 },
+  RESOLVED_SPLIT: { label: 'Split', className: 'bg-green-50 text-green-700 border border-green-200', icon: CheckCircle2 },
+  ESCALATED: { label: 'Escalated', className: 'bg-red-50 text-red-600 border border-red-200', icon: X },
 };
 
 function DisputesContent() {
@@ -186,6 +192,11 @@ function DisputesContent() {
                       <p className="text-xs text-gray-400 mt-2">
                         {new Date(d.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </p>
+                      {d.ride && (
+                        <p className="text-xs text-gray-400 mt-1">
+                          {d.ride.originAddress.split(',')[0]} to {d.ride.destinationAddress.split(',')[0]}
+                        </p>
+                      )}
                     </div>
                     <span className={`text-xs font-semibold px-2.5 py-1 rounded-full shrink-0 ${statusConf.className}`}>
                       {statusConf.label}

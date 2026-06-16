@@ -1,82 +1,40 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { MapPin, ShieldCheck, Star, Users, ArrowRight } from 'lucide-react';
+import { ArrowRight, MapPin, ShieldCheck, Star, Users } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import SearchForm from '@/components/SearchForm';
 
 const popularRoutes = [
-  {
-    id: 'r1',
-    from: 'Toronto',
-    to: 'Ottawa',
-    price: 35,
-    duration: '4h 30m',
-    driverCount: 12,
-  },
-  {
-    id: 'r2',
-    from: 'Montreal',
-    to: 'Quebec City',
-    price: 22,
-    duration: '2h 40m',
-    driverCount: 8,
-  },
-  {
-    id: 'r3',
-    from: 'Vancouver',
-    to: 'Whistler',
-    price: 18,
-    duration: '1h 50m',
-    driverCount: 15,
-  },
-  {
-    id: 'r4',
-    from: 'Calgary',
-    to: 'Edmonton',
-    price: 28,
-    duration: '3h 00m',
-    driverCount: 9,
-  },
-  {
-    id: 'r5',
-    from: 'Toronto',
-    to: 'Hamilton',
-    price: 14,
-    duration: '1h 10m',
-    driverCount: 20,
-  },
-  {
-    id: 'r6',
-    from: 'Ottawa',
-    to: 'Kingston',
-    price: 20,
-    duration: '2h 00m',
-    driverCount: 7,
-  },
+  { id: 'r1', from: 'Tallinn', to: 'Tartu', price: 12, duration: '2h 20m', driverCount: 18 },
+  { id: 'r2', from: 'Riga', to: 'Vilnius', price: 16, duration: '4h 10m', driverCount: 14 },
+  { id: 'r3', from: 'Vilnius', to: 'Kaunas', price: 7, duration: '1h 20m', driverCount: 21 },
+  { id: 'r4', from: 'Tallinn', to: 'Riga', price: 24, duration: '4h 30m', driverCount: 9 },
+  { id: 'r5', from: 'Riga', to: 'Liepaja', price: 11, duration: '3h 00m', driverCount: 12 },
+  { id: 'r6', from: 'Vilnius', to: 'Klaipeda', price: 15, duration: '3h 15m', driverCount: 10 },
 ];
 
 const howItWorks = [
   {
     step: '01',
-    icon: '🔍',
-    title: 'Search',
+    icon: 'EE',
+    title: 'Search the Baltics',
     description:
-      'Enter your pickup and destination city, choose a date, and find available rides near you.',
+      'Choose a route across Estonia, Latvia, or Lithuania and see available seats for your travel date.',
   },
   {
     step: '02',
-    icon: '✅',
-    title: 'Book',
+    icon: 'LV',
+    title: 'Book clearly',
     description:
-      'Pick a driver you trust. View ratings, reviews, and vehicle details before you confirm.',
+      'Pick a verified driver, check ratings and vehicle details, then request your seat with upfront EUR pricing.',
   },
   {
     step: '03',
-    icon: '🚗',
-    title: 'Travel',
+    icon: 'LT',
+    title: 'Travel together',
     description:
-      'Meet your driver, confirm your pickup OTP, and enjoy an affordable, comfortable journey.',
+      'Meet at the agreed pickup point, confirm your OTP, and travel affordably between Baltic cities.',
   },
 ];
 
@@ -85,7 +43,7 @@ const whyDeliivo = [
     icon: <ShieldCheck className="h-7 w-7 text-primary-500" />,
     title: 'Verified Drivers',
     description:
-      'Every driver goes through identity verification and licence checks before they can list a ride.',
+      'Drivers complete identity and licence checks before offering seats on Baltic routes.',
   },
   {
     icon: <Star className="h-7 w-7 text-primary-500" />,
@@ -95,86 +53,107 @@ const whyDeliivo = [
   },
   {
     icon: <Users className="h-7 w-7 text-primary-500" />,
-    title: 'Female Only Option',
+    title: 'Women Only Option',
     description:
-      'Riders can filter for female drivers only, giving everyone the comfort to travel safely.',
+      'Passengers can choose women-only rides where available for more comfortable travel.',
   },
   {
     icon: (
-      <span className="flex h-7 w-7 items-center justify-center text-2xl leading-none">
-        💰
+      <span className="flex h-7 w-7 items-center justify-center text-xs font-bold leading-none">
+        EUR
       </span>
     ),
-    title: 'Affordable Fares',
+    title: 'Regional Fares',
     description:
-      'Split fuel costs with fellow travellers. Prices are set by drivers and shown upfront — no surprises.',
+      'Split fuel costs in euros with upfront fares for city-to-city and cross-border trips.',
   },
 ];
 
 export default function HomePage() {
   return (
-    <div className="flex flex-col min-h-full">
+    <div className="flex min-h-full flex-col">
       <Navbar />
 
       <main className="flex-1">
-        {/* ── Hero ── */}
-        <section className="relative overflow-hidden bg-deliivo-cream px-4 pt-16 pb-24 sm:px-6 sm:pt-24 sm:pb-32">
-          {/* Decorative blobs */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -top-24 -right-24 h-96 w-96 rounded-full bg-primary-100 opacity-60 blur-3xl"
-          />
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -bottom-16 -left-16 h-64 w-64 rounded-full bg-orange-100 opacity-40 blur-2xl"
-          />
+        <section className="relative overflow-hidden bg-deliivo-cream px-4 py-12 sm:px-6 sm:py-20">
+          <div className="relative mx-auto grid max-w-6xl gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+            <div className="text-center lg:text-left">
+              <span className="mb-6 inline-flex items-center gap-2 rounded-full bg-primary-100 px-4 py-1.5 text-sm font-medium text-primary-600">
+                <MapPin size={14} />
+                Estonia, Latvia, Lithuania
+              </span>
 
-          <div className="relative mx-auto max-w-4xl text-center">
-            {/* Tagline badge */}
-            <span className="mb-6 inline-flex items-center gap-2 rounded-full bg-primary-100 px-4 py-1.5 text-sm font-medium text-primary-600">
-              <MapPin size={14} />
-              Carpooling made simple
-            </span>
+              <h1 className="text-4xl font-extrabold tracking-tight text-deliivo-dark sm:text-5xl lg:text-6xl">
+                Ride between Baltic cities with trusted locals
+              </h1>
+              <p className="mx-auto mt-5 max-w-2xl text-lg text-deliivo-gray sm:text-xl lg:mx-0">
+                Find seats or offer rides across Tallinn, Riga, Vilnius, Tartu,
+                Kaunas, Liepaja, and more. Built for regional travel in euros,
+                with verified drivers and clear pickup points.
+              </p>
 
-            <h1 className="text-4xl font-extrabold tracking-tight text-deliivo-dark sm:text-5xl lg:text-6xl">
-              Carpool Together,{' '}
-              <span className="text-primary-500">Go Further</span>
-            </h1>
-            <p className="mt-5 mx-auto max-w-2xl text-lg text-deliivo-gray sm:text-xl">
-              Share your ride or find a match. Travel with trusted people on the
-              same route — affordable, safe, and easy.
-            </p>
+              <div className="mt-10">
+                <Suspense fallback={<div className="h-40 rounded-2xl bg-white animate-pulse" />}>
+                  <SearchForm />
+                </Suspense>
+              </div>
 
-            {/* Search form — client island */}
-            <div className="mt-10">
-              <Suspense
-                fallback={
-                  <div className="h-40 rounded-2xl bg-white animate-pulse" />
-                }
-              >
-                <SearchForm />
-              </Suspense>
+              <p className="mt-6 text-sm text-deliivo-gray">
+                Practical city-to-city carpooling for Estonia, Latvia, and Lithuania.
+              </p>
             </div>
 
-            {/* Social proof */}
-            <p className="mt-6 text-sm text-deliivo-gray">
-              Join{' '}
-              <span className="font-semibold text-deliivo-dark">50,000+</span>{' '}
-              travellers already saving on every trip
-            </p>
+            <div className="rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-primary-500">
+                    Baltic corridor
+                  </p>
+                  <h2 className="mt-1 text-xl font-bold text-deliivo-dark">
+                    Popular regional routes
+                  </h2>
+                </div>
+                <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-semibold text-primary-600">
+                  EUR
+                </span>
+              </div>
+              <div className="space-y-3">
+                {popularRoutes.slice(0, 4).map((route) => (
+                  <div
+                    key={route.id}
+                    className="flex items-center justify-between rounded-xl border border-gray-100 px-4 py-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="h-2.5 w-2.5 rounded-full border-2 border-primary-500 bg-white" />
+                        <span className="h-5 w-0.5 bg-primary-200" />
+                        <span className="h-2.5 w-2.5 rounded-full bg-primary-500" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-deliivo-dark">{route.from}</p>
+                        <p className="text-sm text-deliivo-gray">{route.to}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-primary-500">EUR {route.price}</p>
+                      <p className="text-xs text-deliivo-gray">{route.duration}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 
-        {/* ── Popular routes ── */}
         <section className="bg-white px-4 py-16 sm:px-6 sm:py-20">
           <div className="mx-auto max-w-6xl">
             <div className="mb-10 flex items-end justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-deliivo-dark sm:text-3xl">
-                  Popular routes
+                  Popular Baltic routes
                 </h2>
                 <p className="mt-1 text-deliivo-gray">
-                  Frequently travelled city pairs
+                  Frequently travelled city pairs across the region
                 </p>
               </div>
               <Link
@@ -199,18 +178,12 @@ export default function HomePage() {
                       <span className="h-2 w-2 rounded-full bg-primary-500" />
                     </div>
                     <div>
-                      <p className="font-semibold text-deliivo-dark">
-                        {route.from}
-                      </p>
-                      <p className="mt-1 text-sm text-deliivo-gray">
-                        {route.to}
-                      </p>
+                      <p className="font-semibold text-deliivo-dark">{route.from}</p>
+                      <p className="mt-1 text-sm text-deliivo-gray">{route.to}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-lg font-bold text-primary-500">
-                      From ${route.price}
-                    </p>
+                    <p className="text-lg font-bold text-primary-500">From EUR {route.price}</p>
                     <p className="text-xs text-deliivo-gray">
                       {route.driverCount} drivers &middot; {route.duration}
                     </p>
@@ -221,7 +194,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ── How it works ── */}
         <section className="bg-deliivo-cream px-4 py-16 sm:px-6 sm:py-20">
           <div className="mx-auto max-w-6xl">
             <div className="mb-12 text-center">
@@ -229,26 +201,21 @@ export default function HomePage() {
                 How Deliivo works
               </h2>
               <p className="mt-2 text-deliivo-gray">
-                Three simple steps to your next trip
+                Three simple steps to your next Baltic trip
               </p>
             </div>
 
             <div className="grid grid-cols-1 gap-8 sm:grid-cols-3">
               {howItWorks.map((item) => (
-                <div
-                  key={item.step}
-                  className="flex flex-col items-center text-center"
-                >
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-sm text-3xl">
+                <div key={item.step} className="flex flex-col items-center text-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-xl font-bold text-primary-500 shadow-sm">
                     {item.icon}
                   </div>
-                  <span className="mt-4 text-xs font-bold tracking-widest text-primary-400 uppercase">
+                  <span className="mt-4 text-xs font-bold uppercase tracking-widest text-primary-400">
                     Step {item.step}
                   </span>
-                  <h3 className="mt-1 text-lg font-bold text-deliivo-dark">
-                    {item.title}
-                  </h3>
-                  <p className="mt-2 text-sm text-deliivo-gray leading-relaxed">
+                  <h3 className="mt-1 text-lg font-bold text-deliivo-dark">{item.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-deliivo-gray">
                     {item.description}
                   </p>
                 </div>
@@ -257,7 +224,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ── Why Deliivo ── */}
         <section className="bg-white px-4 py-16 sm:px-6 sm:py-20">
           <div className="mx-auto max-w-6xl">
             <div className="mb-12 text-center">
@@ -265,49 +231,43 @@ export default function HomePage() {
                 Why choose Deliivo?
               </h2>
               <p className="mt-2 text-deliivo-gray">
-                Safety, trust, and savings — all in one place
+                Safety, trust, and clear EUR pricing for Baltic travel
               </p>
             </div>
 
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {whyDeliivo.map((item) => (
-                <div
-                  key={item.title}
-                  className="rounded-2xl bg-primary-50 p-6 flex flex-col gap-3"
-                >
+                <div key={item.title} className="flex flex-col gap-3 rounded-2xl bg-primary-50 p-6">
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white shadow-sm">
                     {item.icon}
                   </div>
                   <h3 className="font-bold text-deliivo-dark">{item.title}</h3>
-                  <p className="text-sm text-deliivo-gray leading-relaxed">
-                    {item.description}
-                  </p>
+                  <p className="text-sm leading-relaxed text-deliivo-gray">{item.description}</p>
                 </div>
               ))}
             </div>
           </div>
         </section>
 
-        {/* ── CTA Banner ── */}
         <section className="bg-primary-500 px-4 py-14 sm:px-6 sm:py-20">
           <div className="mx-auto max-w-3xl text-center">
             <h2 className="text-2xl font-extrabold text-white sm:text-3xl">
-              Ready to share the road?
+              Ready to share a Baltic route?
             </h2>
             <p className="mt-3 text-orange-100">
-              List your first ride for free — or find a seat on a trip happening
-              tomorrow.
+              List your first Baltic route for free, or find a seat on a trip
+              happening tomorrow.
             </p>
             <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
               <Link
                 href="/auth/signup"
-                className="inline-flex items-center justify-center rounded-full bg-white px-8 py-3 text-sm font-semibold text-primary-500 shadow-sm hover:bg-orange-50 transition-colors"
+                className="inline-flex items-center justify-center rounded-full bg-white px-8 py-3 text-sm font-semibold text-primary-500 shadow-sm transition-colors hover:bg-orange-50"
               >
                 Get started free
               </Link>
               <Link
                 href="/search"
-                className="inline-flex items-center justify-center rounded-full border border-white/50 px-8 py-3 text-sm font-semibold text-white hover:bg-white/10 transition-colors"
+                className="inline-flex items-center justify-center rounded-full border border-white/50 px-8 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/10"
               >
                 Find a ride
               </Link>

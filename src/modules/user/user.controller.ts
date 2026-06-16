@@ -196,7 +196,7 @@ export const completeOnBoardingStep1 = async (req: AuthRequest, res: Response) =
         id: user!.id,
         name: user!.name,
         email: user!.email,
-        role: 'USER',
+        role: user!.role,
       },
     });
   } catch (error) {

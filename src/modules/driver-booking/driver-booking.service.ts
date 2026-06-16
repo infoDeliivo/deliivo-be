@@ -6,6 +6,7 @@ import { generateBookingOtp, hashOtp, isOtpValid } from '../ride-booking/booking
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
 import { releaseSegmentSeats } from '../ride-booking/segment-capacity.utils.js';
+import { emitToUsers } from '../../socket/index.js';
 
 const PICKUP_OTP_TTL_MS = 6 * 60 * 60 * 1000;
 const DROP_OTP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -104,7 +105,7 @@ const assertDecisionWindowOpen = (deadlineAt: Date | null) => {
 export const acceptBooking = async (driverId: string, bookingId: string): Promise<DriverBookingResult> => {
     const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
 
-    if (!(booking.ride.driver as any).dlVerified) {
+    if (!(booking.ride.driver as any).dlVerified && process.env.SKIP_DL_VERIFICATION !== 'true') {
         throw new Error('DRIVER_NOT_VERIFIED');
     }
 
@@ -147,8 +148,23 @@ export const acceptBooking = async (driverId: string, bookingId: string): Promis
         data: {
             bookingId: booking.id,
             rideId: booking.ride.id,
+            originAddress: booking.ride.originAddress,
+            destinationAddress: booking.ride.destinationAddress,
+            departureDate: booking.ride.departureDate.toISOString(),
+            departureTime: booking.ride.departureTime,
             deepLink: `app://booking/${booking.id}`,
         },
+    });
+
+    await emitToUsers([booking.passengerId, booking.ride.driverId], 'booking:updated', {
+        bookingId: updated.id,
+        rideId: updated.rideId,
+        passengerId: updated.passengerId,
+        status: updated.status,
+        previousStatus: BookingStatus.DRIVER_PENDING,
+        actor: 'driver',
+        action: 'driver.accepted',
+        updatedAt: now.toISOString(),
     });
 
     return {
@@ -241,11 +257,26 @@ export const rejectBooking = async (driverId: string, bookingId: string, reason:
         data: {
             bookingId: booking.id,
             rideId: booking.ride.id,
+            originAddress: booking.ride.originAddress,
+            destinationAddress: booking.ride.destinationAddress,
+            departureDate: booking.ride.departureDate.toISOString(),
+            departureTime: booking.ride.departureTime,
             rejectionReason: reason,
             refundInitiated: refundInitiated ? 'true' : 'false',
             refundPercent: '100',
             deepLink: `app://booking/${booking.id}`,
         },
+    });
+
+    await emitToUsers([booking.passengerId, booking.ride.driverId], 'booking:updated', {
+        bookingId: updated.id,
+        rideId: updated.rideId,
+        passengerId: updated.passengerId,
+        status: BookingStatus.CANCELLED,
+        previousStatus: BookingStatus.DRIVER_PENDING,
+        actor: 'driver',
+        action: 'driver.rejected',
+        updatedAt: new Date().toISOString(),
     });
 
     return {
@@ -346,11 +377,26 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string, rea
         data: {
             bookingId: booking.id,
             rideId: booking.ride.id,
+            originAddress: booking.ride.originAddress,
+            destinationAddress: booking.ride.destinationAddress,
+            departureDate: booking.ride.departureDate.toISOString(),
+            departureTime: booking.ride.departureTime,
             cancellationReason: reason,
             refundInitiated: refundInitiated ? 'true' : 'false',
             refundPercent: '100',
             deepLink: `app://booking/${booking.id}`,
         },
+    });
+
+    await emitToUsers([booking.passengerId, booking.ride.driverId], 'booking:updated', {
+        bookingId: updated.id,
+        rideId: updated.rideId,
+        passengerId: updated.passengerId,
+        status: BookingStatus.CANCELLED,
+        previousStatus: BookingStatus.CONFIRMED,
+        actor: 'driver',
+        action: 'driver.cancelled',
+        updatedAt: new Date().toISOString(),
     });
 
     return {

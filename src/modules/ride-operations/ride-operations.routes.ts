@@ -55,6 +55,13 @@ bookingOperationsRouter.post(
     controller.driverArrived
 );
 
+// Rider arrived at pickup — dispute evidence / acknowledgement
+bookingOperationsRouter.post(
+    '/:id/rider-arrived',
+    validate({ params: bookingIdParamSchema, body: rideEventSchema }),
+    controller.riderArrivedAtPickup
+);
+
 // Verify pickup OTP and board passenger (DRIVER_ARRIVED -> ONBOARD)
 bookingOperationsRouter.post(
     '/:id/verify-pickup-otp',
@@ -81,6 +88,18 @@ bookingOperationsRouter.post(
     '/:id/rider-confirm-dropoff',
     validate({ params: bookingIdParamSchema, body: rideEventSchema }),
     controller.riderConfirmDropoff
+);
+
+bookingOperationsRouter.post(
+    '/:id/dev-simulate-pickup',
+    validate({ params: bookingIdParamSchema, body: rideEventSchema }),
+    controller.devSimulatePickup
+);
+
+bookingOperationsRouter.post(
+    '/:id/dev-simulate-dropoff',
+    validate({ params: bookingIdParamSchema, body: rideEventSchema }),
+    controller.devSimulateDropoff
 );
 
 // Rider reports the driver missed their pickup

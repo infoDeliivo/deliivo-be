@@ -100,7 +100,7 @@ function ProfileContent() {
       const data: Record<string, string> = {};
       if (chattiness) data.chattiness = chattiness;
       if (pets) data.pets = pets;
-      const res = await travelPreferencesApi.save(data as { chattiness?: 'LOW' | 'MEDIUM' | 'HIGH'; pets?: 'YES' | 'NO' | 'SOMETIMES' });
+      const res = await travelPreferencesApi.save(data as { chattiness?: 'quiet' | 'chatty_when_comfortable' | 'chatterbox'; pets?: 'love_pets' | 'no_pets' | 'depends_on_animal' });
       setTravelPref(res.data);
       setEditingPrefs(false);
     } catch {
@@ -127,15 +127,15 @@ function ProfileContent() {
   ];
 
   const chattinessLabels: Record<string, string> = {
-    LOW: "I'm quiet and prefer silence",
-    MEDIUM: "I'm chatting when comfortable",
-    HIGH: "I love chatting!",
+    quiet: "I'm quiet and prefer silence",
+    chatty_when_comfortable: "I'm chatting when comfortable",
+    chatterbox: "I love chatting!",
   };
 
   const petsLabels: Record<string, string> = {
-    YES: "I love pets, Woof!",
-    NO: "No pets please",
-    SOMETIMES: "Depends on the animal",
+    love_pets: "I love pets",
+    no_pets: "No pets please",
+    depends_on_animal: "Depends on the animal",
   };
 
   return (
@@ -234,18 +234,18 @@ function ProfileContent() {
                   <label className="mb-1 block text-xs font-medium text-deliivo-gray">Chattiness</label>
                   <select value={chattiness} onChange={(e) => setChattiness(e.target.value)} className="input-field">
                     <option value="">Select...</option>
-                    <option value="LOW">Quiet</option>
-                    <option value="MEDIUM">Chatting when comfortable</option>
-                    <option value="HIGH">Love chatting</option>
+                    <option value="quiet">Quiet</option>
+                    <option value="chatty_when_comfortable">Chatting when comfortable</option>
+                    <option value="chatterbox">Love chatting</option>
                   </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-deliivo-gray">Pets</label>
                   <select value={pets} onChange={(e) => setPets(e.target.value)} className="input-field">
                     <option value="">Select...</option>
-                    <option value="YES">Love pets</option>
-                    <option value="NO">No pets</option>
-                    <option value="SOMETIMES">Depends on animal</option>
+                    <option value="love_pets">Love pets</option>
+                    <option value="no_pets">No pets</option>
+                    <option value="depends_on_animal">Depends on animal</option>
                   </select>
                 </div>
                 <button onClick={handleSavePrefs} disabled={saving} className="btn-primary py-2 px-4 text-sm disabled:opacity-50">

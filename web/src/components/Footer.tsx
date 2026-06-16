@@ -59,8 +59,8 @@ export default function Footer() {
               </span>
             </Link>
             <p className="text-sm leading-relaxed text-gray-500">
-              Carpool together, go further. Connecting drivers and passengers
-              across the country.
+              Baltic carpooling for Estonia, Latvia, and Lithuania. Share
+              intercity routes, split fuel costs, and travel with local drivers.
             </p>
           </div>
 

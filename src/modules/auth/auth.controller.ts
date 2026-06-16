@@ -3,6 +3,7 @@ import { prisma } from '../../config/index.js';
 import { logError } from '../../utils/logger.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
+import { Role } from '../user/user.constants.js';
 import {
   signupService,
   verifyOtpService,
@@ -20,6 +21,7 @@ import {
   loginOtpSmsTemplate,
   resetOtpSmsTemplate,
 } from '../sms/index.js';
+import { cacheKeys, deleteCache } from '../../services/cache.service.js';
 
 type OtpPurpose = 'signup' | 'login' | 'reset_password';
 
@@ -211,7 +213,7 @@ export const verifyOtpCont = async (req: Request, res: Response) => {
           user: {
             id: result.user.id,
             email: result.user.email,
-            role: 'USER',
+            role: (result.user as any).role ?? Role.USER,
           },
           next: result.next,
         },
@@ -384,6 +386,12 @@ export const acceptTos = async (req: AuthRequest, res: Response) => {
       privacyVersion,
     },
   });
+
+  await Promise.all([
+    deleteCache(cacheKeys.user(req.user.id)),
+    deleteCache(cacheKeys.userProfile(req.user.id)),
+    deleteCache(cacheKeys.publicProfile(req.user.id)),
+  ]);
 
   return sendSuccess(res, { message: 'Terms of Service accepted' });
 };

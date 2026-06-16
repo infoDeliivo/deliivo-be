@@ -479,21 +479,7 @@ export const getUserRides = async (req: AuthRequest, res: Response) => {
 export const getRideById = async (req: AuthRequest, res: Response) => {
     try {
         const rideId = req.params.id as string;
-        const cacheKey = cacheKeys.ride(rideId);
-
-        // Try cache first
-        const cachedRide = await getCache(cacheKey);
-        if (cachedRide) {
-            return sendSuccess(res, {
-                message: 'Ride fetched successfully',
-                data: cachedRide,
-            });
-        }
-
         const ride = await PublishRideService.getRideById(req.user.id, rideId);
-
-        // Cache the result
-        await setCache(cacheKey, ride);
 
         return sendSuccess(res, {
             message: 'Ride fetched successfully',

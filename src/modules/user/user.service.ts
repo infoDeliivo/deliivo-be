@@ -18,16 +18,19 @@ export const getMeService = async (userId: string) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        nickName: true,
-        salutation: true,
-        dob: true,
-        email: true,
-        phone: true,
-        avatarUrl: true,
-        onboardingStatus: true,
+        select: {
+          id: true,
+          role: true,
+          name: true,
+          nickName: true,
+          salutation: true,
+          dob: true,
+          tosAcceptedAt: true,
+          privacyAcceptedAt: true,
+          email: true,
+          phone: true,
+          avatarUrl: true,
+          onboardingStatus: true,
         isVerified: true,
         isBanned: true,
         createdAt: true,
@@ -87,10 +90,13 @@ export const getFullProfileService = async (
     // Transform user to include email/phone as objects
     const userBasicInfo: UserBasicInfo = {
       id: userWithRelations.id,
+      role: userWithRelations.role,
       name: userWithRelations.name,
       nickName: userWithRelations.nickName,
       salutation: userWithRelations.salutation,
       dob: userWithRelations.dob,
+      tosAcceptedAt: userWithRelations.tosAcceptedAt,
+      privacyAcceptedAt: userWithRelations.privacyAcceptedAt,
       email: {
         value: userWithRelations.email,
         isVerified: userWithRelations.emailVerified,
@@ -364,6 +370,7 @@ export const getPublicProfileService = async (
         where: { id: userId },
         select: {
           id: true,
+          role: true,
           name: true,
           nickName: true,
           avatarUrl: true,
@@ -387,6 +394,7 @@ export const getPublicProfileService = async (
     // Transform user to public info (exclude sensitive data)
     const publicUserInfo: PublicUserInfo = {
       id: userWithRelations.id,
+      role: userWithRelations.role,
       name: userWithRelations.name,
       nickName: userWithRelations.nickName,
       avatarUrl: userWithRelations.avatarUrl,

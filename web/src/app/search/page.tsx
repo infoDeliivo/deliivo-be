@@ -158,7 +158,7 @@ function RideResultCard({ ride }: { ride: SearchRideResult }) {
             <span>&middot;</span>
             <span>{dateLabel}</span>
             {ride.femaleOnly && (
-              <span className="ml-1 rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-600">Female only</span>
+              <span className="ml-1 rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-600">Women only</span>
             )}
           </div>
 
@@ -322,7 +322,7 @@ function SearchPageContent() {
               <PlaceInput
                 value={origin}
                 onChange={setOrigin}
-                placeholder="Leaving from"
+                placeholder="Leaving from, e.g. Tallinn"
                 icon={<MapPin size={18} className="text-primary-500" />}
               />
               <button type="button" onClick={swap} aria-label="Swap" className="mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-primary-500 hover:bg-primary-50 sm:mx-0">
@@ -331,7 +331,7 @@ function SearchPageContent() {
               <PlaceInput
                 value={destination}
                 onChange={setDestination}
-                placeholder="Going to"
+                placeholder="Going to, e.g. Riga"
                 icon={<MapPin size={18} className="text-deliivo-gray" />}
               />
               <div className="relative flex-1">
@@ -349,13 +349,13 @@ function SearchPageContent() {
                     {[1,2,3,4].map(n => <option key={n} value={n}>{n} seat{n > 1 ? 's' : ''}</option>)}
                   </select>
                 </div>
-                {/* Female only */}
+                {/* Women only */}
                 <label className="flex cursor-pointer items-center gap-2 select-none">
                   <button type="button" role="switch" aria-checked={femaleOnly} onClick={() => setFemaleOnly(v => !v)}
                     className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors ${femaleOnly ? 'bg-primary-500' : 'bg-gray-200'}`}>
                     <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${femaleOnly ? 'translate-x-5' : 'translate-x-0'}`} />
                   </button>
-                  <span className="text-sm font-medium text-deliivo-dark">Female only</span>
+                  <span className="text-sm font-medium text-deliivo-dark">Women only</span>
                 </label>
                 {/* Filters toggle */}
                 <button type="button" onClick={() => setShowFilters(v => !v)} className="flex items-center gap-1 text-sm text-deliivo-gray hover:text-deliivo-orange">

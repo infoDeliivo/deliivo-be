@@ -4,12 +4,37 @@ import { io, Socket } from 'socket.io-client';
 import { getTokens } from './api';
 
 let socket: Socket | null = null;
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || '';
 
+function startHeartbeat() {
+  if (!socket || heartbeatInterval) return;
+  heartbeatInterval = setInterval(() => {
+    if (socket?.connected) {
+      socket.emit('presence:ping');
+    }
+  }, 45000);
+}
+
+function stopHeartbeat() {
+  if (!heartbeatInterval) return;
+  clearInterval(heartbeatInterval);
+  heartbeatInterval = null;
+}
+
 export function getSocket(): Socket | null {
   if (typeof window === 'undefined') return null;
-  if (socket?.connected) return socket;
+  if (socket) {
+    const tokens = getTokens();
+    if (tokens?.accessToken) {
+      socket.auth = { token: tokens.accessToken };
+    }
+    if (!socket.connected) {
+      socket.connect();
+    }
+    return socket;
+  }
 
   const tokens = getTokens();
   if (!tokens?.accessToken || !SOCKET_URL) return null;
@@ -24,10 +49,13 @@ export function getSocket(): Socket | null {
 
   socket.on('connect', () => {
     console.log('[Socket] Connected:', socket?.id);
+    socket?.emit('presence:ping');
+    startHeartbeat();
   });
 
   socket.on('disconnect', (reason) => {
     console.log('[Socket] Disconnected:', reason);
+    stopHeartbeat();
   });
 
   socket.on('connect_error', (err) => {
@@ -39,6 +67,7 @@ export function getSocket(): Socket | null {
 
 export function disconnectSocket() {
   if (socket) {
+    stopHeartbeat();
     socket.disconnect();
     socket = null;
   }
@@ -67,10 +96,34 @@ export interface LocationUpdate {
 }
 
 export interface NotificationPayload {
-  id: string;
-  type: string;
-  title: string;
-  body: string;
-  data?: Record<string, string>;
-  createdAt: string;
+  type: 'notification.new';
+  data: {
+    id: string;
+    title: string;
+    body: string;
+    notificationType: string;
+    data?: Record<string, string>;
+    preview: boolean;
+    createdAt: string;
+  };
+}
+
+export interface BookingUpdatedPayload {
+  bookingId: string;
+  rideId: string;
+  passengerId?: string;
+  status: string;
+  previousStatus?: string;
+  actor: 'driver' | 'rider' | string;
+  action: string;
+  updatedAt: string;
+}
+
+export interface RideUpdatedPayload {
+  rideId: string;
+  status: string;
+  previousStatus?: string;
+  actor: 'driver' | 'rider' | string;
+  action: string;
+  updatedAt: string;
 }

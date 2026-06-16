@@ -13,6 +13,7 @@ export const ISSUE_TYPES = {
     ORPHAN_INTENT: 'ORPHAN_INTENT',
     LEDGER_IMBALANCE: 'LEDGER_IMBALANCE',
     STALE_ESCROW: 'STALE_ESCROW',
+    DISPUTE_PAYMENT_MISMATCH: 'DISPUTE_PAYMENT_MISMATCH',
 } as const;
 
 export const SEVERITY = {
@@ -101,6 +102,13 @@ export const runDailyReconciliation = async (): Promise<{ staleEscrow: number; l
         where: {
             status: PAYMENT_STATUSES.HELD_IN_ESCROW,
             updatedAt: { lt: staleThreshold },
+            booking: {
+                disputes: {
+                    none: {
+                        status: { in: ['OPEN', 'EVIDENCE_COLLECTED', 'NEEDS_MANUAL_REVIEW', 'WAITING_FOR_USER_RESPONSE', 'ESCALATED'] },
+                    },
+                },
+            },
         },
         select: { id: true, bookingId: true, updatedAt: true },
     });
@@ -151,6 +159,65 @@ export const runDailyReconciliation = async (): Promise<{ staleEscrow: number; l
                     description: `Ledger imbalance: debits=${totalDebit.toFixed(2)}, credits=${totalCredit.toFixed(2)}, diff=${(totalDebit - totalCredit).toFixed(2)}`,
                     internalState: 'LEDGER',
                     metadataJson: { totalDebit, totalCredit, entries: entries.length },
+                },
+            });
+            ledgerIssues++;
+        }
+    }
+
+    // 3. Dispute settlement consistency: resolved disputes must match payment state
+    const resolvedDisputes = await prisma.dispute.findMany({
+        where: {
+            status: {
+                in: ['RESOLVED_REFUND', 'RESOLVED_PAYOUT', 'RESOLVED_SPLIT', 'AUTO_RESOLVED_RIDER_REFUND', 'AUTO_RESOLVED_DRIVER_PAYOUT'],
+            },
+            booking: { payment: { isNot: null } },
+            resolvedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        },
+        select: {
+            id: true,
+            bookingId: true,
+            status: true,
+            resolution: true,
+            booking: { select: { payment: { select: { id: true, status: true } } } },
+        },
+    });
+
+    for (const dispute of resolvedDisputes) {
+        const payment = dispute.booking.payment;
+        if (!payment) continue;
+
+        const expectsRefund = ['RESOLVED_REFUND', 'AUTO_RESOLVED_RIDER_REFUND'].includes(dispute.status);
+        const expectsPayout = ['RESOLVED_PAYOUT', 'AUTO_RESOLVED_DRIVER_PAYOUT'].includes(dispute.status);
+        const expectsSplit = dispute.status === 'RESOLVED_SPLIT';
+        const payoutStates = [
+            PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+            PAYMENT_STATUSES.TRANSFER_CREATED,
+            PAYMENT_STATUSES.PAYOUT_COMPLETED,
+        ] as string[];
+        const splitStates = [...payoutStates, PAYMENT_STATUSES.REFUNDED] as string[];
+        const valid = expectsRefund
+            ? payment.status === PAYMENT_STATUSES.REFUNDED
+            : expectsPayout
+                ? payoutStates.includes(payment.status)
+                : expectsSplit
+                    ? splitStates.includes(payment.status)
+                    : true;
+
+        if (!valid) {
+            await prisma.reconciliationIssue.create({
+                data: {
+                    paymentId: payment.id,
+                    bookingId: dispute.bookingId,
+                    issueType: ISSUE_TYPES.DISPUTE_PAYMENT_MISMATCH,
+                    severity: SEVERITY.CRITICAL,
+                    description: `Dispute ${dispute.id} is ${dispute.status} but payment is ${payment.status}.`,
+                    internalState: payment.status,
+                    metadataJson: {
+                        disputeId: dispute.id,
+                        disputeStatus: dispute.status,
+                        resolution: dispute.resolution,
+                    },
                 },
             });
             ledgerIssues++;
@@ -257,7 +324,13 @@ export const listIssues = async (params: {
         prisma.reconciliationIssue.count({ where }),
     ]);
 
-    return { issues, total, page, limit };
+    return {
+        issues,
+        total,
+        page,
+        limit,
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
 };
 
 export const resolveIssue = async (issueId: string, adminId: string, resolution: string) => {

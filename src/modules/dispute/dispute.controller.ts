@@ -3,11 +3,12 @@ import {
     createDispute,
     collectEvidence,
     evaluateDispute,
-    resolveDispute,
     getDisputeById,
     listDisputes,
     getUserDisputes,
 } from './dispute.service.js';
+import { settleDispute, DisputeResolution } from './dispute-settlement.service.js';
+import { DISPUTE_STATUSES } from './dispute.constants.js';
 
 export const createDisputeHandler = async (req: Request, res: Response) => {
     try {
@@ -77,6 +78,22 @@ export const adminCollectEvidenceHandler = async (req: Request, res: Response) =
 export const adminEvaluateHandler = async (req: Request, res: Response) => {
     try {
         const result = await evaluateDispute(req.params.id as string);
+        if (result.status === DISPUTE_STATUSES.AUTO_RESOLVED_RIDER_REFUND) {
+            const dispute = await settleDispute({
+                disputeId: req.params.id as string,
+                resolution: 'REFUND',
+                resolvedBy: (req as any).user.id,
+            });
+            return res.json({ success: true, data: { ...result, dispute } });
+        }
+        if (result.status === DISPUTE_STATUSES.AUTO_RESOLVED_DRIVER_PAYOUT) {
+            const dispute = await settleDispute({
+                disputeId: req.params.id as string,
+                resolution: 'PAYOUT',
+                resolvedBy: (req as any).user.id,
+            });
+            return res.json({ success: true, data: { ...result, dispute } });
+        }
         res.json({ success: true, data: result });
     } catch (err: any) {
         if (err.message === 'DISPUTE_NOT_FOUND') {
@@ -92,12 +109,20 @@ export const adminEvaluateHandler = async (req: Request, res: Response) => {
 export const adminResolveHandler = async (req: Request, res: Response) => {
     try {
         const resolvedBy = (req as any).user.id;
-        const { resolution } = req.body;
-        const dispute = await resolveDispute(req.params.id as string, { resolution, resolvedBy });
+        const { resolution, refundPercent } = req.body;
+        const dispute = await settleDispute({
+            disputeId: req.params.id as string,
+            resolution: resolution as DisputeResolution,
+            refundPercent,
+            resolvedBy,
+        });
         res.json({ success: true, data: dispute });
     } catch (err: any) {
         if (err.message === 'DISPUTE_NOT_FOUND') {
             return res.status(404).json({ success: false, error: 'Dispute not found' });
+        }
+        if (err.message === 'DISPUTE_ALREADY_RESOLVED') {
+            return res.status(409).json({ success: false, error: 'Dispute already resolved' });
         }
         res.status(500).json({ success: false, error: err.message });
     }

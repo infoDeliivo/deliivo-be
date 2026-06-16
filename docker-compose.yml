@@ -33,12 +33,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        DATABASE_URL: ${DATABASE_URL:-postgresql://deliivo:deliivo_secret@postgres:5432/deliivo}
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: production
-      PORT: 3000
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${PORT:-3000}
       DATABASE_URL: postgresql://${POSTGRES_USER:-deliivo}:${POSTGRES_PASSWORD:-deliivo_secret}@postgres:5432/${POSTGRES_DB:-deliivo}
       REDIS_URL: redis://redis:6379
       REDIS_HOST: redis
@@ -57,6 +61,7 @@ services:
       DISABLE_RATE_LIMIT: ${DISABLE_RATE_LIMIT:-true}
       SMS_MOCK_MODE: ${SMS_MOCK_MODE:-true}
       SKIP_DL_VERIFICATION: ${SKIP_DL_VERIFICATION:-true}
+      ALLOW_RIDE_SIMULATION: ${ALLOW_RIDE_SIMULATION:-false}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_REGION: ${AWS_REGION:-eu-north-1}
@@ -74,12 +79,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        DATABASE_URL: ${DATABASE_URL:-postgresql://deliivo:deliivo_secret@postgres:5432/deliivo}
     restart: unless-stopped
+    env_file:
+      - .env
     command: ["node", "dist/modules/mail/mail.worker.js"]
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-development}
       DATABASE_URL: postgresql://${POSTGRES_USER:-deliivo}:${POSTGRES_PASSWORD:-deliivo_secret}@postgres:5432/${POSTGRES_DB:-deliivo}
       REDIS_URL: redis://redis:6379
+      ALLOW_RIDE_SIMULATION: ${ALLOW_RIDE_SIMULATION:-false}
     depends_on:
       - backend
 
@@ -87,14 +97,39 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        DATABASE_URL: ${DATABASE_URL:-postgresql://deliivo:deliivo_secret@postgres:5432/deliivo}
     restart: unless-stopped
+    env_file:
+      - .env
     command: ["node", "dist/modules/sms/sms.worker.js"]
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-development}
       DATABASE_URL: postgresql://${POSTGRES_USER:-deliivo}:${POSTGRES_PASSWORD:-deliivo_secret}@postgres:5432/${POSTGRES_DB:-deliivo}
       REDIS_URL: redis://redis:6379
+      ALLOW_RIDE_SIMULATION: ${ALLOW_RIDE_SIMULATION:-false}
     depends_on:
       - backend
+
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: base
+      args:
+        DATABASE_URL: ${DATABASE_URL:-postgresql://deliivo:deliivo_secret@postgres:5432/deliivo}
+    restart: "no"
+    profiles:
+      - seed
+    env_file:
+      - .env
+    command: ["sh", "-c", "npx prisma migrate deploy && npm run db:seed"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-deliivo}:${POSTGRES_PASSWORD:-deliivo_secret}@postgres:5432/${POSTGRES_DB:-deliivo}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   web:
     build:
@@ -105,8 +140,18 @@ services:
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
         NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
         NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
+        NEXT_PUBLIC_ALLOW_RIDE_SIMULATION: ${ALLOW_RIDE_SIMULATION:-false}
         NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://localhost:3000}
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
+        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-}
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-}
+        NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-}
+        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-}
+        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:-}
+        NEXT_PUBLIC_FIREBASE_VAPID_KEY: ${NEXT_PUBLIC_FIREBASE_VAPID_KEY:-}
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "8080:3001"
     environment:

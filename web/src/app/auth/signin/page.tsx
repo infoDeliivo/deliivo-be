@@ -153,7 +153,7 @@ export default function SignInPage() {
                 <rect x="88" y="33" width="5" height="4" rx="1" fill="#FDE68A" />
               </svg>
               <span className="text-xs font-semibold tracking-wide opacity-80">
-                Carpool Together, Go Further
+                Baltic Carpooling
               </span>
             </div>
           </div>
