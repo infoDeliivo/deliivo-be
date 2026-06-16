@@ -9,41 +9,51 @@ The web portal has partial support:
 - `/profile/payment-methods` can save cards using Stripe Setup Intents.
 - `/profile/earnings` can start Stripe Connect onboarding and request payouts.
 - `/admin/payouts` can check payout eligibility and process a payout for a driver ID.
+- `/rides/[id]` can now confirm a booking PaymentIntent with a saved Stripe card when the backend returns `booking.payment.clientSecret`.
+- `/publish` now requires Stripe Connect payout readiness before the driver can publish a ride.
+- `/profile/earnings` now renders the real backend earnings, balance, payout-batch history, and Connect status fields.
+- `/profile/payment-methods` now reloads server state after card changes and keeps a default card assigned when the current default is removed.
 
-## Missing Web Work
+## Implemented In This Pass
 
 ### Real Booking Payment Flow
 
-The ride booking page does not complete Stripe payment confirmation.
+The ride booking page now completes Stripe payment confirmation using saved payment methods.
 
-Current behavior:
+Current behavior after this fix:
 
 1. Rider clicks book.
 2. Web calls `bookingsApi.create()`.
 3. Backend may return `booking.payment.clientSecret`.
-4. Web only calls `setMyBooking(res.data)`.
-5. Web never calls Stripe payment confirmation.
+4. Web requires the rider to select a saved card, or save a card on the booking page first.
+5. Web confirms the PaymentIntent through Stripe.js using the selected saved `stripePaymentMethodId`.
+6. Web calls `bookingsApi.confirmPayment(bookingId)` after successful Stripe confirmation.
+7. Web shows payment progress and then the driver-pending booking state.
+8. If the booking remains `PAYMENT_PENDING` with a `clientSecret`, web shows a retry confirmation action using saved cards.
 
-Needed:
+Files changed:
 
-- Wrap ride detail booking flow in `StripeProvider`.
-- Add saved-card selection or inline card entry during booking.
-- If `res.data.payment.clientSecret` exists, call Stripe confirmation.
-- After successful confirmation, show `Payment received, waiting for driver`.
-- If confirmation fails, show retry action.
-- Improve `PAYMENT_PENDING` state UI so testers know payment is incomplete.
-- Decide whether booking should use saved cards only, inline card entry, or both.
+- `web/src/lib/stripe.tsx`
+- `web/src/app/rides/[id]/page.tsx`
+
+Notes:
+
+- If `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is missing and backend returns a Stripe `clientSecret`, the booking page shows a clear configuration error.
+- If backend payment mode is mock and no `clientSecret` is returned, the booking still proceeds without card confirmation.
+- If Stripe confirmation fails after backend booking creation, the rider can retry payment from the existing `PAYMENT_PENDING` booking instead of creating a duplicate booking.
+- New cards are saved through the existing SetupIntent flow before booking is submitted.
+- Booking PaymentIntents are now created with the rider's Stripe `customer` when a saved card exists, which is required for confirming saved payment methods.
+
+## Remaining Web Work
 
 ### Existing Saved Cards
 
-`/profile/payment-methods` already supports saving cards through Setup Intents, but the booking page does not use those saved cards yet.
+`/profile/payment-methods` supports saving cards through Setup Intents, and the ride booking page now uses saved cards.
 
-Needed:
+Still needed:
 
-- Fetch saved payment methods in booking flow.
-- Let rider select default/saved card.
-- Confirm booking payment with selected card.
-- Provide fallback inline card entry when no card is saved.
+- Add a richer default-card management UX from the ride booking page if needed.
+- Decide whether booking should allow one-time unsaved cards later. Current behavior intentionally saves the card first.
 
 ### Stripe Webhook Dependency
 
@@ -61,35 +71,27 @@ stripe listen --forward-to http://localhost:3000/api/v1/payments/stripe/webhook
 
 Web should show a clearer state when payment is confirmed in Stripe but the booking is still waiting for webhook processing.
 
+Current mitigation:
+
+- `POST /api/v1/bookings/:id/payment/confirm` now reconciles the Stripe PaymentIntent directly when Stripe already says `succeeded`, so the booking can move to `DRIVER_PENDING` and notify the driver even if local webhook forwarding is delayed.
+
 ### Stripe Connect Return UX
 
-`/profile/earnings` starts Connect onboarding, but does not handle return-state messaging.
+`/profile/earnings` now handles return-state messaging.
 
-Needed:
+Implemented:
 
-- Add success/error query handling after Stripe redirects back.
-- Refresh Connect status on return.
-- Show details for `chargesEnabled`, `payoutsEnabled`, and `detailsSubmitted`.
+- Added `/driver/stripe-connect/return` and `/driver/stripe-connect/refresh` pages that redirect back into the web portal.
+- Added return and refresh status messaging on `/profile/earnings`.
+- Refreshes Connect status after returning from Stripe.
+- Shows `chargesEnabled`, `payoutsEnabled`, and `detailsSubmitted` on the earnings page.
 
 ### Payout History Mapping
 
-The web type expects:
+Implemented:
 
-- `amount`
-- `paidAt`
-
-Backend payout history returns `PayoutBatch`-style fields:
-
-- `amountTotal`
-- `createdAt`
-- `status`
-- `items`
-
-Needed:
-
-- Align `PayoutRecord` type with backend response.
-- Display `amountTotal`.
-- Display batch status and item count.
+- `PayoutRecord` now matches the backend `PayoutBatch` response shape.
+- Web now displays `amountTotal`, batch status, transfer ID, failure reason, and item counts.
 
 ### Admin Payout UX
 
@@ -118,4 +120,3 @@ PLATFORM_FEE_PERCENT=10
 ```
 
 Rebuild web after changing `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
-

@@ -4,14 +4,10 @@ import { BookingStatus, Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
-import {
-    DRIVER_DECISION_NOTIFICATION_TYPE,
-    DRIVER_DECISION_WINDOW_MS,
-    STRIPE_METADATA_KEYS,
-} from './stripe.constants.js';
+import { STRIPE_METADATA_KEYS } from './stripe.constants.js';
 import { constructStripeEvent } from './stripe.service.js';
 import { logInfo, logError, logWarn, logDebug } from '../../utils/logger.js';
-import { emitToUsers } from '../../socket/index.js';
+import { applyStripePaymentSucceededToBooking } from '../ride-booking/ride-booking.service.js';
 
 const getHeaderValue = (value: string | string[] | undefined): string | null => {
     if (!value) return null;
@@ -23,155 +19,14 @@ const toMajorUnits = (amountMinor: number | null | undefined): number | null => 
     return Number((amountMinor / 100).toFixed(2));
 };
 
-const resolveSegmentAddress = (
-    defaultAddress: string,
-    waypointId: string | null,
-    waypoints: Array<{ id: string; address: string }>
-): string => {
-    if (!waypointId) return defaultAddress;
-    return waypoints.find((waypoint) => waypoint.id === waypointId)?.address ?? defaultAddress;
-};
-
 const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
-    const bookingId = intent.metadata?.[STRIPE_METADATA_KEYS.bookingId];
-    if (!bookingId) return;
-
-    const latestChargeId = typeof intent.latest_charge === 'string'
-        ? intent.latest_charge
-        : intent.latest_charge?.id ?? null;
-    const capturedAmount = intent.amount_received > 0 ? intent.amount_received : intent.amount;
-    const now = new Date();
-    const decisionDeadlineAt = new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS);
-
-    const updateResult = await prisma.rideBooking.updateMany({
-        where: {
-            id: bookingId,
-            status: BookingStatus.PAYMENT_PENDING,
-        },
-        data: {
-            status: BookingStatus.DRIVER_PENDING,
-            stripePaymentIntentId: intent.id,
-            stripeChargeId: latestChargeId,
-            paymentAmount: toMajorUnits(capturedAmount),
-            paymentCurrency: intent.currency.toUpperCase(),
-            paymentCapturedAt: now,
-            driverDecisionDeadlineAt: decisionDeadlineAt,
-        },
-    });
-
-    if (updateResult.count === 0) {
+    const applied = await applyStripePaymentSucceededToBooking(intent);
+    if (!applied) {
         logWarn('No booking updated - booking may not be in PAYMENT_PENDING status');
-        return;
-    }
-
-    logInfo('Booking updated to DRIVER_PENDING', { bookingId });
-
-    const booking = await prisma.rideBooking.findUnique({
-        where: { id: bookingId },
-        include: {
-            passenger: {
-                select: {
-                    name: true,
-                    avatarUrl: true,
-                },
-            },
-            ride: {
-                select: {
-                    id: true,
-                    driverId: true,
-                    originAddress: true,
-                    destinationAddress: true,
-                    departureDate: true,
-                    departureTime: true,
-                    currency: true,
-                    waypoints: {
-                        select: {
-                            id: true,
-                            address: true,
-                        },
-                    },
-                },
-            },
-        },
-    });
-
-    if (!booking) {
-        logError('Booking not found after update');
-        return;
-    }
-
-    logDebug('Booking details', { driverId: booking.ride.driverId, passengerId: booking.passengerId });
-
-    const originAddress = resolveSegmentAddress(
-        booking.ride.originAddress,
-        booking.pickupWaypointId,
-        booking.ride.waypoints
-    );
-    const destinationAddress = resolveSegmentAddress(
-        booking.ride.destinationAddress,
-        booking.dropoffWaypointId,
-        booking.ride.waypoints
-    );
-
-    logDebug('Sending notification to driver', { driverId: booking.ride.driverId });
-
-    try {
-        await createNotification({
-            userId: booking.ride.driverId,
-            type: DRIVER_DECISION_NOTIFICATION_TYPE,
-            title: 'New ride request',
-            body: `${booking.passenger.name ?? 'Rider'} wants ${originAddress} to ${destinationAddress}`,
-            data: {
-                bookingId: booking.id,
-                rideId: booking.ride.id,
-                passengerName: booking.passenger.name ?? 'Rider',
-                passengerAvatarUrl: booking.passenger.avatarUrl ?? '',
-                originAddress,
-                destinationAddress,
-                seatsBooked: String(booking.seatsBooked),
-                totalPrice: String(booking.totalPrice),
-                currency: booking.paymentCurrency ?? booking.ride.currency,
-                decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
-                decisionTimeRemainingSeconds: booking.driverDecisionDeadlineAt 
-                    ? String(Math.max(0, Math.floor((booking.driverDecisionDeadlineAt.getTime() - Date.now()) / 1000)))
-                    : '0',
-                deepLink: `app://driver/booking-request/${booking.id}`,
-            },
+    } else {
+        logInfo('Booking updated to DRIVER_PENDING', {
+            bookingId: intent.metadata?.[STRIPE_METADATA_KEYS.bookingId],
         });
-        logInfo('Notification sent to driver', { driverId: booking.ride.driverId });
-
-        await createNotification({
-            userId: booking.passengerId,
-            type: 'booking.request.sent',
-            title: 'Booking request sent',
-            body: 'Payment received. Your request was sent to the driver.',
-            data: {
-                bookingId: booking.id,
-                rideId: booking.ride.id,
-                status: BookingStatus.DRIVER_PENDING,
-                originAddress,
-                destinationAddress,
-                departureDate: booking.ride.departureDate.toISOString(),
-                departureTime: booking.ride.departureTime,
-                decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
-                deepLink: `app://booking/${booking.id}`,
-            },
-        });
-        logInfo('Notification sent to rider after payment success', { passengerId: booking.passengerId });
-
-        await emitToUsers([booking.ride.driverId], 'booking:updated', {
-            bookingId: booking.id,
-            rideId: booking.ride.id,
-            passengerId: booking.passengerId,
-            status: BookingStatus.DRIVER_PENDING,
-            previousStatus: BookingStatus.PAYMENT_PENDING,
-            actor: 'rider',
-            action: 'booking.requested',
-            updatedAt: new Date().toISOString(),
-        });
-    } catch (error) {
-        logError('Failed to send payment success notification', error);
-        throw error;
     }
 };
 

@@ -21,11 +21,8 @@ export function getStripe() {
 
 export function StripeProvider({ children }: { children: ReactNode }) {
   const stripe = getStripe();
-  if (!stripe) {
-    return <>{children}</>;
-  }
   return (
-    <Elements stripe={stripe} options={{ appearance: { theme: 'stripe' } }}>
+    <Elements stripe={stripe ?? null} options={{ appearance: { theme: 'stripe' } }}>
       {children}
     </Elements>
   );

@@ -19,6 +19,8 @@ import {
   Search,
   Route,
   AlertCircle,
+  Wallet,
+  ExternalLink,
 } from "lucide-react";
 import StepIndicator from "@/components/StepIndicator";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -28,12 +30,14 @@ import {
   publishRideApi,
   vehicleApi,
   authApi,
+  paymentsApi,
   PlacePrediction,
   RouteOption,
   PriceRecommendation,
   LocationInput,
   StopoverSuggestion,
   Vehicle,
+  ConnectStatus,
 } from "@/lib/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -726,13 +730,22 @@ function StepConfirm({
   onPublish,
   publishing,
   error,
+  payoutStatus,
+  payoutLoading,
+  onStartPayoutSetup,
+  payoutSetupLoading,
 }: {
   state: WizardState;
   onPublish: (tosAccepted: boolean) => void;
   publishing: boolean;
   error: string;
+  payoutStatus: ConnectStatus | null;
+  payoutLoading: boolean;
+  onStartPayoutSetup: () => void;
+  payoutSetupLoading: boolean;
 }) {
   const [tosChecked, setTosChecked] = useState(false);
+  const payoutsReady = Boolean(payoutStatus?.onboardingComplete && payoutStatus?.payoutsEnabled);
   const dateLabel = state.date
     ? new Date(state.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
     : "Not set";
@@ -820,6 +833,39 @@ function StepConfirm({
         </span>
       </label>
 
+      <div className={`rounded-2xl border px-4 py-4 shadow-sm ${
+        payoutsReady ? 'border-green-100 bg-green-50' : 'border-amber-200 bg-amber-50'
+      }`}>
+        <div className="flex items-start gap-3">
+          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+            payoutsReady ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+          }`}>
+            <Wallet className="h-5 w-5" />
+          </div>
+          <div className="flex-1">
+            <p className={`text-sm font-semibold ${payoutsReady ? 'text-green-900' : 'text-amber-900'}`}>
+              {payoutsReady ? 'Payout details ready' : 'Payout details required'}
+            </p>
+            <p className={`mt-1 text-xs ${payoutsReady ? 'text-green-800' : 'text-amber-800'}`}>
+              {payoutsReady
+                ? 'Your Stripe payout account is ready to receive driver earnings.'
+                : 'Set up Stripe payouts before publishing so rider payments can be routed correctly.'}
+            </p>
+            {!payoutsReady && (
+              <button
+                type="button"
+                onClick={onStartPayoutSetup}
+                disabled={payoutLoading || payoutSetupLoading}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-deliivo-orange px-4 py-2 text-sm font-semibold text-white hover:bg-deliivo-orange-dark disabled:opacity-50"
+              >
+                {payoutSetupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+                {payoutSetupLoading ? 'Redirecting...' : 'Set up payouts'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {error && (
         <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-100 px-4 py-3">
           <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
@@ -830,7 +876,7 @@ function StepConfirm({
       <button
         type="button"
         onClick={() => onPublish(tosChecked)}
-        disabled={publishing || !tosChecked}
+        disabled={publishing || !tosChecked || !payoutsReady}
         className="btn-primary w-full gap-2 py-4 text-base disabled:opacity-60"
       >
         {publishing ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle className="h-5 w-5" />}
@@ -871,10 +917,41 @@ function PublishRideWizard() {
   const [published, setPublished] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [payoutStatus, setPayoutStatus] = useState<ConnectStatus | null>(null);
+  const [payoutStatusLoading, setPayoutStatusLoading] = useState(false);
+  const [payoutSetupLoading, setPayoutSetupLoading] = useState(false);
 
   function patch(update: Partial<WizardState>) {
     setState((prev) => ({ ...prev, ...update }));
     setError('');
+  }
+
+  useEffect(() => {
+    loadPayoutStatus();
+  }, []);
+
+  async function loadPayoutStatus() {
+    setPayoutStatusLoading(true);
+    try {
+      const res = await paymentsApi.connectStatus();
+      setPayoutStatus(res.data);
+    } catch {
+      setPayoutStatus(null);
+    } finally {
+      setPayoutStatusLoading(false);
+    }
+  }
+
+  async function handleStartPayoutSetup() {
+    setPayoutSetupLoading(true);
+    setError('');
+    try {
+      const res = await paymentsApi.connectOnboard();
+      window.location.href = res.data.url;
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to start payout setup');
+      setPayoutSetupLoading(false);
+    }
   }
 
   function canContinue(): boolean {
@@ -989,6 +1066,12 @@ function PublishRideWizard() {
     setLoading(true);
     setError('');
     try {
+      const latestPayoutStatus = payoutStatus ?? (await paymentsApi.connectStatus()).data;
+      setPayoutStatus(latestPayoutStatus);
+      if (!latestPayoutStatus.onboardingComplete || !latestPayoutStatus.payoutsEnabled) {
+        throw new Error('Payout details are required before publishing a ride.');
+      }
+
       // Accept Terms of Service
       if (tosAccepted) {
         await authApi.acceptTos('1.0', '1.0');
@@ -1009,6 +1092,7 @@ function PublishRideWizard() {
       let message = err instanceof Error ? err.message : 'Failed to publish ride';
       if (message.includes('TOS_NOT_ACCEPTED')) message = 'Please accept the Terms of Service to continue.';
       if (message.includes('DRIVER_NOT_VERIFIED')) message = 'Your driving license must be verified before publishing a ride.';
+      if (message.includes('NO_STRIPE_ACCOUNT') || message.includes('PAYOUT')) message = 'Set up your payout details before publishing a ride.';
       setError(message);
     } finally {
       setLoading(false);
@@ -1098,7 +1182,18 @@ function PublishRideWizard() {
           {step === 3 && <StepDateTime state={state} onChange={patch} />}
           {step === 4 && <StepSeats state={state} onChange={patch} />}
           {step === 5 && <StepPrice state={state} onChange={patch} loading={loading} />}
-          {step === 6 && <StepConfirm state={state} onPublish={handlePublish} publishing={loading} error={error} />}
+          {step === 6 && (
+            <StepConfirm
+              state={state}
+              onPublish={handlePublish}
+              publishing={loading}
+              error={error}
+              payoutStatus={payoutStatus}
+              payoutLoading={payoutStatusLoading}
+              onStartPayoutSetup={handleStartPayoutSetup}
+              payoutSetupLoading={payoutSetupLoading}
+            />
+          )}
         </div>
       </main>
 

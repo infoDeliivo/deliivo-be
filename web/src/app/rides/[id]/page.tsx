@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { FormEvent, useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -10,6 +10,7 @@ import {
   Clock,
   Users,
   Car,
+  CreditCard,
   Star,
   Loader2,
   AlertCircle,
@@ -19,11 +20,13 @@ import {
   MessageSquare,
   Share2,
 } from 'lucide-react';
+import { CardElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import GoogleMap from '@/components/GoogleMap';
-import { authApi, searchRidesApi, bookingsApi, rideOpsApi, ratingsApi, trackingApi, disputesApi, RideDetails, PricePreview, Booking, TrackingLink, Dispute } from '@/lib/api';
+import { authApi, searchRidesApi, bookingsApi, rideOpsApi, ratingsApi, trackingApi, disputesApi, paymentMethodsApi, RideDetails, PricePreview, Booking, TrackingLink, Dispute, PaymentMethod } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { emitSocketEvent, getSocket, onSocketEvent, LocationUpdate, NotificationPayload, BookingUpdatedPayload, RideUpdatedPayload } from '@/lib/socket';
+import { isStripeConfigured, StripeProvider } from '@/lib/stripe';
 
 const TOS_VERSION = '1.0';
 const PRIVACY_VERSION = '1.0';
@@ -59,6 +62,7 @@ function RideDetailContent() {
   const searchParams = useSearchParams();
   const segmentId = searchParams.get('segmentId') || undefined;
   const { user, refreshUser } = useAuth();
+  const stripe = useStripe();
 
   const [ride, setRide] = useState<RideDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,6 +74,11 @@ function RideDetailContent() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [booking, setBooking] = useState(false);
   const [bookError, setBookError] = useState('');
+  const [paymentMessage, setPaymentMessage] = useState('');
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [paymentMethodsLoading, setPaymentMethodsLoading] = useState(false);
+  const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState('');
+  const [showAddPaymentMethod, setShowAddPaymentMethod] = useState(false);
   const [tosAcceptedForBooking, setTosAcceptedForBooking] = useState(false);
   const [responseExpiryOption, setResponseExpiryOption] = useState<'ONE_HOUR' | 'THREE_HOURS' | 'SIX_HOURS' | 'TWELVE_HOURS' | 'TWENTY_FOUR_HOURS' | 'BEFORE_DEPARTURE'>('BEFORE_DEPARTURE');
 
@@ -105,6 +114,7 @@ function RideDetailContent() {
     if (!id) return;
     loadRide();
     loadMyBooking();
+    loadPaymentMethods();
   }, [id]);
 
   useEffect(() => {
@@ -237,6 +247,26 @@ function RideDetailContent() {
       setMyDisputes((res.data || []).filter((dispute) => dispute.bookingId === bookingId));
     } catch {
       setMyDisputes([]);
+    }
+  }
+
+  async function loadPaymentMethods(selectId?: string) {
+    setPaymentMethodsLoading(true);
+    try {
+      const res = await paymentMethodsApi.list();
+      const methods = res.data || [];
+      setPaymentMethods(methods);
+      const nextSelected = selectId
+        || methods.find((method) => method.isDefault)?.id
+        || methods[0]?.id
+        || '';
+      setSelectedPaymentMethodId(nextSelected);
+      if (methods.length > 0) setShowAddPaymentMethod(false);
+    } catch {
+      setPaymentMethods([]);
+      setSelectedPaymentMethodId('');
+    } finally {
+      setPaymentMethodsLoading(false);
     }
   }
 
@@ -435,10 +465,57 @@ function RideDetailContent() {
     if (ride) loadPricePreview();
   }, [ride, seats]);
 
+  async function confirmStripeBookingPayment(targetBooking: Booking) {
+    if (!targetBooking.payment?.clientSecret) return targetBooking;
+
+    if (!isStripeConfigured() || !stripe) {
+      throw new Error('Payment intent was created, but Stripe is not configured in the web app. Add NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY and rebuild web.');
+    }
+
+    const selectedMethod = paymentMethods.find((method) => method.id === selectedPaymentMethodId);
+    if (!selectedMethod?.stripePaymentMethodId) {
+      throw new Error('Add or select a saved card before booking this ride.');
+    }
+
+    setPaymentMessage('Confirming card payment...');
+    const { error: stripeError, paymentIntent } = await stripe.confirmCardPayment(
+      targetBooking.payment.clientSecret,
+      { payment_method: selectedMethod.stripePaymentMethodId }
+    );
+
+    if (stripeError) {
+      throw new Error(stripeError.message || 'Card payment failed. Please check the card details and try again.');
+    }
+
+    if (paymentIntent && ['succeeded', 'processing', 'requires_capture'].includes(paymentIntent.status)) {
+      setPaymentMessage('Payment confirmed. Waiting for driver response.');
+      try {
+        const refreshed = await bookingsApi.confirmPayment(targetBooking.id);
+        return refreshed.data || targetBooking;
+      } catch {
+        await loadMyBooking();
+        return targetBooking;
+      }
+    }
+
+    setPaymentMessage(`Payment status: ${paymentIntent?.status || 'pending'}.`);
+    return targetBooking;
+  }
+
   async function handleBook() {
     if (!ride) return;
+    if (isStripeConfigured() && paymentMethods.length === 0) {
+      setBookError('Add a payment card before booking this ride.');
+      setShowAddPaymentMethod(true);
+      return;
+    }
+    if (isStripeConfigured() && !selectedPaymentMethodId) {
+      setBookError('Select a payment card before booking this ride.');
+      return;
+    }
     setBooking(true);
     setBookError('');
+    setPaymentMessage('');
     try {
       if (needsTosAcceptance) {
         await authApi.acceptTos(TOS_VERSION, PRIVACY_VERSION);
@@ -452,12 +529,37 @@ function RideDetailContent() {
         dropoffWaypointId: ride.bookingContext?.dropoffWaypointId || undefined,
         responseExpiryOption,
       });
-      setMyBooking(res.data);
+      const createdBooking = res.data;
+      setMyBooking(createdBooking);
+
+      if (createdBooking.payment?.clientSecret) {
+        const confirmedBooking = await confirmStripeBookingPayment(createdBooking);
+        setMyBooking(confirmedBooking);
+      } else {
+        setPaymentMessage('Booking request sent. Waiting for driver response.');
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Booking failed';
       setBookError(message.includes('TOS_NOT_ACCEPTED')
         ? 'You must accept the Terms of Service before booking this ride.'
         : message);
+      setPaymentMessage('');
+    } finally {
+      setBooking(false);
+    }
+  }
+
+  async function handleRetryPayment() {
+    if (!myBooking) return;
+    setBooking(true);
+    setBookError('');
+    setPaymentMessage('');
+    try {
+      const confirmedBooking = await confirmStripeBookingPayment(myBooking);
+      setMyBooking(confirmedBooking);
+    } catch (err: unknown) {
+      setBookError(err instanceof Error ? err.message : 'Payment failed');
+      setPaymentMessage('');
     } finally {
       setBooking(false);
     }
@@ -732,6 +834,77 @@ function RideDetailContent() {
               </select>
             </div>
 
+            {isStripeConfigured() ? (
+              <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="h-4 w-4 text-deliivo-orange" />
+                    <p className="text-sm font-semibold text-deliivo-dark">Payment card</p>
+                  </div>
+                  {paymentMethods.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAddPaymentMethod((value) => !value)}
+                      className="text-xs font-semibold text-deliivo-orange hover:underline"
+                    >
+                      {showAddPaymentMethod ? 'Use saved card' : 'Add another'}
+                    </button>
+                  )}
+                </div>
+
+                {paymentMethodsLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-deliivo-gray">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading cards...
+                  </div>
+                ) : paymentMethods.length > 0 && !showAddPaymentMethod ? (
+                  <div className="space-y-2">
+                    {paymentMethods.map((method) => (
+                      <label
+                        key={method.id}
+                        className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 transition-colors ${
+                          selectedPaymentMethodId === method.id
+                            ? 'border-deliivo-orange bg-deliivo-orange-light'
+                            : 'border-gray-200 hover:border-deliivo-orange/50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="bookingPaymentMethod"
+                          checked={selectedPaymentMethodId === method.id}
+                          onChange={() => setSelectedPaymentMethodId(method.id)}
+                          className="h-4 w-4 border-gray-300 text-deliivo-orange focus:ring-deliivo-orange"
+                        />
+                        <CreditCard className="h-4 w-4 text-deliivo-gray" />
+                        <span className="flex-1 text-sm font-medium text-deliivo-dark">
+                          {method.brand} **** {method.last4}
+                        </span>
+                        <span className="text-xs text-deliivo-gray">
+                          {String(method.expMonth).padStart(2, '0')}/{method.expYear}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <RideAddPaymentMethodForm
+                    onSaved={(method) => {
+                      loadPaymentMethods(method.id);
+                    }}
+                  />
+                )}
+
+                <p className="text-xs text-deliivo-gray">
+                  Your saved card is authorized now. The driver still needs to approve the booking.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <p className="text-sm font-medium text-amber-900">Stripe publishable key is not configured for this web build.</p>
+                <p className="mt-1 text-xs text-amber-800">
+                  Mock payments can still work if the backend is in mock mode. For real Stripe test cards, add NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY and rebuild web.
+                </p>
+              </div>
+            )}
+
             {/* Price preview */}
             {previewLoading ? (
               <div className="flex items-center gap-2 text-sm text-deliivo-gray"><Loader2 className="h-4 w-4 animate-spin" /> Calculating...</div>
@@ -751,14 +924,21 @@ function RideDetailContent() {
               </div>
             )}
 
+            {paymentMessage && (
+              <div className="flex items-center gap-2 rounded-xl bg-green-50 border border-green-100 px-4 py-3">
+                <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
+                <p className="text-sm text-green-700">{paymentMessage}</p>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={handleBook}
-              disabled={booking || (needsTosAcceptance && !tosAcceptedForBooking)}
+              disabled={booking || paymentMethodsLoading || (isStripeConfigured() && (!selectedPaymentMethodId || showAddPaymentMethod)) || (needsTosAcceptance && !tosAcceptedForBooking)}
               className="btn-primary w-full py-3.5 text-base gap-2 disabled:opacity-60"
             >
               {booking ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-5 w-5" />}
-              {booking ? 'Booking...' : `Request to book - ${previewBreakdown ? `${previewBreakdown.currency} ${previewBreakdown.totalPrice.toFixed(2)}` : ''}`}
+              {booking ? 'Processing...' : `Request to book - ${previewBreakdown ? `${previewBreakdown.currency} ${previewBreakdown.totalPrice.toFixed(2)}` : ''}`}
             </button>
 
             <p className="text-center text-xs text-deliivo-gray">
@@ -785,6 +965,61 @@ function RideDetailContent() {
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-1">
                 <p className="text-sm font-semibold text-amber-900">Waiting for driver response</p>
                 <p className="text-xs text-amber-800">Expires in {formatDeadline(myBooking.decisionDeadline)}</p>
+              </div>
+            )}
+
+            {myBooking.status === 'PAYMENT_PENDING' && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-amber-900">Payment needs confirmation</p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    Confirm the card payment to send this request to the driver.
+                  </p>
+                </div>
+                {myBooking.payment?.clientSecret && isStripeConfigured() && paymentMethods.length > 0 && (
+                  <div className="space-y-2">
+                    <select
+                      value={selectedPaymentMethodId}
+                      onChange={(event) => setSelectedPaymentMethodId(event.target.value)}
+                      className="w-full rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm text-deliivo-dark focus:border-deliivo-orange focus:outline-none focus:ring-2 focus:ring-deliivo-orange/20"
+                    >
+                      {paymentMethods.map((method) => (
+                        <option key={method.id} value={method.id}>
+                          {method.brand} **** {method.last4} - {String(method.expMonth).padStart(2, '0')}/{method.expYear}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleRetryPayment}
+                      disabled={booking}
+                      className="w-full rounded-xl bg-deliivo-orange px-4 py-2.5 text-sm font-semibold text-white hover:bg-deliivo-orange-dark disabled:opacity-50"
+                    >
+                      {booking ? 'Confirming...' : 'Confirm card payment'}
+                    </button>
+                  </div>
+                )}
+                {myBooking.payment?.clientSecret && isStripeConfigured() && paymentMethods.length === 0 && (
+                  <RideAddPaymentMethodForm
+                    onSaved={(method) => {
+                      loadPaymentMethods(method.id);
+                    }}
+                  />
+                )}
+              </div>
+            )}
+
+            {bookError && (
+              <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-100 px-4 py-3">
+                <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
+                <p className="text-sm text-red-600">{bookError}</p>
+              </div>
+            )}
+
+            {paymentMessage && (
+              <div className="flex items-center gap-2 rounded-xl bg-green-50 border border-green-100 px-4 py-3">
+                <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
+                <p className="text-sm text-green-700">{paymentMessage}</p>
               </div>
             )}
 
@@ -1091,10 +1326,82 @@ function RideDetailContent() {
   );
 }
 
+function RideAddPaymentMethodForm({ onSaved }: { onSaved: (method: PaymentMethod) => void }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!stripe || !elements) return;
+
+    setSaving(true);
+    setError('');
+    try {
+      const setupIntentRes = await paymentMethodsApi.createSetupIntent();
+      const { clientSecret, customerId } = setupIntentRes.data;
+      const cardElement = elements.getElement(CardElement);
+      if (!cardElement) throw new Error('Card details are not ready. Please re-enter the card.');
+
+      const { error: stripeError, setupIntent } = await stripe.confirmCardSetup(clientSecret, {
+        payment_method: { card: cardElement },
+      });
+
+      if (stripeError) {
+        throw new Error(stripeError.message || 'Card setup failed');
+      }
+
+      const stripePaymentMethodId = typeof setupIntent.payment_method === 'string'
+        ? setupIntent.payment_method
+        : setupIntent.payment_method?.id;
+      if (!stripePaymentMethodId) throw new Error('Stripe did not return a payment method');
+
+      const saved = await paymentMethodsApi.save(stripePaymentMethodId, customerId);
+      onSaved(saved.data);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to save card');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-3">
+        <CardElement
+          options={{
+            hidePostalCode: true,
+            style: {
+              base: {
+                color: '#1F2937',
+                fontSize: '15px',
+                '::placeholder': { color: '#9CA3AF' },
+              },
+            },
+          }}
+        />
+      </div>
+      {error && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+      )}
+      <button
+        type="submit"
+        disabled={saving || !stripe}
+        className="w-full rounded-xl border border-deliivo-orange bg-white px-4 py-2.5 text-sm font-semibold text-deliivo-orange hover:bg-deliivo-orange-light disabled:opacity-50"
+      >
+        {saving ? 'Saving card...' : 'Save card for this booking'}
+      </button>
+    </form>
+  );
+}
+
 export default function RideDetailPage() {
   return (
     <ProtectedRoute>
-      <RideDetailContent />
+      <StripeProvider>
+        <RideDetailContent />
+      </StripeProvider>
     </ProtectedRoute>
   );
 }

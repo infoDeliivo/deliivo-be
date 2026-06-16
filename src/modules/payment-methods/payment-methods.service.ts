@@ -111,8 +111,30 @@ export const removePaymentMethod = async (userId: string, paymentMethodId: strin
         await stripe.paymentMethods.detach(pm.stripePaymentMethodId);
     }
 
-    return prisma.paymentMethod.update({
-        where: { id: paymentMethodId },
-        data: { status: 'REMOVED' },
+    return prisma.$transaction(async (tx) => {
+        const removed = await tx.paymentMethod.update({
+            where: { id: paymentMethodId },
+            data: { status: 'REMOVED', isDefault: false },
+        });
+
+        if (pm.isDefault) {
+            const replacement = await tx.paymentMethod.findFirst({
+                where: {
+                    userId,
+                    status: 'ACTIVE',
+                    id: { not: paymentMethodId },
+                },
+                orderBy: [{ createdAt: 'desc' }],
+            });
+
+            if (replacement) {
+                await tx.paymentMethod.update({
+                    where: { id: replacement.id },
+                    data: { isDefault: true },
+                });
+            }
+        }
+
+        return removed;
     });
 };

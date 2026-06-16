@@ -10,6 +10,7 @@ import {
   Star,
   Bell,
   CreditCard,
+  Wallet,
   HelpCircle,
   Shield,
   ScrollText,
@@ -116,7 +117,7 @@ function ProfileContent() {
     { label: 'Ratings', href: '/profile/ratings', icon: Star },
     { label: 'Notifications', href: '/profile/notifications', icon: Bell },
     { label: 'Payment Methods', href: '/profile/payment-methods', icon: CreditCard },
-    { label: 'Earnings & Payouts', href: '/profile/earnings', icon: CreditCard },
+    { label: 'Earnings & Payouts', href: '/profile/earnings', icon: Wallet },
     { label: 'Disputes', href: '/profile/disputes', icon: Shield },
   ];
 

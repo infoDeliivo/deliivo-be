@@ -1006,31 +1006,48 @@ export interface ReconciliationIssue {
 export interface ConnectStatus {
   connected: boolean;
   onboardingComplete: boolean;
+  accountId?: string;
   detailsSubmitted?: boolean;
   chargesEnabled?: boolean;
   payoutsEnabled?: boolean;
 }
 
 export interface DriverEarnings {
-  totalEarnings: number;
-  totalRides: number;
-  currency: string;
-  periodEarnings?: { period: string; amount: number }[];
+  driverId: string;
+  totalEarned: number;
+  totalPaidOut: number;
+  totalRefunded: number;
+  pendingBalance: number;
+  entriesCount: number;
 }
 
 export interface DriverBalance {
-  available: number;
-  pending: number;
+  driverId: string;
+  balance: number;
   currency: string;
+  entriesCount: number;
 }
 
 export interface PayoutRecord {
   id: string;
-  amount: number;
+  driverId?: string;
   currency: string;
   status: string;
+  amountTotal: number;
+  stripeTransferId?: string | null;
+  stripePayoutId?: string | null;
+  failureReason?: string | null;
   createdAt: string;
-  paidAt?: string;
+  updatedAt?: string;
+  items: Array<{
+    id: string;
+    bookingId: string;
+    paymentId: string;
+    driverAmount: number;
+    platformFee: number;
+    status: string;
+    createdAt: string;
+  }>;
 }
 
 export interface Dispute {
@@ -1052,10 +1069,12 @@ export interface Dispute {
 
 export interface PaymentMethod {
   id: string;
-  brand: string;
-  last4: string;
-  expMonth: number;
-  expYear: number;
+  stripeCustomerId?: string;
+  stripePaymentMethodId?: string;
+  brand: string | null;
+  last4: string | null;
+  expMonth: number | null;
+  expYear: number | null;
   isDefault: boolean;
 }
 

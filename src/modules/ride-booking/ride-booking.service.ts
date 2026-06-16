@@ -1,3 +1,5 @@
+// @ts-ignore - stripe v21 types bundled via package exports; not resolved by "Node" moduleResolution
+import Stripe from 'stripe';
 import { BookingStatus, Prisma, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import {
@@ -7,7 +9,7 @@ import {
     SegmentRide,
 } from '../search-ride/segment-view.utils.js';
 import { decodeViewToken } from '../search-ride/view-token.utils.js';
-import { createBookingPaymentIntent, refundPaymentIntent } from '../payments/stripe.service.js';
+import { createBookingPaymentIntent, getStripeClient, refundPaymentIntent } from '../payments/stripe.service.js';
 import { createNotification } from '../notification/notification.service.js';
 import { DRIVER_DECISION_NOTIFICATION_TYPE, DRIVER_DECISION_WINDOW_MS } from '../payments/stripe.constants.js';
 import { enqueueDeadlineCheck } from '../../queue/deadline.queue.js';
@@ -150,6 +152,150 @@ const validateBookingSeats = (seatsBooked: number) => {
     if (seatsBooked > MAX_SEATS_PER_BOOKING) {
         throw new Error('MAXIMUM_SEATS_EXCEEDED');
     }
+};
+
+const toMajorUnits = (amountMinor: number | null | undefined): number | null => {
+    if (typeof amountMinor !== 'number') return null;
+    return Number((amountMinor / 100).toFixed(2));
+};
+
+export const applyStripePaymentSucceededToBooking = async (intent: Stripe.PaymentIntent) => {
+    const bookingId = intent.metadata?.bookingId;
+    if (!bookingId) return false;
+
+    const latestChargeId = typeof intent.latest_charge === 'string'
+        ? intent.latest_charge
+        : intent.latest_charge?.id ?? null;
+    const capturedAmount = intent.amount_received > 0 ? intent.amount_received : intent.amount;
+    const now = new Date();
+    const decisionDeadlineAt = new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS);
+
+    const updateResult = await prisma.rideBooking.updateMany({
+        where: {
+            id: bookingId,
+            status: BookingStatus.PAYMENT_PENDING,
+        },
+        data: {
+            status: BookingStatus.DRIVER_PENDING,
+            stripePaymentIntentId: intent.id,
+            stripeChargeId: latestChargeId,
+            paymentAmount: toMajorUnits(capturedAmount),
+            paymentCurrency: intent.currency.toUpperCase(),
+            paymentCapturedAt: now,
+            driverDecisionDeadlineAt: decisionDeadlineAt,
+        },
+    });
+
+    if (updateResult.count === 0) {
+        return false;
+    }
+
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: {
+            passenger: {
+                select: {
+                    name: true,
+                    avatarUrl: true,
+                },
+            },
+            ride: {
+                select: {
+                    id: true,
+                    driverId: true,
+                    originAddress: true,
+                    destinationAddress: true,
+                    departureDate: true,
+                    departureTime: true,
+                    currency: true,
+                    waypoints: {
+                        select: {
+                            id: true,
+                            address: true,
+                        },
+                    },
+                },
+            },
+        },
+    });
+
+    if (!booking) {
+        return true;
+    }
+
+    const originAddress = resolveSegmentAddress(
+        booking.ride.originAddress,
+        booking.pickupWaypointId,
+        booking.ride.waypoints
+    );
+    const destinationAddress = resolveSegmentAddress(
+        booking.ride.destinationAddress,
+        booking.dropoffWaypointId,
+        booking.ride.waypoints
+    );
+
+    try {
+        await createNotification({
+            userId: booking.ride.driverId,
+            type: DRIVER_DECISION_NOTIFICATION_TYPE,
+            title: 'New ride request',
+            body: `${booking.passenger.name ?? 'Rider'} wants ${originAddress} to ${destinationAddress}`,
+            data: {
+                bookingId: booking.id,
+                rideId: booking.ride.id,
+                passengerName: booking.passenger.name ?? 'Rider',
+                passengerAvatarUrl: booking.passenger.avatarUrl ?? '',
+                originAddress,
+                destinationAddress,
+                seatsBooked: String(booking.seatsBooked),
+                totalPrice: String(booking.totalPrice),
+                currency: booking.paymentCurrency ?? booking.ride.currency,
+                decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
+                decisionTimeRemainingSeconds: booking.driverDecisionDeadlineAt
+                    ? String(Math.max(0, Math.floor((booking.driverDecisionDeadlineAt.getTime() - Date.now()) / 1000)))
+                    : '0',
+                deepLink: `app://driver/booking-request/${booking.id}`,
+            },
+        });
+
+        await createNotification({
+            userId: booking.passengerId,
+            type: 'booking.request.sent',
+            title: 'Booking request sent',
+            body: 'Payment received. Your request was sent to the driver.',
+            data: {
+                bookingId: booking.id,
+                rideId: booking.ride.id,
+                status: BookingStatus.DRIVER_PENDING,
+                originAddress,
+                destinationAddress,
+                departureDate: booking.ride.departureDate.toISOString(),
+                departureTime: booking.ride.departureTime,
+                decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
+                deepLink: `app://booking/${booking.id}`,
+            },
+        });
+
+        await emitToUsers([booking.ride.driverId], 'booking:updated', {
+            bookingId: booking.id,
+            rideId: booking.ride.id,
+            passengerId: booking.passengerId,
+            status: BookingStatus.DRIVER_PENDING,
+            previousStatus: BookingStatus.PAYMENT_PENDING,
+            actor: 'rider',
+            action: 'booking.requested',
+            updatedAt: new Date().toISOString(),
+        });
+
+        const deadlineDelayMs = booking.driverDecisionDeadlineAt
+            ? Math.max(0, booking.driverDecisionDeadlineAt.getTime() - Date.now())
+            : DRIVER_DECISION_WINDOW_MS;
+        await enqueueDeadlineCheck(booking.id, deadlineDelayMs);
+    } catch (error) {
+        console.warn('Stripe payment success side effects failed after booking was moved to DRIVER_PENDING', error);
+    }
+
+    return true;
 };
 
 const mapRideInfo = (ride: RideWithDetails) => ({
@@ -776,6 +922,16 @@ export const createBooking = async (
             (bookingSeed.ride.driver as any).stripeOnboardingComplete
                 ? (bookingSeed.ride.driver as any).stripeAccountId ?? null
                 : null;
+        const riderPaymentMethod = await prisma.paymentMethod.findFirst({
+            where: {
+                userId: passengerId,
+                status: 'ACTIVE',
+            },
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+            select: {
+                stripeCustomerId: true,
+            },
+        });
 
         paymentIntent = await createBookingPaymentIntent({
             bookingId: bookingSeed.booking.id,
@@ -783,6 +939,7 @@ export const createBooking = async (
             passengerId,
             amountMajor: bookingSeed.priceBreakdown.totalPrice,
             currency: bookingSeed.ride.currency,
+            customerId: riderPaymentMethod?.stripeCustomerId ?? null,
             driverStripeAccountId,
         });
     } catch {
@@ -1214,6 +1371,34 @@ export const getBookingPaymentStatus = async (
     passengerId: string,
     bookingId: string
 ): Promise<BookingResponse | null> => {
+    const booking = await prisma.rideBooking.findFirst({
+        where: {
+            id: bookingId,
+            passengerId,
+        },
+        select: {
+            status: true,
+            stripePaymentIntentId: true,
+        },
+    });
+
+    if (
+        booking
+        && booking.status === BookingStatus.PAYMENT_PENDING
+        && booking.stripePaymentIntentId
+        && process.env.BOOKING_PAYMENT_MODE === 'stripe'
+    ) {
+        try {
+            const stripe = getStripeClient();
+            const intent = await stripe.paymentIntents.retrieve(booking.stripePaymentIntentId);
+            if (intent.status === 'succeeded') {
+                await applyStripePaymentSucceededToBooking(intent);
+            }
+        } catch (error) {
+            console.warn('Failed to reconcile booking payment status from Stripe', { bookingId, error });
+        }
+    }
+
     return getBookingById(passengerId, bookingId);
 };
 

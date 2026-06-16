@@ -13,6 +13,8 @@ function PaymentMethodsContent() {
   const [loading, setLoading] = useState(true);
   const [showAddCard, setShowAddCard] = useState(false);
   const [error, setError] = useState('');
+  const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   useEffect(() => { loadMethods(); }, []);
 
@@ -26,21 +28,29 @@ function PaymentMethodsContent() {
   }
 
   async function handleSetDefault(id: string) {
+    setSettingDefaultId(id);
+    setError('');
     try {
       await paymentMethodsApi.setDefault(id);
-      setMethods(prev => prev.map(m => ({ ...m, isDefault: m.id === id })));
+      await loadMethods();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to set default');
+    } finally {
+      setSettingDefaultId(null);
     }
   }
 
   async function handleRemove(id: string) {
     if (!confirm('Remove this card?')) return;
+    setRemovingId(id);
+    setError('');
     try {
       await paymentMethodsApi.remove(id);
-      setMethods(prev => prev.filter(m => m.id !== id));
+      await loadMethods();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to remove card');
+    } finally {
+      setRemovingId(null);
     }
   }
 
@@ -62,10 +72,26 @@ function PaymentMethodsContent() {
       </header>
 
       <div className="max-w-lg mx-auto px-4 py-6 flex flex-col gap-4">
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <h2 className="text-sm font-semibold text-gray-900">Saved cards</h2>
+          <p className="mt-1 text-sm text-deliivo-gray">
+            These cards are used during rider booking. Keep one default card so checkout can proceed without extra selection.
+          </p>
+        </div>
+
         {error && (
           <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-100 px-4 py-3">
             <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
             <p className="text-sm text-red-600">{error}</p>
+          </div>
+        )}
+
+        {methods.length > 0 && !methods.some((method) => method.isDefault) && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm text-amber-900 font-medium">No default card selected.</p>
+            <p className="mt-1 text-xs text-amber-800">
+              Choose a default card to make ride booking faster.
+            </p>
           </div>
         )}
 
@@ -82,20 +108,30 @@ function PaymentMethodsContent() {
               <CreditCard className="w-5 h-5 text-gray-500" />
             </div>
             <div className="flex-1">
-              <p className="text-sm font-semibold text-gray-900 capitalize">{m.brand} **** {m.last4}</p>
-              <p className="text-xs text-deliivo-gray">Expires {String(m.expMonth).padStart(2, '0')}/{m.expYear}</p>
+              <p className="text-sm font-semibold text-gray-900 capitalize">{m.brand || 'Card'} {m.last4 ? `**** ${m.last4}` : ''}</p>
+              <p className="text-xs text-deliivo-gray">
+                {m.expMonth && m.expYear ? `Expires ${String(m.expMonth).padStart(2, '0')}/${m.expYear}` : 'Expiry not available'}
+              </p>
             </div>
             {m.isDefault ? (
               <span className="text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full flex items-center gap-1">
                 <CheckCircle className="w-3 h-3" /> Default
               </span>
             ) : (
-              <button onClick={() => handleSetDefault(m.id)} className="text-xs font-medium text-deliivo-orange hover:underline">
-                Set default
+              <button
+                onClick={() => handleSetDefault(m.id)}
+                disabled={settingDefaultId === m.id || !!removingId}
+                className="text-xs font-medium text-deliivo-orange hover:underline disabled:opacity-50"
+              >
+                {settingDefaultId === m.id ? 'Saving...' : 'Set default'}
               </button>
             )}
-            <button onClick={() => handleRemove(m.id)} className="p-1.5 text-red-400 hover:text-red-600 rounded-full hover:bg-red-50">
-              <Trash2 className="w-4 h-4" />
+            <button
+              onClick={() => handleRemove(m.id)}
+              disabled={removingId === m.id || !!settingDefaultId}
+              className="p-1.5 text-red-400 hover:text-red-600 rounded-full hover:bg-red-50 disabled:opacity-50"
+            >
+              {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
             </button>
           </div>
         ))}
@@ -103,7 +139,7 @@ function PaymentMethodsContent() {
         {showAddCard ? (
           isStripeConfigured() ? (
             <AddCardForm
-              onSuccess={() => { setShowAddCard(false); loadMethods(); }}
+              onSuccess={() => { setError(''); setShowAddCard(false); loadMethods(); }}
               onCancel={() => setShowAddCard(false)}
             />
           ) : (

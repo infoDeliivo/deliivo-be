@@ -4,6 +4,7 @@ export interface CreatePaymentIntentInput {
     passengerId: string;
     amountMajor: number;
     currency: string;
+    customerId?: string | null;
     driverStripeAccountId?: string | null;
     captureMethod?: 'automatic' | 'manual';
 }

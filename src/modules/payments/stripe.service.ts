@@ -95,6 +95,7 @@ export const createBookingPaymentIntent = async (
             amount: toMinorUnits(input.amountMajor),
             currency: (input.currency || STRIPE_CURRENCY_DEFAULT).toLowerCase(),
             capture_method: input.captureMethod ?? 'automatic',
+            ...(input.customerId ? { customer: input.customerId } : {}),
             metadata: {
                 [STRIPE_METADATA_KEYS.bookingId]: input.bookingId,
                 [STRIPE_METADATA_KEYS.rideId]: input.rideId,
