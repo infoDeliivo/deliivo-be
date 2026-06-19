@@ -193,9 +193,9 @@ function DisputesContent() {
                         {new Date(d.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </p>
                       {d.ride && (
-                        <p className="text-xs text-gray-400 mt-1">
+                        <Link href={`/rides/${d.ride.id}`} className="mt-1 inline-flex text-xs font-medium text-deliivo-orange hover:underline">
                           {d.ride.originAddress.split(',')[0]} to {d.ride.destinationAddress.split(',')[0]}
-                        </p>
+                        </Link>
                       )}
                     </div>
                     <span className={`text-xs font-semibold px-2.5 py-1 rounded-full shrink-0 ${statusConf.className}`}>

@@ -9,6 +9,8 @@ const router = Router();
 router.use(authorize('ADMIN') as any);
 
 router.get('/users', adminController.listUsers as any);
+router.get('/rides', adminController.listRides as any);
+router.get('/revenue/ledger', adminController.getRevenueLedger as any);
 router.post('/users/:id/ban', adminController.banUser as any);
 router.post('/users/:id/unban', adminController.unbanUser as any);
 router.get('/stats', adminController.getStats as any);

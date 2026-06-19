@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { Flag, ChevronDown, ChevronLeft, ChevronRight, Loader2, AlertCircle } from 'lucide-react'
 import { adminApi, AdminDispute, Pagination } from '@/lib/api'
 
@@ -29,6 +30,9 @@ export default function AdminReportsPage() {
   const [page, setPage] = useState(1)
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [splitRefundPercent, setSplitRefundPercent] = useState('50')
+  const [selectedDispute, setSelectedDispute] = useState<AdminDispute | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
 
   useEffect(() => { loadDisputes() }, [page, statusFilter])
 
@@ -50,7 +54,7 @@ export default function AdminReportsPage() {
 
   async function handleResolve(id: string, resolution: string) {
     const refundPercent = resolution === 'SPLIT'
-      ? Number(window.prompt('Refund percentage for rider? Driver payout will use the remaining fare amount.', '50'))
+      ? Number(splitRefundPercent)
       : undefined
     if (resolution === 'SPLIT' && (refundPercent == null || Number.isNaN(refundPercent) || refundPercent < 0 || refundPercent > 100)) {
       setError('Split refund percentage must be between 0 and 100')
@@ -89,6 +93,19 @@ export default function AdminReportsPage() {
     finally { setActionLoading(null); setOpenMenu(null) }
   }
 
+  async function handleViewDetails(id: string) {
+    setDetailLoading(true)
+    setOpenMenu(null)
+    try {
+      const res = await adminApi.getDisputeById(id)
+      setSelectedDispute(res.data)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load dispute details')
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
   const totalPages = pagination?.totalPages || 1
 
   return (
@@ -102,6 +119,90 @@ export default function AdminReportsPage() {
         <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-100 px-4 py-3">
           <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
           <p className="text-sm text-red-600">{error}</p>
+        </div>
+      )}
+
+      {selectedDispute && (
+        <div className="rounded-2xl bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-gray-900">Dispute lifecycle</h2>
+              <p className="mt-1 text-xs text-gray-500">
+                Ride {selectedDispute.rideId.slice(0, 8)} • Booking {selectedDispute.bookingId.slice(0, 8)} • Raised by {selectedDispute.raisedBy === selectedDispute.ride?.driverId ? 'driver' : 'rider'}
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                {selectedDispute.ride ? (
+                  <span className="flex flex-wrap items-center gap-2">
+                    <Link href={`/rides/${selectedDispute.ride.id}`} className="text-[#F97316] hover:underline">
+                      {selectedDispute.ride.originAddress.split(',')[0]} to {selectedDispute.ride.destinationAddress.split(',')[0]}
+                    </Link>
+                    <Link
+                      href={`/admin/rides?search=${selectedDispute.ride.id}&searchBy=rideId`}
+                      className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-semibold text-gray-600 hover:border-[#F97316] hover:text-[#F97316]"
+                    >
+                      Open in rides
+                    </Link>
+                  </span>
+                ) : null}
+              </p>
+            </div>
+            <button onClick={() => setSelectedDispute(null)} className="text-xs font-semibold text-gray-500 hover:text-gray-900">Close</button>
+          </div>
+
+          <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+            <div>
+              <TimelineStep title="Opened" active description={`${selectedDispute.reason.replace(/_/g, ' ')}${selectedDispute.description ? ` • ${selectedDispute.description}` : ''}`} />
+              <TimelineStep
+                title="Evidence collected"
+                active={Boolean(selectedDispute.evidenceJson)}
+                description={selectedDispute.evidenceJson ? 'Booking state, ride events, GPS history, and OTP evidence were captured.' : 'Evidence has not been collected yet.'}
+              />
+              <TimelineStep
+                title="Evaluated"
+                active={Boolean(selectedDispute.recommendation)}
+                description={selectedDispute.recommendation ? `${selectedDispute.recommendation.replace(/_/g, ' ')} • Risk ${Math.round((selectedDispute.riskScore || 0) * 100)}%` : 'No recommendation yet.'}
+              />
+              <TimelineStep
+                title="Resolved"
+                active={Boolean(selectedDispute.resolvedAt)}
+                description={selectedDispute.resolution ? `${selectedDispute.resolution.replace(/_/g, ' ')}${selectedDispute.status.startsWith('AUTO_RESOLVED') ? ' • auto resolved' : ' • manual resolution'}` : 'Not resolved yet.'}
+              />
+            </div>
+
+            <div className="space-y-3">
+              <div className="rounded-xl bg-gray-50 p-4">
+                <p className="text-xs font-semibold text-gray-500">Resolution status</p>
+                <p className="mt-1 text-sm font-semibold text-gray-900">{selectedDispute.status.replace(/_/g, ' ')}</p>
+                <p className="mt-1 text-xs text-gray-500">{selectedDispute.resolvedAt ? new Date(selectedDispute.resolvedAt).toLocaleString() : 'Open dispute'}</p>
+              </div>
+
+              <div className="rounded-xl bg-gray-50 p-4">
+                <p className="text-xs font-semibold text-gray-500">Evidence checklist</p>
+                <div className="mt-3 space-y-2">
+                  {renderEvidenceItem('Booking snapshot', Boolean(selectedDispute.evidenceJson), 'Captured booking status, timestamps, and passenger state.')}
+                  {renderEvidenceItem('Ride snapshot', Boolean(selectedDispute.evidenceJson), 'Captured ride state, start/end timestamps, and route context.')}
+                  {renderEvidenceItem(
+                    'Location history',
+                    Boolean((selectedDispute.evidenceJson as any)?.locationHistory?.count > 0),
+                    (selectedDispute.evidenceJson as any)?.locationHistory?.count > 0
+                      ? `${(selectedDispute.evidenceJson as any).locationHistory.count} GPS updates available.`
+                      : 'No GPS updates were found.',
+                  )}
+                  {renderEvidenceItem(
+                    'Ride events',
+                    Boolean((selectedDispute.evidenceJson as any)?.rideEvents?.length > 0),
+                    (selectedDispute.evidenceJson as any)?.rideEvents?.length > 0
+                      ? `${(selectedDispute.evidenceJson as any).rideEvents.length} lifecycle events recorded.`
+                      : 'No ride events were found.',
+                  )}
+                  {renderEvidenceItem('OTP verified', Boolean((selectedDispute.evidenceJson as any)?.otpVerified), (selectedDispute.evidenceJson as any)?.otpVerified ? 'Pickup OTP was verified.' : 'Pickup OTP was not verified.')}
+                  {renderEvidenceItem('Drop-off confirmed', Boolean((selectedDispute.evidenceJson as any)?.dropoffConfirmed), (selectedDispute.evidenceJson as any)?.dropoffConfirmed ? 'Driver drop-off confirmation exists.' : 'No driver drop-off confirmation.')}
+                  {renderEvidenceItem('Rider drop-off confirmation', Boolean((selectedDispute.evidenceJson as any)?.riderConfirmedDropoff), (selectedDispute.evidenceJson as any)?.riderConfirmedDropoff ? 'Rider confirmed drop-off.' : 'Rider did not confirm drop-off.')}
+                  {renderEvidenceItem('No-show marked', Boolean((selectedDispute.evidenceJson as any)?.noShowMarked), (selectedDispute.evidenceJson as any)?.noShowMarked ? 'No-show was marked.' : 'No no-show mark recorded.')}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -124,7 +225,7 @@ export default function AdminReportsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm overflow-visible">
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-6 w-6 animate-spin text-[#F97316]" />
@@ -147,11 +248,21 @@ export default function AdminReportsPage() {
                 <tbody>
                   {disputes.map((d) => (
                     <tr key={d.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                      <td className="px-6 py-3 text-xs font-mono text-gray-400">{d.id.slice(0, 8)}</td>
+                      <td className="px-6 py-3 text-xs">
+                        <p className="font-mono text-gray-500">{d.id.slice(0, 8)}</p>
+                        <p className="mt-1 font-mono text-[11px] text-gray-400">Ride {d.rideId.slice(0, 8)}</p>
+                      </td>
                       <td className="px-4 py-3">
                         <span className="text-xs font-medium text-gray-800">{d.reason.replace(/_/g, ' ')}</span>
                         {d.description && <p className="text-xs text-gray-400 truncate max-w-xs mt-0.5">{d.description}</p>}
-                        <p className="text-[11px] text-gray-400 mt-1">Raised by {d.raisedBy?.slice(0, 8) || '-'}</p>
+                        <p className="text-[11px] text-gray-400 mt-1">
+                          Raised by {d.raisedBy === d.ride?.driverId ? 'driver' : d.raisedBy === d.booking?.passengerId ? 'rider' : d.raisedBy?.slice(0, 8) || '-'}
+                        </p>
+                        {d.ride && (
+                          <Link href={`/rides/${d.ride.id}`} className="mt-1 inline-flex text-[11px] font-medium text-[#F97316] hover:underline">
+                            Open ride details
+                          </Link>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
                         {d.ride ? `${d.ride.originAddress.split(',')[0]} → ${d.ride.destinationAddress.split(',')[0]}` : '-'}
@@ -212,9 +323,33 @@ export default function AdminReportsPage() {
                                   Auto-evaluate
                                 </button>
                               )}
+                              <button
+                                type="button"
+                                className="w-full text-left px-4 py-2.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                                disabled={detailLoading}
+                                onClick={() => handleViewDetails(d.id)}
+                              >
+                                View lifecycle
+                              </button>
                               {['OPEN', 'EVIDENCE_COLLECTED', 'NEEDS_MANUAL_REVIEW'].includes(d.status) && (
                                 <>
                                   <div className="border-t border-gray-100 my-1" />
+                                  <div className="px-4 py-2">
+                                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Split refund %</label>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max="100"
+                                      value={splitRefundPercent}
+                                      onChange={(event) => setSplitRefundPercent(event.target.value)}
+                                      className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:border-[#F97316] focus:outline-none"
+                                    />
+                                    {d.booking?.payment && (
+                                      <p className="mt-1 text-[11px] text-gray-400">
+                                        Payment {d.booking.payment.currency} {d.booking.payment.amountTotal.toFixed(2)}
+                                      </p>
+                                    )}
+                                  </div>
                                   {RESOLUTIONS.map(r => (
                                     <button
                                       key={r}
@@ -267,4 +402,39 @@ export default function AdminReportsPage() {
       </div>
     </div>
   )
+}
+
+function TimelineStep({
+  title,
+  description,
+  active,
+}: {
+  title: string;
+  description: string;
+  active?: boolean;
+}) {
+  return (
+    <div className="flex gap-3">
+      <div className="flex flex-col items-center">
+        <span className={`h-3 w-3 rounded-full ${active ? 'bg-[#F97316]' : 'bg-gray-300'}`} />
+        <span className="mt-1 h-full w-px bg-gray-200" />
+      </div>
+      <div className="pb-4">
+        <p className="text-sm font-semibold text-gray-900">{title}</p>
+        <p className="mt-1 text-xs text-gray-500">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+function renderEvidenceItem(title: string, success: boolean, description: string) {
+  return (
+    <div className={`flex items-start gap-3 rounded-xl border px-3 py-2 ${success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
+      <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${success ? 'bg-green-600' : 'bg-red-500'}`} />
+      <div className="min-w-0">
+        <p className={`text-xs font-semibold ${success ? 'text-green-800' : 'text-red-800'}`}>{title}</p>
+        <p className={`mt-0.5 text-[11px] ${success ? 'text-green-700' : 'text-red-700'}`}>{description}</p>
+      </div>
+    </div>
+  );
 }

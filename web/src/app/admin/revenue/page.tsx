@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { DollarSign, AlertTriangle, CheckCircle2, Loader2, AlertCircle, Play, ChevronDown } from 'lucide-react'
-import { adminApi, ReconciliationSummary, ReconciliationIssue, Pagination } from '@/lib/api'
+import { adminApi, ReconciliationSummary, ReconciliationIssue, Pagination, AdminRevenueLedger } from '@/lib/api'
 
 const severityStyle: Record<string, string> = {
   LOW: 'bg-gray-100 text-gray-600',
@@ -22,6 +22,7 @@ const issueTypeStyle: Record<string, string> = {
 export default function AdminRevenuePage() {
   const [summary, setSummary] = useState<ReconciliationSummary | null>(null)
   const [issues, setIssues] = useState<ReconciliationIssue[]>([])
+  const [ledger, setLedger] = useState<AdminRevenueLedger | null>(null)
   const [pagination, setPagination] = useState<Pagination | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -30,20 +31,23 @@ export default function AdminRevenuePage() {
   const [runningJob, setRunningJob] = useState<string | null>(null)
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [resolveText, setResolveText] = useState('')
+  const [accountType, setAccountType] = useState('ALL')
 
-  useEffect(() => { loadData() }, [page, statusFilter])
+  useEffect(() => { loadData() }, [page, statusFilter, accountType])
 
   async function loadData() {
     setLoading(true)
     setError('')
     try {
-      const [summaryRes, issuesRes] = await Promise.all([
+      const [summaryRes, issuesRes, ledgerRes] = await Promise.all([
         adminApi.getReconciliationSummary(),
         adminApi.getReconciliationIssues({ status: statusFilter, page, limit: 20 }),
+        adminApi.getRevenueLedger({ page, limit: 20, accountType }),
       ])
       setSummary(summaryRes.data)
       setIssues(issuesRes.data.issues)
       setPagination(issuesRes.data.pagination)
+      setLedger(ledgerRes.data)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
     } finally {
@@ -142,6 +146,31 @@ export default function AdminRevenuePage() {
         </div>
       )}
 
+      {ledger && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <p className="text-xs text-gray-500 font-medium">Net Platform</p>
+            <p className="mt-1 text-2xl font-bold text-gray-900">EUR {ledger.summary.netPlatformRevenue.toFixed(2)}</p>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <p className="text-xs text-gray-500 font-medium">Platform Credits</p>
+            <p className="mt-1 text-2xl font-bold text-green-700">EUR {ledger.summary.platformCredits.toFixed(2)}</p>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <p className="text-xs text-gray-500 font-medium">Platform Debits</p>
+            <p className="mt-1 text-2xl font-bold text-red-600">EUR {ledger.summary.platformDebits.toFixed(2)}</p>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <p className="text-xs text-gray-500 font-medium">Rider Credits</p>
+            <p className="mt-1 text-2xl font-bold text-gray-900">EUR {ledger.summary.riderCredits.toFixed(2)}</p>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <p className="text-xs text-gray-500 font-medium">Driver Credits</p>
+            <p className="mt-1 text-2xl font-bold text-gray-900">EUR {ledger.summary.driverCredits.toFixed(2)}</p>
+          </div>
+        </div>
+      )}
+
       {/* Filter tabs */}
       <div className="bg-white rounded-2xl shadow-sm p-4 flex gap-2">
         {(['open', 'resolved'] as const).map(s => (
@@ -158,6 +187,49 @@ export default function AdminRevenuePage() {
             {s}
           </button>
         ))}
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm p-5">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">Ledger entries</h2>
+            <p className="mt-0.5 text-xs text-gray-500">Audit trail for rider, driver, platform, and provider accounts.</p>
+          </div>
+          <select
+            value={accountType}
+            onChange={(event) => { setAccountType(event.target.value); setPage(1) }}
+            className="rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-[#F97316] focus:outline-none"
+          >
+            {['ALL', 'RIDER', 'DRIVER', 'PLATFORM', 'PROVIDER'].map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </div>
+        <div className="overflow-x-auto rounded-xl border border-gray-100">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 text-gray-400">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">When</th>
+                <th className="px-3 py-2 text-left font-medium">Account</th>
+                <th className="px-3 py-2 text-left font-medium">Entry</th>
+                <th className="px-3 py-2 text-left font-medium">Booking</th>
+                <th className="px-3 py-2 text-right font-medium">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(ledger?.entries || []).map((entry) => (
+                <tr key={entry.id} className="border-t border-gray-100">
+                  <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{new Date(entry.createdAt).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-gray-700">{entry.accountType}</td>
+                  <td className="px-3 py-2 text-gray-600">{entry.entryType.replace(/_/g, ' ')}</td>
+                  <td className="px-3 py-2 font-mono text-gray-400">{entry.bookingId?.slice(0, 8) || '-'}</td>
+                  <td className={`px-3 py-2 text-right font-semibold ${entry.direction === 'CREDIT' ? 'text-green-700' : 'text-red-600'}`}>
+                    {entry.direction === 'CREDIT' ? '+' : '-'}{entry.currency} {entry.amount.toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {ledger?.entries.length === 0 && <div className="py-10 text-center text-sm text-gray-400">No ledger entries found.</div>}
+        </div>
       </div>
 
       {/* Issues table */}

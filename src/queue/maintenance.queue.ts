@@ -56,6 +56,17 @@ maintenanceQueue.add(
     }
 );
 
+maintenanceQueue.add(
+    'payment-outbox',
+    {},
+    {
+        repeat: { pattern: '* * * * *' },
+        jobId: 'payment-outbox',
+        removeOnComplete: true,
+        removeOnFail: 100,
+    }
+);
+
 export const maintenanceWorker = new Worker(
     QUEUE_NAME,
     async (job: any) => {
@@ -74,6 +85,12 @@ export const maintenanceWorker = new Worker(
         if (job.name === 'payout-eligibility') {
             const { checkAndMarkEligible } = await import('../modules/payout/payout.service.js');
             await checkAndMarkEligible();
+            return;
+        }
+
+        if (job.name === 'payment-outbox') {
+            const { processOutboxEvents } = await import('../modules/payments/payment-outbox.worker.js');
+            await processOutboxEvents(25);
             return;
         }
 

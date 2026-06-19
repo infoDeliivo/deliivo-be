@@ -1,4 +1,5 @@
 import { prisma } from '../../config/index.js';
+import { BookingStatus } from '@prisma/client';
 import { getStripeClient } from '../payments/stripe.service.js';
 import { recordTransfer } from '../ledger/ledger.service.js';
 import { PAYMENT_STATUSES, markTransferCreated, markPayoutCompleted } from '../payments/payment.service.js';
@@ -18,8 +19,11 @@ export const checkAndMarkEligible = async () => {
     const eligible = await prisma.payment.findMany({
         where: {
             status: PAYMENT_STATUSES.HELD_IN_ESCROW,
-            updatedAt: { lt: cutoff },
-            booking: openDisputeWhereForPaymentEligibility,
+            booking: {
+                ...openDisputeWhereForPaymentEligibility,
+                status: BookingStatus.COMPLETED,
+                completedAt: { lt: cutoff },
+            },
         },
     });
 
@@ -174,6 +178,87 @@ export const processDriverPayout = async (driverId: string) => {
         });
         return { driverId, status: 'FAILED', batchId: batch.id, reason: err.message };
     }
+};
+
+export const getEligiblePayoutCandidates = async () => {
+    const payments = await prisma.payment.findMany({
+        where: {
+            status: PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+            booking: {
+                disputes: {
+                    none: {
+                        status: { in: OPEN_DISPUTE_STATUSES },
+                    },
+                },
+            },
+        },
+        include: {
+            booking: {
+                select: {
+                    id: true,
+                    status: true,
+                    passenger: { select: { id: true, name: true } },
+                    ride: {
+                        select: {
+                            id: true,
+                            originAddress: true,
+                            destinationAddress: true,
+                            departureDate: true,
+                            departureTime: true,
+                            driver: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    stripeAccountId: true,
+                                    stripeOnboardingComplete: true,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        orderBy: { payoutEligibleAt: 'asc' },
+    });
+
+    type PaymentWithBooking = (typeof payments)[number];
+    const byDriver = new Map<string, {
+        driverId: string;
+        driverName: string | null;
+        stripeAccountId: string | null;
+        stripeOnboardingComplete: boolean;
+        currency: string;
+        amountTotal: number;
+        paymentsCount: number;
+        payments: PaymentWithBooking[];
+    }>();
+
+    for (const payment of payments) {
+        const driver = payment.booking.ride.driver;
+        const existing = byDriver.get(driver.id);
+        if (existing) {
+            existing.amountTotal += payment.fareAmount;
+            existing.paymentsCount += 1;
+            existing.payments.push(payment);
+            continue;
+        }
+
+        byDriver.set(driver.id, {
+            driverId: driver.id,
+            driverName: driver.name,
+            stripeAccountId: driver.stripeAccountId,
+            stripeOnboardingComplete: driver.stripeOnboardingComplete,
+            currency: payment.currency,
+            amountTotal: payment.fareAmount,
+            paymentsCount: 1,
+            payments: [payment],
+        });
+    }
+
+    return Array.from(byDriver.values()).map(candidate => ({
+        ...candidate,
+        amountTotal: Math.round(candidate.amountTotal * 100) / 100,
+    }));
 };
 
 // ============================================================

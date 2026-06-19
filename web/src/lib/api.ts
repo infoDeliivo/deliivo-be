@@ -232,6 +232,10 @@ export const userApi = {
     return apiFetch<{ data: UserFullProfile }>('/api/v1/users/me/profile');
   },
 
+  getPublicProfile(userId: string) {
+    return apiFetch<{ data: UserFullProfile }>(`/api/v1/users/${userId}/profile`);
+  },
+
   updateProfile(data: Partial<UserProfileUpdate>) {
     return apiFetch('/api/v1/users/me/profile', {
       method: 'PUT',
@@ -803,12 +807,18 @@ export const paymentsApi = {
   connectStatus() {
     return apiFetch<{ data: ConnectStatus }>('/api/v1/payments/connect/status');
   },
+  transactions() {
+    return apiFetch<{ data: RiderTransaction[] }>('/api/v1/payments/transactions');
+  },
 };
 
 // Driver Payouts API
 export const payoutsApi = {
   getEarnings() {
     return apiFetch<{ success: boolean; data: DriverEarnings }>('/api/v1/drivers/me/earnings');
+  },
+  getEarningItems() {
+    return apiFetch<{ success: boolean; data: DriverEarningItem[] }>('/api/v1/drivers/me/earnings/items');
   },
   getBalance() {
     return apiFetch<{ success: boolean; data: DriverBalance }>('/api/v1/drivers/me/balance');
@@ -876,6 +886,15 @@ export const adminApi = {
     if (params?.role) query.set('role', params.role);
     return apiFetch<{ data: { users: AdminUser[]; pagination: Pagination } }>(`/api/v1/admin/users?${query}`);
   },
+  getRides(params?: { page?: number; limit?: number; status?: string; search?: string; searchBy?: string }) {
+    const query = new URLSearchParams();
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.status) query.set('status', params.status);
+    if (params?.search) query.set('search', params.search);
+    if (params?.searchBy) query.set('searchBy', params.searchBy);
+    return apiFetch<{ data: { rides: AdminRide[]; pagination: Pagination } }>(`/api/v1/admin/rides?${query}`);
+  },
   banUser(id: string) {
     return apiFetch<{ data: { id: string; isBanned: boolean } }>(`/api/v1/admin/users/${id}/ban`, { method: 'POST' });
   },
@@ -895,6 +914,9 @@ export const adminApi = {
     if (params?.page) query.set('page', String(params.page));
     if (params?.limit) query.set('limit', String(params.limit));
     return apiFetch<{ data: { disputes: AdminDispute[]; pagination: Pagination } }>(`/api/v1/admin/disputes?${query}`);
+  },
+  getDisputeById(id: string) {
+    return apiFetch<{ data: AdminDispute }>(`/api/v1/admin/disputes/${id}`);
   },
   resolveDispute(id: string, resolution: string, refundPercent?: number) {
     return apiFetch<{ data: AdminDispute }>(`/api/v1/admin/disputes/${id}/resolve`, {
@@ -916,9 +938,19 @@ export const adminApi = {
   checkPayoutEligibility() {
     return apiFetch<{ data: { checked: number; markedEligible: number } }>('/api/v1/admin/payouts/check-eligibility', { method: 'POST' });
   },
+  getEligiblePayouts() {
+    return apiFetch<{ data: AdminPayoutCandidate[] }>('/api/v1/admin/payouts/eligible');
+  },
   // Reconciliation
   getReconciliationSummary() {
     return apiFetch<{ data: ReconciliationSummary }>('/api/v1/admin/reconciliation/summary');
+  },
+  getRevenueLedger(params?: { page?: number; limit?: number; accountType?: string }) {
+    const query = new URLSearchParams();
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.accountType) query.set('accountType', params.accountType);
+    return apiFetch<{ data: AdminRevenueLedger }>(`/api/v1/admin/revenue/ledger?${query}`);
   },
   getReconciliationIssues(params?: { status?: string; issueType?: string; severity?: string; page?: number; limit?: number }) {
     const query = new URLSearchParams();
@@ -980,7 +1012,60 @@ export interface AdminDispute {
   createdAt: string;
   updatedAt: string;
   booking?: { id: string; passengerId: string; totalPrice: number; status: string; payment?: { id: string; status: string; amountTotal: number; fareAmount: number; currency: string } | null };
-  ride?: { id: string; driverId: string; originAddress: string; destinationAddress: string };
+  ride?: { id: string; driverId: string; originAddress: string; destinationAddress: string; departureDate?: string; departureTime?: string };
+}
+
+export interface AdminRide {
+  id: string;
+  status: string;
+  originAddress: string;
+  destinationAddress: string;
+  departureDate: string;
+  departureTime: string;
+  totalSeats: number;
+  availableSeats: number;
+  basePricePerSeat: number;
+  currency: string;
+  createdAt: string;
+  driver?: { id: string; name: string | null; email?: string | null; phone?: string | null };
+  bookings: Array<{
+    id: string;
+    status: string;
+    passengerId: string;
+    seatsBooked: number;
+    totalPrice: number;
+    paymentAmount?: number | null;
+    refundedAt?: string | null;
+    passenger?: { id: string; name: string | null; email?: string | null; phone?: string | null };
+  }>;
+  disputes: Array<{ id: string; status: string; reason: string }>;
+}
+
+export interface AdminLedgerEntry {
+  id: string;
+  entryGroupId: string;
+  paymentId?: string | null;
+  bookingId?: string | null;
+  userId?: string | null;
+  accountType: string;
+  entryType: string;
+  direction: string;
+  amount: number;
+  currency: string;
+  metadataJson?: unknown;
+  createdAt: string;
+}
+
+export interface AdminRevenueLedger {
+  summary: {
+    platformCredits: number;
+    platformDebits: number;
+    netPlatformRevenue: number;
+    riderCredits: number;
+    driverCredits: number;
+  };
+  entries: AdminLedgerEntry[];
+  pagination: Pagination;
 }
 
 export interface ReconciliationSummary {
@@ -1026,6 +1111,89 @@ export interface DriverBalance {
   balance: number;
   currency: string;
   entriesCount: number;
+}
+
+export interface RiderTransaction {
+  id: string;
+  bookingId: string;
+  rideId: string;
+  riderId: string;
+  stripePaymentIntentId?: string | null;
+  amountTotal: number;
+  fareAmount: number;
+  platformFeeAmount: number;
+  currency: string;
+  status: string;
+  failureReason?: string | null;
+  payoutEligibleAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  booking?: {
+    id: string;
+    status: string;
+    pickupAddress?: string | null;
+    dropoffAddress?: string | null;
+    refundAmount?: number | null;
+    refundPercent?: number | null;
+    refundedAt?: string | null;
+    cancelledAt?: string | null;
+    disputes?: Array<{ id: string; status: string; reason: string }>;
+    ride?: {
+      id: string;
+      originAddress: string;
+      destinationAddress: string;
+      departureDate: string;
+      departureTime: string;
+      driver?: { id: string; name: string | null };
+    };
+  };
+}
+
+export interface DriverEarningItem {
+  id: string;
+  bookingId: string;
+  rideId: string;
+  riderId: string;
+  stripePaymentIntentId?: string | null;
+  amountTotal: number;
+  fareAmount: number;
+  platformFeeAmount: number;
+  currency: string;
+  status: string;
+  failureReason?: string | null;
+  payoutEligibleAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  booking?: {
+    id: string;
+    status: string;
+    pickupAddress?: string | null;
+    dropoffAddress?: string | null;
+    completedAt?: string | null;
+    refundAmount?: number | null;
+    refundedAt?: string | null;
+    passenger?: { id: string; name: string | null };
+    disputes?: Array<{ id: string; status: string; reason: string }>;
+    ride?: {
+      id: string;
+      originAddress: string;
+      destinationAddress: string;
+      departureDate: string;
+      departureTime: string;
+    };
+  };
+  payoutItems?: Array<{
+    id: string;
+    status: string;
+    driverAmount: number;
+    platformFee: number;
+    batch?: {
+      id: string;
+      status: string;
+      stripeTransferId?: string | null;
+      createdAt: string;
+    };
+  }>;
 }
 
 export interface PayoutRecord {
@@ -1130,6 +1298,39 @@ export interface NotificationRecord {
   createdAt: string;
 }
 
+export interface AdminPayoutCandidate {
+  driverId: string;
+  driverName: string | null;
+  stripeAccountId: string | null;
+  stripeOnboardingComplete: boolean;
+  currency: string;
+  amountTotal: number;
+  paymentsCount: number;
+  payments: Array<{
+    id: string;
+    bookingId: string;
+    rideId: string;
+    amountTotal: number;
+    fareAmount: number;
+    platformFeeAmount: number;
+    currency: string;
+    status: string;
+    payoutEligibleAt?: string | null;
+    booking?: {
+      id: string;
+      status: string;
+      passenger?: { id: string; name: string | null };
+      ride?: {
+        id: string;
+        originAddress: string;
+        destinationAddress: string;
+        departureDate: string;
+        departureTime: string;
+      };
+    };
+  }>;
+}
+
 // Search & Booking types
 export interface SearchRidesParams {
   originLat: number;
@@ -1150,7 +1351,15 @@ export interface SearchRidesParams {
 export interface SearchRideResult {
   id: string;
   driverId: string;
-  driver: { id: string; name: string | null; avatarUrl: string | null; rating?: number };
+  driver: {
+    id: string;
+    name: string | null;
+    avatarUrl: string | null;
+    rating?: number;
+    ratingCount?: number;
+    successfulPublishedRides?: number;
+    successfulCompletedRides?: number;
+  };
   vehicle?: { brand: string | null; model_name?: string | null; type: string | null; color: string | null; imageUrl: string | null } | null;
   originAddress: string;
   destinationAddress: string;
@@ -1468,7 +1677,13 @@ export interface UserFullProfile extends UserProfile {
     color: string;
     yearMake: number;
   }>;
-  stats?: { totalRides: number; totalBookings: number; memberSince: string };
+  stats?: {
+    totalRides: number;
+    totalBookings: number;
+    successfulPublishedRides?: number;
+    successfulCompletedRides?: number;
+    memberSince: string;
+  };
   rating?: { average: number | null; total: number; label: string | null };
 }
 

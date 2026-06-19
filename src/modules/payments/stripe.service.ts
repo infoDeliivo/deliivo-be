@@ -84,12 +84,6 @@ export const createBookingPaymentIntent = async (
 ): Promise<CreatePaymentIntentResult> => {
     const stripe = getStripeClient();
 
-    const platformFeePct = parseFloat(process.env.PLATFORM_FEE_PERCENT ?? '0');
-    const applicationFeeAmount =
-        input.driverStripeAccountId && platformFeePct > 0
-            ? Math.round(toMinorUnits(input.amountMajor) * (platformFeePct / 100))
-            : undefined;
-
     const paymentIntent = await stripe.paymentIntents.create(
         {
             amount: toMinorUnits(input.amountMajor),
@@ -102,12 +96,6 @@ export const createBookingPaymentIntent = async (
                 [STRIPE_METADATA_KEYS.passengerId]: input.passengerId,
             },
             automatic_payment_methods: { enabled: true },
-            ...(input.driverStripeAccountId
-                ? {
-                      transfer_data: { destination: input.driverStripeAccountId },
-                      application_fee_amount: applicationFeeAmount,
-                  }
-                : {}),
         },
         { idempotencyKey: `booking-payment-intent:${input.bookingId}` }
     );

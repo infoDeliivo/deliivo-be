@@ -8,6 +8,7 @@ import { STRIPE_METADATA_KEYS } from './stripe.constants.js';
 import { constructStripeEvent } from './stripe.service.js';
 import { logInfo, logError, logWarn, logDebug } from '../../utils/logger.js';
 import { applyStripePaymentSucceededToBooking } from '../ride-booking/ride-booking.service.js';
+import { markBookingPaymentRefunded } from './payment.service.js';
 
 const getHeaderValue = (value: string | string[] | undefined): string | null => {
     if (!value) return null;
@@ -104,14 +105,30 @@ const applyChargeRefunded = async (charge: Stripe.Charge) => {
     if (!paymentIntentId) return;
 
     const latestRefund = charge.refunds?.data?.[0];
+    const update = {
+        refundId: latestRefund?.id,
+        refundAmount: toMajorUnits(charge.amount_refunded),
+        refundedAt: charge.refunded ? new Date() : undefined,
+    };
+
     await prisma.rideBooking.updateMany({
         where: { stripePaymentIntentId: paymentIntentId },
-        data: {
-            refundId: latestRefund?.id,
-            refundAmount: toMajorUnits(charge.amount_refunded),
-            refundedAt: charge.refunded ? new Date() : undefined,
-        },
+        data: update,
     });
+
+    if (charge.refunded) {
+        const booking = await prisma.rideBooking.findFirst({
+            where: { stripePaymentIntentId: paymentIntentId },
+            select: { id: true, ride: { select: { driverId: true } } },
+        });
+        if (booking) {
+            await markBookingPaymentRefunded(
+                booking.id,
+                booking.ride.driverId,
+                toMajorUnits(charge.amount_refunded) ?? undefined
+            );
+        }
+    }
 };
 
 const applyRefundUpdated = async (refund: Stripe.Refund) => {
@@ -121,14 +138,26 @@ const applyRefundUpdated = async (refund: Stripe.Refund) => {
 
     if (!paymentIntentId) return;
 
+    const refundAmount = toMajorUnits(refund.amount);
+
     await prisma.rideBooking.updateMany({
         where: { stripePaymentIntentId: paymentIntentId },
         data: {
             refundId: refund.id,
-            refundAmount: toMajorUnits(refund.amount),
+            refundAmount,
             refundedAt: refund.status === 'succeeded' ? new Date() : undefined,
         },
     });
+
+    if (refund.status === 'succeeded') {
+        const booking = await prisma.rideBooking.findFirst({
+            where: { stripePaymentIntentId: paymentIntentId },
+            select: { id: true, ride: { select: { driverId: true } } },
+        });
+        if (booking) {
+            await markBookingPaymentRefunded(booking.id, booking.ride.driverId, refundAmount ?? undefined);
+        }
+    }
 };
 
 const processStripeEvent = async (event: Stripe.Event) => {

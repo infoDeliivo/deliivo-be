@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { processDriverPayout, getDriverPayoutHistory, checkAndMarkEligible } from './payout.service.js';
-import { getDriverEarnings, getDriverBalance } from '../ledger/ledger.service.js';
+import { processDriverPayout, getDriverPayoutHistory, checkAndMarkEligible, getEligiblePayoutCandidates } from './payout.service.js';
+import { getDriverEarningItems, getDriverEarnings, getDriverBalance } from '../ledger/ledger.service.js';
 
 export const processPayoutHandler = async (req: Request, res: Response) => {
     try {
@@ -34,6 +34,15 @@ export const checkEligibilityHandler = async (_req: Request, res: Response) => {
     }
 };
 
+export const eligiblePayoutCandidatesHandler = async (_req: Request, res: Response) => {
+    try {
+        const candidates = await getEligiblePayoutCandidates();
+        res.json({ success: true, data: candidates });
+    } catch (err: any) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+};
+
 export const payoutHistoryHandler = async (req: Request, res: Response) => {
     try {
         const userId = (req as any).user.id;
@@ -59,6 +68,16 @@ export const balanceHandler = async (req: Request, res: Response) => {
         const userId = (req as any).user.id;
         const balance = await getDriverBalance(userId);
         res.json({ success: true, data: balance });
+    } catch (err: any) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+};
+
+export const earningItemsHandler = async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).user.id;
+        const items = await getDriverEarningItems(userId);
+        res.json({ success: true, data: items });
     } catch (err: any) {
         res.status(500).json({ success: false, error: err.message });
     }

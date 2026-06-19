@@ -5,6 +5,7 @@ import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
 import { createNotification } from '../notification/notification.service.js';
+import { markBookingPaymentRefunded } from '../payments/payment.service.js';
 
 /* ============================================================
    PUBLISHED RIDE OPERATIONS — DB ONLY
@@ -389,6 +390,18 @@ export const cancelRide = async (driverId: string, rideId: string) => {
             }
         }
     });
+
+    for (const booking of activeBookings) {
+        const refundAmount = booking.paymentAmount ?? booking.totalPrice;
+        const isPaymentCaptured = !!(booking.paymentCapturedAt && booking.stripePaymentIntentId);
+        if ((bypassPayment || isPaymentCaptured) && refundAmount > 0) {
+            try {
+                await markBookingPaymentRefunded(booking.id, driverId, refundAmount);
+            } catch (error) {
+                console.warn('Full ride cancellation refund succeeded, but local payment refund sync failed', error);
+            }
+        }
+    }
 
     // Notify all affected passengers (after transaction succeeds)
     await Promise.all(

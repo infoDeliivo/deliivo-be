@@ -16,6 +16,7 @@ import {
   driverBookingRouter,
   paymentsWebhookRouter,
   paymentsConnectRouter,
+  paymentRouter,
   chatRouter,
   notificationRouter,
   ratingsRouter,
@@ -105,6 +106,7 @@ app.use('/api/v1/chat', protect, chatRouter);
 app.use('/api/v1/notifications', protect, notificationRouter);
 app.use('/api/v1/ratings', protect, ratingsRouter);
 app.use('/api/v1/dl-verification', dlVerificationRouter);
+app.use('/api/v1/payments', protect, paymentRouter);
 app.use('/api/v1/payments/connect', protect, paymentsConnectRouter);
 app.use('/api/v1/admin', protect, adminRouter);
 app.use('/api/v1/pricing', protect, pricingRouter);

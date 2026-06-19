@@ -57,6 +57,8 @@ export interface VehicleSummary {
 export interface UserStats {
   totalRides: number;       // Rides as driver
   totalBookings: number;    // Bookings as passenger
+  successfulPublishedRides: number;
+  successfulCompletedRides: number;
   memberSince: Date;
 }
 

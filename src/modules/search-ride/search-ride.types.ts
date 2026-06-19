@@ -42,6 +42,9 @@ export interface SearchRideResult {
         name: string | null;
         avatarUrl: string | null;
         rating?: number;
+        ratingCount?: number;
+        successfulPublishedRides?: number;
+        successfulCompletedRides?: number;
     };
 
     // Vehicle info

@@ -1,7 +1,8 @@
-import { BookingStatus } from '@prisma/client';
+import { BookingStatus, Prisma, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
+import { markBookingPaymentRefunded } from '../payments/payment.service.js';
 import redis from '../../cache/redis.js';
 
 /* ================= LIST USERS ================= */
@@ -164,5 +165,199 @@ export const adminRefundBooking = async (bookingId: string) => {
         });
     });
 
+    try {
+        const updated = await prisma.rideBooking.findUnique({
+            where: { id: bookingId },
+            select: { ride: { select: { driverId: true } } },
+        });
+        if (updated?.ride.driverId) {
+            await markBookingPaymentRefunded(bookingId, updated.ride.driverId, booking.paymentAmount);
+        }
+    } catch (error) {
+        console.warn('Admin refund succeeded, but local payment refund sync failed', error);
+    }
+
     return { bookingId, refunded: true };
+};
+
+/* ================= RIDE HISTORY ================= */
+export const listRides = async (query: {
+    page?: number;
+    limit?: number;
+    status?: string;
+    search?: string;
+    searchBy?: string;
+}) => {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const skip = (page - 1) * limit;
+    const where: Prisma.RideWhereInput = {};
+
+    if (query.status && query.status !== 'ALL') {
+        where.status = query.status as RideStatus;
+    }
+    if (query.search) {
+        const search = query.search;
+        const scope = query.searchBy || 'all';
+        const conditions: Prisma.RideWhereInput[] = [];
+        const pushAll = () => {
+            conditions.push(
+                { id: { contains: search, mode: 'insensitive' } },
+                { originAddress: { contains: search, mode: 'insensitive' } },
+                { destinationAddress: { contains: search, mode: 'insensitive' } },
+                { driver: { name: { contains: search, mode: 'insensitive' } } },
+                { driver: { email: { contains: search, mode: 'insensitive' } } },
+                { driver: { phone: { contains: search, mode: 'insensitive' } } },
+                { bookings: { some: { id: { contains: search, mode: 'insensitive' } } } },
+                { bookings: { some: { passengerId: { contains: search, mode: 'insensitive' } } } },
+                { bookings: { some: { passenger: { name: { contains: search, mode: 'insensitive' } } } } },
+                { bookings: { some: { passenger: { email: { contains: search, mode: 'insensitive' } } } } },
+                { bookings: { some: { passenger: { phone: { contains: search, mode: 'insensitive' } } } } },
+            );
+        };
+
+        switch (scope) {
+            case 'rideId':
+                conditions.push({ id: { contains: search, mode: 'insensitive' } });
+                break;
+            case 'bookingId':
+                conditions.push({ bookings: { some: { id: { contains: search, mode: 'insensitive' } } } });
+                break;
+            case 'driverId':
+                conditions.push({ driverId: { contains: search, mode: 'insensitive' } });
+                break;
+            case 'driverName':
+                conditions.push({ driver: { name: { contains: search, mode: 'insensitive' } } });
+                break;
+            case 'driverEmail':
+                conditions.push({ driver: { email: { contains: search, mode: 'insensitive' } } });
+                break;
+            case 'driverPhone':
+                conditions.push({ driver: { phone: { contains: search, mode: 'insensitive' } } });
+                break;
+            case 'riderId':
+                conditions.push({ bookings: { some: { passengerId: { contains: search, mode: 'insensitive' } } } });
+                break;
+            case 'riderName':
+                conditions.push({ bookings: { some: { passenger: { name: { contains: search, mode: 'insensitive' } } } } });
+                break;
+            case 'riderEmail':
+                conditions.push({ bookings: { some: { passenger: { email: { contains: search, mode: 'insensitive' } } } } });
+                break;
+            case 'riderPhone':
+                conditions.push({ bookings: { some: { passenger: { phone: { contains: search, mode: 'insensitive' } } } } });
+                break;
+            default:
+                pushAll();
+                break;
+        }
+        where.OR = conditions;
+    }
+
+    const [rides, total] = await Promise.all([
+        prisma.ride.findMany({
+            where,
+            skip,
+            take: limit,
+            orderBy: [{ departureDate: 'desc' }, { departureTime: 'desc' }],
+            select: {
+                id: true,
+                status: true,
+                originAddress: true,
+                destinationAddress: true,
+                departureDate: true,
+                departureTime: true,
+                totalSeats: true,
+                availableSeats: true,
+                basePricePerSeat: true,
+                currency: true,
+                createdAt: true,
+                driver: { select: { id: true, name: true, email: true, phone: true } },
+                bookings: {
+                    select: {
+                        id: true,
+                        status: true,
+                        passengerId: true,
+                        seatsBooked: true,
+                        totalPrice: true,
+                        paymentAmount: true,
+                        refundedAt: true,
+                        passenger: { select: { id: true, name: true, email: true, phone: true } },
+                    },
+                    orderBy: { createdAt: 'desc' },
+                },
+                disputes: { select: { id: true, status: true, reason: true } },
+            },
+        }),
+        prisma.ride.count({ where }),
+    ]);
+
+    return {
+        rides,
+        pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        },
+    };
+};
+
+/* ================= REVENUE LEDGER ================= */
+export const getRevenueLedger = async (query: {
+    page?: number;
+    limit?: number;
+    accountType?: string;
+}) => {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 30));
+    const skip = (page - 1) * limit;
+    const where: Prisma.LedgerEntryWhereInput = {};
+
+    if (query.accountType && query.accountType !== 'ALL') {
+        where.accountType = query.accountType;
+    }
+
+    const [entries, total, platformCredits, platformDebits, riderCredits, driverCredits] = await Promise.all([
+        prisma.ledgerEntry.findMany({
+            where,
+            skip,
+            take: limit,
+            orderBy: { createdAt: 'desc' },
+        }),
+        prisma.ledgerEntry.count({ where }),
+        prisma.ledgerEntry.aggregate({
+            where: { accountType: 'PLATFORM', direction: 'CREDIT' },
+            _sum: { amount: true },
+        }),
+        prisma.ledgerEntry.aggregate({
+            where: { accountType: 'PLATFORM', direction: 'DEBIT' },
+            _sum: { amount: true },
+        }),
+        prisma.ledgerEntry.aggregate({
+            where: { accountType: 'RIDER', direction: 'CREDIT' },
+            _sum: { amount: true },
+        }),
+        prisma.ledgerEntry.aggregate({
+            where: { accountType: 'DRIVER', direction: 'CREDIT' },
+            _sum: { amount: true },
+        }),
+    ]);
+
+    return {
+        summary: {
+            platformCredits: platformCredits._sum.amount ?? 0,
+            platformDebits: platformDebits._sum.amount ?? 0,
+            netPlatformRevenue: (platformCredits._sum.amount ?? 0) - (platformDebits._sum.amount ?? 0),
+            riderCredits: riderCredits._sum.amount ?? 0,
+            driverCredits: driverCredits._sum.amount ?? 0,
+        },
+        entries,
+        pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        },
+    };
 };

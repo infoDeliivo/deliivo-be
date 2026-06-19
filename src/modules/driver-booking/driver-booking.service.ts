@@ -2,6 +2,7 @@ import { BookingStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
+import { markBookingPaymentRefunded } from '../payments/payment.service.js';
 import { generateBookingOtp, hashOtp, isOtpValid } from '../ride-booking/booking-otp.utils.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
@@ -249,6 +250,14 @@ export const rejectBooking = async (driverId: string, bookingId: string, reason:
         return current;
     });
 
+    if (refundInitiated && fullRefundAmount > 0) {
+        try {
+            await markBookingPaymentRefunded(bookingId, driverId, fullRefundAmount);
+        } catch (error) {
+            console.warn('Driver rejection refund succeeded, but local payment refund sync failed', error);
+        }
+    }
+
     await createNotification({
         userId: booking.passengerId,
         type: 'booking.driver.rejected',
@@ -368,6 +377,14 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string, rea
 
         return current;
     });
+
+    if (refundInitiated && fullRefundAmount > 0) {
+        try {
+            await markBookingPaymentRefunded(bookingId, driverId, fullRefundAmount);
+        } catch (error) {
+            console.warn('Driver cancellation refund succeeded, but local payment refund sync failed', error);
+        }
+    }
 
     await createNotification({
         userId: booking.passengerId,

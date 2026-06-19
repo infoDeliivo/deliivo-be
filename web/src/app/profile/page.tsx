@@ -7,7 +7,6 @@ import {
   CheckCircle,
   FileText,
   Car,
-  Star,
   Bell,
   CreditCard,
   Wallet,
@@ -23,7 +22,7 @@ import {
   Pencil,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { userApi, travelPreferencesApi, TravelPreference } from '@/lib/api';
+import { userApi, travelPreferencesApi, TravelPreference, UserFullProfile } from '@/lib/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Navbar from '@/components/Navbar';
 
@@ -39,6 +38,7 @@ export default function ProfilePage() {
 function ProfileContent() {
   const { user, logout, refreshUser } = useAuth();
   const [travelPref, setTravelPref] = useState<TravelPreference | null>(null);
+  const [fullProfile, setFullProfile] = useState<UserFullProfile | null>(null);
   const [editingPrefs, setEditingPrefs] = useState(false);
   const [chattiness, setChattiness] = useState<string>('');
   const [pets, setPets] = useState<string>('');
@@ -58,6 +58,9 @@ function ProfileContent() {
   useEffect(() => {
     travelPreferencesApi.get()
       .then((res) => setTravelPref(res.data))
+      .catch(() => {});
+    userApi.getMyProfile()
+      .then((res) => setFullProfile(res.data))
       .catch(() => {});
   }, []);
 
@@ -114,9 +117,8 @@ function ProfileContent() {
   const activityLinks = [
     { label: 'Documents', href: '/profile/documents', icon: FileText },
     { label: 'Vehicle', href: '/profile/vehicle', icon: Car },
-    { label: 'Ratings', href: '/profile/ratings', icon: Star },
     { label: 'Notifications', href: '/profile/notifications', icon: Bell },
-    { label: 'Payment Methods', href: '/profile/payment-methods', icon: CreditCard },
+    { label: 'Payments & History', href: '/profile/payment-methods', icon: CreditCard },
     { label: 'Earnings & Payouts', href: '/profile/earnings', icon: Wallet },
     { label: 'Disputes', href: '/profile/disputes', icon: Shield },
   ];
@@ -168,6 +170,26 @@ function ProfileContent() {
             </span>
           )}
           <p className="mt-2 text-sm text-deliivo-gray">{user?.email || user?.phone}</p>
+          <div className="mt-4 grid w-full grid-cols-3 gap-2 text-center">
+            <div className="rounded-xl bg-gray-50 px-2 py-2">
+              <p className="text-xs font-semibold text-deliivo-dark">
+                {fullProfile?.rating?.average ? fullProfile.rating.average.toFixed(1) : '--'}
+              </p>
+              <p className="text-[11px] text-deliivo-gray">Rating</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 px-2 py-2">
+              <p className="text-xs font-semibold text-deliivo-dark">
+                {fullProfile?.stats?.successfulPublishedRides ?? 0}
+              </p>
+              <p className="text-[11px] text-deliivo-gray">Driven</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 px-2 py-2">
+              <p className="text-xs font-semibold text-deliivo-dark">
+                {fullProfile?.stats?.successfulCompletedRides ?? 0}
+              </p>
+              <p className="text-[11px] text-deliivo-gray">Ridden</p>
+            </div>
+          </div>
           <button onClick={startEditProfile} className="mt-3 flex items-center gap-1 text-xs font-semibold text-deliivo-orange hover:underline">
             <Pencil size={12} /> Edit profile
           </button>

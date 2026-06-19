@@ -32,7 +32,13 @@ import {
 } from './booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from './booking-payment-mode.js';
 import { releaseSegmentSeats } from './segment-capacity.utils.js';
-import { createPayment, markPaymentPending, markPaymentPaid } from '../payments/payment.service.js';
+import {
+    createPayment,
+    markBookingPaymentPaid,
+    markBookingPaymentRefunded,
+    markPaymentPending,
+    markPaymentPaid,
+} from '../payments/payment.service.js';
 import { emitToUsers } from '../../socket/index.js';
 
 type RideWaypointDetails = {
@@ -221,6 +227,12 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
 
     if (!booking) {
         return true;
+    }
+
+    try {
+        await markBookingPaymentPaid(booking.id, booking.ride.driverId);
+    } catch (error) {
+        console.warn('Stripe payment success booking update completed, but local payment state sync failed', error);
     }
 
     const originAddress = resolveSegmentAddress(
@@ -1284,6 +1296,14 @@ export const cancelBooking = async (
         return current;
     });
 
+    if (refundInitiated && refundAmount > 0) {
+        try {
+            await markBookingPaymentRefunded(bookingId, booking.ride.driverId, refundAmount);
+        } catch (error) {
+            console.warn('Rider cancellation refund succeeded, but local payment refund sync failed', error);
+        }
+    }
+
     await createNotification({
         userId: booking.ride.driverId,
         type: 'booking.rider.cancelled',
@@ -1638,6 +1658,18 @@ export const withdrawBooking = async (
             refundInitiated = true;
         }
     });
+
+    if (refundInitiated) {
+        try {
+            await markBookingPaymentRefunded(
+                bookingId,
+                booking.ride.driverId,
+                booking.paymentAmount ?? booking.totalPrice
+            );
+        } catch (error) {
+            console.warn('Booking withdrawal refund succeeded, but local payment refund sync failed', error);
+        }
+    }
 
     // Notify driver that rider withdrew
     await createNotification({

@@ -1,97 +1,66 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import {
-  AlertCircle,
-  CheckCircle2,
-  ChevronLeft,
-  Clock,
-  CreditCard,
-  DollarSign,
-  ExternalLink,
-  Loader2,
-  TrendingUp,
-  Wallet,
-} from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, Loader2, Wallet } from 'lucide-react';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import { ConnectStatus, DriverBalance, DriverEarnings, PayoutRecord, paymentsApi, payoutsApi } from '@/lib/api';
+import { ConnectStatus, DriverEarningItem, DriverEarnings, paymentsApi, payoutsApi } from '@/lib/api';
 
 function formatMoney(amount?: number, currency?: string) {
   if (typeof amount !== 'number') return '--';
   return `${currency && currency !== 'ALL' ? `${currency} ` : ''}${amount.toFixed(2)}`;
 }
 
-function payoutBadgeClass(status: string) {
-  if (status === 'COMPLETED') return 'bg-green-50 text-green-700 border border-green-200';
-  if (status === 'PROCESSING' || status === 'PENDING') return 'bg-amber-50 text-amber-700 border border-amber-200';
-  if (status === 'FAILED') return 'bg-red-50 text-red-700 border border-red-200';
-  return 'bg-gray-50 text-gray-600 border border-gray-200';
+function isPaid(item: DriverEarningItem) {
+  return ['PAYOUT_COMPLETED', 'TRANSFER_CREATED'].includes(item.status)
+    || item.payoutItems?.some((payout) => payout.status === 'COMPLETED' || payout.batch?.status === 'COMPLETED');
+}
+
+function statusClass(status: string) {
+  if (['PAYOUT_COMPLETED', 'TRANSFER_CREATED'].includes(status)) return 'bg-green-50 text-green-700 border border-green-200';
+  if (['PAYOUT_ELIGIBLE', 'HELD_IN_ESCROW', 'PAID'].includes(status)) return 'bg-blue-50 text-blue-700 border border-blue-200';
+  if (['REFUNDED', 'PAYMENT_FAILED'].includes(status)) return 'bg-red-50 text-red-700 border border-red-200';
+  return 'bg-amber-50 text-amber-700 border border-amber-200';
+}
+
+export default function EarningsPage() {
+  return (
+    <ProtectedRoute>
+      <EarningsContent />
+    </ProtectedRoute>
+  );
 }
 
 function EarningsContent() {
-  const searchParams = useSearchParams();
-  const searchParamKey = searchParams.toString();
-
   const [connectStatus, setConnectStatus] = useState<ConnectStatus | null>(null);
   const [earnings, setEarnings] = useState<DriverEarnings | null>(null);
-  const [balance, setBalance] = useState<DriverBalance | null>(null);
-  const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
+  const [items, setItems] = useState<DriverEarningItem[]>([]);
+  const [activeTab, setActiveTab] = useState<'pending' | 'paid'>('pending');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [infoMessage, setInfoMessage] = useState('');
   const [onboarding, setOnboarding] = useState(false);
-  const [requestingPayout, setRequestingPayout] = useState(false);
-  const [payoutResult, setPayoutResult] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [message, setMessage] = useState('');
 
-  useEffect(() => {
-    const stripeConnectState = searchParams.get('stripe_connect');
-    if (stripeConnectState === 'return') {
-      setInfoMessage('Returned from Stripe onboarding. Refreshing payout status.');
-    } else if (stripeConnectState === 'refresh') {
-      setInfoMessage('Stripe asked for onboarding refresh. Continue payout setup below.');
-    } else if (stripeConnectState === 'mock') {
-      setInfoMessage('Mock Stripe Connect onboarding completed.');
-    } else {
-      setInfoMessage('');
-    }
-
-    loadData();
-  }, [searchParamKey]);
+  useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     setLoading(true);
     setError('');
-
-    const [statusRes, earningsRes, balanceRes, payoutsRes] = await Promise.allSettled([
-      paymentsApi.connectStatus(),
-      payoutsApi.getEarnings(),
-      payoutsApi.getBalance(),
-      payoutsApi.getHistory(),
-    ]);
-
-    const failed: string[] = [];
-
-    if (statusRes.status === 'fulfilled') setConnectStatus(statusRes.value.data);
-    else failed.push('connect status');
-
-    if (earningsRes.status === 'fulfilled') setEarnings(earningsRes.value.data);
-    else failed.push('earnings');
-
-    if (balanceRes.status === 'fulfilled') setBalance(balanceRes.value.data);
-    else failed.push('balance');
-
-    if (payoutsRes.status === 'fulfilled') setPayouts(payoutsRes.value.data);
-    else failed.push('payout history');
-
-    if (failed.length === 4) {
-      setError('Failed to load earnings and payout details.');
-    } else if (failed.length > 0) {
-      setError(`Some payout details could not be loaded: ${failed.join(', ')}.`);
+    try {
+      const [statusRes, earningsRes, itemRes] = await Promise.all([
+        paymentsApi.connectStatus(),
+        payoutsApi.getEarnings(),
+        payoutsApi.getEarningItems(),
+      ]);
+      setConnectStatus(statusRes.data);
+      setEarnings(earningsRes.data);
+      setItems(itemRes.data || []);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load earnings');
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
   async function handleConnectOnboard() {
@@ -101,41 +70,33 @@ function EarningsContent() {
       const res = await paymentsApi.connectOnboard();
       window.location.href = res.data.url;
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to start onboarding');
+      setError(err instanceof Error ? err.message : 'Failed to start Stripe onboarding');
       setOnboarding(false);
     }
   }
 
   async function handleRequestPayout() {
-    setRequestingPayout(true);
-    setPayoutResult(null);
+    setRequesting(true);
+    setMessage('');
     try {
       const res = await payoutsApi.requestPayout();
-      if (res.data.status === 'COMPLETED' || res.data.status === 'PROCESSING') {
-        setPayoutResult(`Payout ${res.data.status.toLowerCase()} for ${formatMoney(res.data.amount, balance?.currency)}.`);
-      } else if (res.data.status === 'NO_ELIGIBLE_PAYMENTS') {
-        setPayoutResult('No eligible payout amount is available yet.');
-      } else {
-        setPayoutResult(`Payout status: ${res.data.status}.`);
-      }
+      setMessage(res.data.amount ? `Payout requested for ${formatMoney(res.data.amount, 'EUR')}.` : `Payout status: ${res.data.status}.`);
       await loadData();
     } catch (err: unknown) {
-      setPayoutResult(err instanceof Error ? err.message : 'Payout request failed');
+      setMessage(err instanceof Error ? err.message : 'Payout request failed');
     } finally {
-      setRequestingPayout(false);
+      setRequesting(false);
     }
   }
 
+  const pendingItems = useMemo(() => items.filter((item) => !isPaid(item)), [items]);
+  const paidItems = useMemo(() => items.filter(isPaid), [items]);
+  const visibleItems = activeTab === 'pending' ? pendingItems : paidItems;
+  const currency = items[0]?.currency || 'EUR';
   const payoutsReady = Boolean(connectStatus?.connected && connectStatus?.onboardingComplete && connectStatus?.payoutsEnabled);
-  const connectInProgress = Boolean(connectStatus?.connected && !payoutsReady);
-  const currentBalance = balance?.balance ?? 0;
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-deliivo-cream flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-deliivo-orange" />
-      </div>
-    );
+    return <div className="min-h-screen bg-deliivo-cream flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-deliivo-orange" /></div>;
   }
 
   return (
@@ -144,17 +105,10 @@ function EarningsContent() {
         <Link href="/profile" className="flex items-center gap-1 text-sm text-gray-600 hover:text-deliivo-orange transition-colors">
           <ChevronLeft className="w-4 h-4" /> Profile
         </Link>
-        <h1 className="text-lg font-semibold text-gray-900 ml-2">Earnings & Payouts</h1>
+        <h1 className="text-lg font-semibold text-gray-900 ml-2">Earnings</h1>
       </header>
 
-      <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-5">
-        {infoMessage && (
-          <div className="flex items-center gap-2 rounded-xl bg-blue-50 border border-blue-100 px-4 py-3">
-            <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />
-            <p className="text-sm text-blue-700">{infoMessage}</p>
-          </div>
-        )}
-
+      <main className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-5">
         {error && (
           <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-100 px-4 py-3">
             <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
@@ -162,180 +116,116 @@ function EarningsContent() {
           </div>
         )}
 
-        <div className={`rounded-2xl border p-5 shadow-sm ${
-          payoutsReady ? 'border-green-100 bg-green-50' : 'border-amber-200 bg-white'
-        }`}>
-          <div className="flex items-start gap-3">
-            <div className={`flex h-10 w-10 items-center justify-center rounded-xl shrink-0 ${
-              payoutsReady ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-            }`}>
-              <Wallet className="h-5 w-5" />
-            </div>
-            <div className="flex-1">
-              <h2 className="text-sm font-semibold text-gray-900">
-                {payoutsReady ? 'Payout account ready' : connectInProgress ? 'Payout setup in progress' : 'Set up payouts'}
-              </h2>
-              <p className="mt-1 text-sm text-deliivo-gray">
-                {payoutsReady
-                  ? 'Stripe Connect is active and payouts can be requested from this page.'
-                  : 'Connect Stripe before relying on driver payouts or publishing new rides.'}
-              </p>
-
-              <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                <div className="rounded-xl border border-gray-100 bg-white px-3 py-3">
-                  <p className="text-xs font-medium text-deliivo-gray">Details submitted</p>
-                  <p className="mt-1 text-sm font-semibold text-gray-900">{connectStatus?.detailsSubmitted ? 'Yes' : 'No'}</p>
-                </div>
-                <div className="rounded-xl border border-gray-100 bg-white px-3 py-3">
-                  <p className="text-xs font-medium text-deliivo-gray">Charges enabled</p>
-                  <p className="mt-1 text-sm font-semibold text-gray-900">{connectStatus?.chargesEnabled ? 'Yes' : 'No'}</p>
-                </div>
-                <div className="rounded-xl border border-gray-100 bg-white px-3 py-3">
-                  <p className="text-xs font-medium text-deliivo-gray">Payouts enabled</p>
-                  <p className="mt-1 text-sm font-semibold text-gray-900">{connectStatus?.payoutsEnabled ? 'Yes' : 'No'}</p>
-                </div>
+        <section className={`rounded-2xl border p-5 shadow-sm ${payoutsReady ? 'border-green-100 bg-green-50' : 'border-amber-200 bg-white'}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${payoutsReady ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                <Wallet className="h-5 w-5" />
               </div>
-
-              {connectStatus?.accountId && (
-                <p className="mt-3 text-xs text-deliivo-gray">Stripe account: {connectStatus.accountId}</p>
-              )}
-
-              {!payoutsReady && (
-                <button
-                  onClick={handleConnectOnboard}
-                  disabled={onboarding}
-                  className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-deliivo-orange px-4 py-2 text-sm font-semibold text-white hover:bg-deliivo-orange-dark disabled:opacity-50 transition-colors"
-                >
-                  {onboarding ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
-                  {onboarding ? 'Redirecting...' : connectInProgress ? 'Continue Stripe setup' : 'Connect with Stripe'}
-                </button>
-              )}
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">{payoutsReady ? 'Payout account ready' : 'Set up payouts'}</h2>
+                <p className="mt-1 text-sm text-deliivo-gray">
+                  {payoutsReady ? 'Eligible completed rides can be paid out through Stripe Connect.' : 'Connect Stripe before publishing rides that need real payouts.'}
+                </p>
+              </div>
             </div>
+            {!payoutsReady && (
+              <button
+                onClick={handleConnectOnboard}
+                disabled={onboarding}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-deliivo-orange px-4 py-2 text-sm font-semibold text-white hover:bg-deliivo-orange-dark disabled:opacity-50"
+              >
+                {onboarding ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+                Connect
+              </button>
+            )}
           </div>
-        </div>
+        </section>
 
-        {payoutsReady && currentBalance > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm p-5">
+        <section className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase text-deliivo-gray">Total earnings</p>
+            <p className="mt-1 text-2xl font-bold text-gray-900">{formatMoney(earnings?.totalEarned, currency)}</p>
+          </div>
+          <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase text-deliivo-gray">Pending</p>
+            <p className="mt-1 text-2xl font-bold text-deliivo-orange">{formatMoney(earnings?.pendingBalance, currency)}</p>
+          </div>
+          <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase text-deliivo-gray">Paid</p>
+            <p className="mt-1 text-2xl font-bold text-gray-900">{formatMoney(earnings?.totalPaidOut, currency)}</p>
+          </div>
+        </section>
+
+        {payoutsReady && pendingItems.some((item) => item.status === 'PAYOUT_ELIGIBLE') && (
+          <section className="rounded-2xl bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h3 className="text-sm font-semibold text-gray-900">Request payout</h3>
-                <p className="text-xs text-deliivo-gray mt-0.5">
-                  Move your currently available driver balance to Stripe.
-                </p>
+                <p className="mt-1 text-xs text-deliivo-gray">Pays out eligible completed rides.</p>
               </div>
-              <button
-                onClick={handleRequestPayout}
-                disabled={requestingPayout}
-                className="flex items-center gap-1.5 rounded-xl bg-deliivo-orange px-4 py-2.5 text-sm font-semibold text-white hover:bg-deliivo-orange-dark disabled:opacity-50 transition-colors"
-              >
-                {requestingPayout ? <Loader2 className="w-4 h-4 animate-spin" /> : <DollarSign className="w-4 h-4" />}
-                Request
+              <button onClick={handleRequestPayout} disabled={requesting} className="btn-primary px-4 py-2 text-sm disabled:opacity-50">
+                {requesting ? 'Requesting...' : 'Request payout'}
               </button>
             </div>
-            {payoutResult && (
-              <p className={`mt-3 text-xs ${payoutResult.toLowerCase().includes('failed') ? 'text-red-600' : 'text-green-600'}`}>
-                {payoutResult}
-              </p>
-            )}
-          </div>
+            {message && <p className="mt-3 text-xs text-deliivo-gray">{message}</p>}
+          </section>
         )}
 
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-xs text-deliivo-gray font-medium uppercase tracking-wide">Current balance</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{formatMoney(balance?.balance, balance?.currency)}</p>
-            <p className="mt-1 text-xs text-deliivo-gray">Driver ledger balance</p>
-          </div>
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-xs text-deliivo-gray font-medium uppercase tracking-wide">Pending balance</p>
-            <p className="text-2xl font-bold text-deliivo-orange mt-1">{formatMoney(earnings?.pendingBalance, balance?.currency)}</p>
-            <p className="mt-1 text-xs text-deliivo-gray">Earned minus paid out and refunded</p>
-          </div>
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-xs text-deliivo-gray font-medium uppercase tracking-wide">Paid out</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{formatMoney(earnings?.totalPaidOut, balance?.currency)}</p>
-            <p className="mt-1 text-xs text-deliivo-gray">Transferred to Stripe</p>
-          </div>
-        </div>
-
-        {earnings && (
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <TrendingUp className="w-4 h-4 text-deliivo-orange" />
-              <h3 className="text-sm font-semibold text-gray-900">Earnings overview</h3>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-xl bg-gray-50 px-4 py-3">
-                <p className="text-xs font-medium text-deliivo-gray">Total earned</p>
-                <p className="mt-1 text-lg font-bold text-gray-900">{formatMoney(earnings.totalEarned, balance?.currency)}</p>
-              </div>
-              <div className="rounded-xl bg-gray-50 px-4 py-3">
-                <p className="text-xs font-medium text-deliivo-gray">Refunded or reversed</p>
-                <p className="mt-1 text-lg font-bold text-gray-900">{formatMoney(earnings.totalRefunded, balance?.currency)}</p>
-              </div>
-              <div className="rounded-xl bg-gray-50 px-4 py-3">
-                <p className="text-xs font-medium text-deliivo-gray">Ledger entries</p>
-                <p className="mt-1 text-lg font-bold text-gray-900">{earnings.entriesCount}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-white rounded-2xl shadow-sm p-5">
-          <div className="flex items-center justify-between gap-3 mb-4">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-deliivo-orange" />
-              <h3 className="text-sm font-semibold text-gray-900">Payout history</h3>
-            </div>
-            <Link href="/profile/payment-methods" className="text-xs font-semibold text-deliivo-orange hover:underline inline-flex items-center gap-1">
-              <CreditCard className="w-3.5 h-3.5" />
-              Cards
-            </Link>
+        <section className="rounded-2xl bg-white p-5 shadow-sm">
+          <div className="mb-4 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('pending')}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold ${activeTab === 'pending' ? 'bg-deliivo-orange text-white' : 'bg-gray-50 text-deliivo-gray'}`}
+            >
+              Pending ({pendingItems.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('paid')}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold ${activeTab === 'paid' ? 'bg-deliivo-orange text-white' : 'bg-gray-50 text-deliivo-gray'}`}
+            >
+              Paid ({paidItems.length})
+            </button>
           </div>
 
-          {payouts.length === 0 ? (
-            <p className="text-sm text-deliivo-gray text-center py-6">No payout batches yet</p>
+          {visibleItems.length === 0 ? (
+            <p className="py-8 text-center text-sm text-deliivo-gray">No {activeTab} earnings yet.</p>
           ) : (
-            <div className="flex flex-col gap-3">
-              {payouts.map((payout) => (
-                <div key={payout.id} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900">{formatMoney(payout.amountTotal, payout.currency)}</p>
-                      <p className="mt-1 text-xs text-deliivo-gray">
-                        {new Date(payout.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                        {' '}with {payout.items.length} booking{payout.items.length !== 1 ? 's' : ''}
-                      </p>
+            <div className="space-y-3">
+              {visibleItems.map((item) => {
+                const ride = item.booking?.ride;
+                const from = item.booking?.pickupAddress || ride?.originAddress || 'Ride';
+                const to = item.booking?.dropoffAddress || ride?.destinationAddress || '';
+                return (
+                  <div key={item.id} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-gray-900">{from.split(',')[0]}{to ? ` to ${to.split(',')[0]}` : ''}</p>
+                        <p className="mt-1 text-xs text-deliivo-gray">
+                          {ride ? `${new Date(ride.departureDate).toLocaleDateString()} at ${ride.departureTime}` : new Date(item.createdAt).toLocaleString()}
+                        </p>
+                        <p className="mt-1 text-xs text-deliivo-gray">Passenger: {item.booking?.passenger?.name || 'Rider'}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-bold text-gray-900">{formatMoney(item.fareAmount, item.currency)}</p>
+                        <span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(item.status)}`}>
+                          {item.status.replace(/_/g, ' ')}
+                        </span>
+                      </div>
                     </div>
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${payoutBadgeClass(payout.status)}`}>
-                      {payout.status}
-                    </span>
+                    {item.booking?.refundedAt && <p className="mt-3 text-xs text-red-600">Refunded: {formatMoney(item.booking.refundAmount || 0, item.currency)}</p>}
+                    {item.payoutItems?.[0]?.batch?.stripeTransferId && <p className="mt-3 text-xs text-deliivo-gray">Transfer: {item.payoutItems[0].batch?.stripeTransferId}</p>}
                   </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <div className="text-xs text-deliivo-gray">
-                      <span className="font-medium text-gray-900">Transfer ID:</span> {payout.stripeTransferId || 'Not created yet'}
-                    </div>
-                    <div className="text-xs text-deliivo-gray">
-                      <span className="font-medium text-gray-900">Items completed:</span> {payout.items.filter((item) => item.status === 'COMPLETED').length}/{payout.items.length}
-                    </div>
-                  </div>
-                  {payout.failureReason && (
-                    <p className="mt-2 text-xs text-red-600">{payout.failureReason}</p>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
-        </div>
-      </div>
-    </div>
-  );
-}
+        </section>
 
-export default function EarningsPage() {
-  return (
-    <ProtectedRoute>
-      <EarningsContent />
-    </ProtectedRoute>
+        {payoutsReady && <p className="flex items-center gap-1 text-xs text-green-700"><CheckCircle2 className="h-3.5 w-3.5" /> Stripe Connect is ready for payouts.</p>}
+      </main>
+    </div>
   );
 }

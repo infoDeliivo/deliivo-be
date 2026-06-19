@@ -235,3 +235,54 @@ export const getDriverEarnings = async (driverId: string) => {
         entriesCount: entries.length,
     };
 };
+
+export const getDriverEarningItems = async (driverId: string) => {
+    return prisma.payment.findMany({
+        where: {
+            booking: {
+                ride: { driverId },
+            },
+        },
+        orderBy: { createdAt: 'desc' },
+        include: {
+            booking: {
+                select: {
+                    id: true,
+                    status: true,
+                    passenger: { select: { id: true, name: true } },
+                    pickupAddress: true,
+                    dropoffAddress: true,
+                    completedAt: true,
+                    refundAmount: true,
+                    refundedAt: true,
+                    disputes: {
+                        select: { id: true, status: true, reason: true },
+                        orderBy: { createdAt: 'desc' },
+                    },
+                    ride: {
+                        select: {
+                            id: true,
+                            originAddress: true,
+                            destinationAddress: true,
+                            departureDate: true,
+                            departureTime: true,
+                        },
+                    },
+                },
+            },
+            payoutItems: {
+                include: {
+                    batch: {
+                        select: {
+                            id: true,
+                            status: true,
+                            stripeTransferId: true,
+                            createdAt: true,
+                        },
+                    },
+                },
+                orderBy: { createdAt: 'desc' },
+            },
+        },
+    });
+};

@@ -1,6 +1,5 @@
 import { prisma } from '../../config/index.js';
-import { RideStatus, Prisma } from '@prisma/client';
-import type { BookingStatus } from '@prisma/client';
+import { RideStatus, Prisma, BookingStatus } from '@prisma/client';
 import {
   SearchRideQuery,
   SearchRideResult,
@@ -67,11 +66,26 @@ interface AdvancedMatchResult extends MatchResult {
 }
 
 type RideBookingWithRider = {
+  id?: string;
+  rideId?: string;
   passengerId: string;
   seatsBooked: number;
+  totalPrice?: number;
   status: BookingStatus;
   pickupWaypointId: string | null;
   dropoffWaypointId: string | null;
+  pickupAddress?: string | null;
+  dropoffAddress?: string | null;
+  segmentFare?: number | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+  passenger?: {
+    id: string;
+    name: string | null;
+    nickName: string | null;
+    phone: string | null;
+    avatarUrl: string | null;
+  };
 };
 
 type RideVehicleDetails = {
@@ -101,13 +115,97 @@ const bookingWithRiderInclude = {
   },
 };
 
+const rideDetailsBookingInclude = {
+  where: { status: { in: rideDetailViewerBookingStatuses } },
+  select: {
+    id: true,
+    rideId: true,
+    passengerId: true,
+    seatsBooked: true,
+    totalPrice: true,
+    status: true,
+    pickupWaypointId: true,
+    dropoffWaypointId: true,
+    pickupAddress: true,
+    dropoffAddress: true,
+    segmentFare: true,
+    createdAt: true,
+    updatedAt: true,
+    passenger: {
+      select: {
+        id: true,
+        name: true,
+        nickName: true,
+        phone: true,
+        avatarUrl: true,
+      },
+    },
+  },
+};
+
+const loadDriverTrustStats = async (driverIds: string[]) => {
+  const uniqueDriverIds = Array.from(new Set(driverIds));
+  if (uniqueDriverIds.length === 0) {
+    return new Map<string, { rating?: number; ratingCount: number; successfulPublishedRides: number; successfulCompletedRides: number }>();
+  }
+
+  const [ratingStats, completedAsDriver, completedAsRider] = await Promise.all([
+    prisma.userRatingStats.findMany({
+      where: { userId: { in: uniqueDriverIds } },
+      select: { userId: true, averageRating: true, totalRatings: true },
+    }),
+    prisma.ride.groupBy({
+      by: ['driverId'],
+      where: { driverId: { in: uniqueDriverIds }, status: RideStatus.COMPLETED },
+      _count: { _all: true },
+    }),
+    prisma.rideBooking.groupBy({
+      by: ['passengerId'],
+      where: { passengerId: { in: uniqueDriverIds }, status: BookingStatus.COMPLETED },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const stats = new Map<string, { rating?: number; ratingCount: number; successfulPublishedRides: number; successfulCompletedRides: number }>();
+  uniqueDriverIds.forEach((id) => stats.set(id, {
+    ratingCount: 0,
+    successfulPublishedRides: 0,
+    successfulCompletedRides: 0,
+  }));
+  ratingStats.forEach((row) => {
+    const current = stats.get(row.userId);
+    if (current) {
+      current.rating = Number(row.averageRating.toFixed(2));
+      current.ratingCount = row.totalRatings;
+    }
+  });
+  completedAsDriver.forEach((row) => {
+    const current = stats.get(row.driverId);
+    if (current) current.successfulPublishedRides = row._count._all;
+  });
+  completedAsRider.forEach((row) => {
+    const current = stats.get(row.passengerId);
+    if (current) current.successfulCompletedRides = row._count._all;
+  });
+  return stats;
+};
+
 const mapRideBookings = (bookings: RideBookingWithRider[]) =>
   bookings.map((booking) => ({
+    id: booking.id,
+    rideId: booking.rideId,
     passengerId: booking.passengerId,
     seatsBooked: booking.seatsBooked,
+    totalPrice: booking.totalPrice,
     status: booking.status,
     pickupWaypointId: booking.pickupWaypointId,
     dropoffWaypointId: booking.dropoffWaypointId,
+    pickupAddress: booking.pickupAddress,
+    dropoffAddress: booking.dropoffAddress,
+    segmentFare: booking.segmentFare,
+    createdAt: booking.createdAt,
+    updatedAt: booking.updatedAt,
+    passenger: booking.passenger,
   }));
 
 const mapRideVehicle = (vehicle: RideVehicleDetails | null) =>
@@ -369,9 +467,12 @@ export const searchRides = async (
     }
   });
 
+  const driverTrustStats = await loadDriverTrustStats(rides.map((ride) => ride.driverId));
+
   // Calculate actual distances and filter by exact radius
   const ridesWithDistance: SearchRideResult[] = rides
     .map((ride) => {
+      const trustStats = driverTrustStats.get(ride.driverId);
       const distanceFromOrigin = haversine(
         { lat: originLat, lng: originLng },
         { lat: ride.originLat, lng: ride.originLng },
@@ -393,6 +494,10 @@ export const searchRides = async (
           id: ride.driver.id,
           name: ride.driver.name,
           avatarUrl: ride.driver.avatarUrl,
+          rating: trustStats?.rating,
+          ratingCount: trustStats?.ratingCount,
+          successfulPublishedRides: trustStats?.successfulPublishedRides,
+          successfulCompletedRides: trustStats?.successfulCompletedRides,
         },
         vehicle: mapRideVehicle(
           ride.vehicleId
@@ -477,7 +582,7 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
       waypoints: {
         orderBy: { orderIndex: 'asc' },
       },
-      bookings: bookingWithRiderInclude,
+      bookings: rideDetailsBookingInclude,
     },
   });
 
@@ -584,7 +689,7 @@ export const getRideViewByToken = async (
       waypoints: {
         orderBy: { orderIndex: 'asc' },
       },
-      bookings: bookingWithRiderInclude,
+      bookings: rideDetailsBookingInclude,
     },
   });
 
@@ -919,12 +1024,15 @@ export const searchRidesAdvanced = async (
     }
   });
 
+  const enhancedDriverTrustStats = await loadDriverTrustStats(candidateRides.map((ride) => ride.driverId));
+
   /* ------------------------------------------------------------------
        Phase 2: D_POINTS matching for each candidate ride (Spec §6-§7)
        ------------------------------------------------------------------ */
   const evaluatedRides: EnhancedSearchRideResult[] = [];
 
   for (const ride of candidateRides) {
+    const trustStats = enhancedDriverTrustStats.get(ride.driverId);
     // Step 2: Build ordered D_POINTS = [Origin, W1, W2, ..., Wn, Destination]
     const dPoints = buildDPoints(ride);
     const lastIdx = dPoints.length - 1;
@@ -1070,6 +1178,10 @@ export const searchRidesAdvanced = async (
         id: ride.driver.id,
         name: ride.driver.name,
         avatarUrl: ride.driver.avatarUrl,
+        rating: trustStats?.rating,
+        ratingCount: trustStats?.ratingCount,
+        successfulPublishedRides: trustStats?.successfulPublishedRides,
+        successfulCompletedRides: trustStats?.successfulCompletedRides,
       },
       vehicle: mapRideVehicle(
         ride.vehicleId

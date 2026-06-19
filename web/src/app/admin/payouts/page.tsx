@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Banknote, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
-import { adminApi } from '@/lib/api'
+import { adminApi, AdminPayoutCandidate } from '@/lib/api'
 
 export default function AdminPayoutsPage() {
   const [driverId, setDriverId] = useState('')
@@ -12,6 +12,22 @@ export default function AdminPayoutsPage() {
 
   const [checking, setChecking] = useState(false)
   const [eligibilityResult, setEligibilityResult] = useState<{ checked: number; markedEligible: number } | null>(null)
+  const [candidates, setCandidates] = useState<AdminPayoutCandidate[]>([])
+  const [loadingCandidates, setLoadingCandidates] = useState(true)
+
+  useEffect(() => { loadCandidates() }, [])
+
+  async function loadCandidates() {
+    setLoadingCandidates(true)
+    try {
+      const res = await adminApi.getEligiblePayouts()
+      setCandidates(res.data)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load eligible payouts')
+    } finally {
+      setLoadingCandidates(false)
+    }
+  }
 
   async function handleProcess(e: React.FormEvent) {
     e.preventDefault()
@@ -23,6 +39,7 @@ export default function AdminPayoutsPage() {
       const res = await adminApi.processPayout(driverId.trim())
       setResult(res.data)
       setDriverId('')
+      await loadCandidates()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Payout failed')
     } finally {
@@ -36,6 +53,7 @@ export default function AdminPayoutsPage() {
     try {
       const res = await adminApi.checkPayoutEligibility()
       setEligibilityResult(res.data)
+      await loadCandidates()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Check failed')
     } finally {
@@ -83,6 +101,72 @@ export default function AdminPayoutsPage() {
 
       {/* Process Payout */}
       <div className="bg-white rounded-2xl shadow-sm p-5">
+        <div className="mb-5">
+          <h3 className="text-sm font-semibold text-gray-900">Eligible payout candidates</h3>
+          <p className="text-xs text-gray-500 mt-0.5">Review drivers with payout-eligible completed bookings.</p>
+        </div>
+
+        {loadingCandidates ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-[#F97316]" />
+          </div>
+        ) : candidates.length === 0 ? (
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+            No eligible driver payouts yet.
+          </div>
+        ) : (
+          <div className="mb-6 flex flex-col gap-3">
+            {candidates.map((candidate) => (
+              <div key={candidate.driverId} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">{candidate.driverName || 'Driver'} <span className="font-mono text-xs text-gray-400">{candidate.driverId.slice(0, 8)}</span></p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {candidate.paymentsCount} payment{candidate.paymentsCount !== 1 ? 's' : ''} ready, Stripe account {candidate.stripeAccountId ? 'linked' : 'missing'}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold text-gray-900">{candidate.currency} {candidate.amountTotal.toFixed(2)}</p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setDriverId(candidate.driverId)
+                        setProcessing(true)
+                        setError('')
+                        setResult(null)
+                        try {
+                          const res = await adminApi.processPayout(candidate.driverId)
+                          setResult(res.data)
+                          await loadCandidates()
+                        } catch (err: unknown) {
+                          setError(err instanceof Error ? err.message : 'Payout failed')
+                        } finally {
+                          setProcessing(false)
+                        }
+                      }}
+                      disabled={processing}
+                      className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[#F97316] px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+                    >
+                      {processing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Banknote className="w-3 h-3" />}
+                      Process
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-col gap-1">
+                  {candidate.payments.slice(0, 3).map((payment) => (
+                    <p key={payment.id} className="text-xs text-gray-500">
+                      {payment.booking?.ride?.originAddress?.split(',')[0] || 'Ride'} to {payment.booking?.ride?.destinationAddress?.split(',')[0] || 'destination'} - {payment.currency} {payment.fareAmount.toFixed(2)}
+                    </p>
+                  ))}
+                  {candidate.payments.length > 3 && (
+                    <p className="text-xs text-gray-400">+{candidate.payments.length - 3} more</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <h3 className="text-sm font-semibold text-gray-900 mb-3">Process Driver Payout</h3>
         <p className="text-xs text-gray-500 mb-4">Transfer eligible funds to a driver&apos;s Stripe Connect account</p>
         <form onSubmit={handleProcess} className="flex gap-3 items-end">

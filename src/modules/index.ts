@@ -11,6 +11,7 @@ import chatRouter from './chat/chat.routes.js';
 import notificationRouter from './notification/notification.routes.js';
 import paymentsWebhookRouter from './payments/stripe.webhook.routes.js';
 import paymentsConnectRouter from './payments/stripe.connect.routes.js';
+import { paymentRouter } from './payments/payment.routes.js';
 import ratingsRouter from './ratings/ratings.routes.js';
 import dlVerificationRouter from './dl-verification/dl-verification.routes.js';
 import adminRouter from './admin/admin.routes.js';
@@ -36,6 +37,7 @@ export {
     notificationRouter,
     paymentsWebhookRouter,
     paymentsConnectRouter,
+    paymentRouter,
     ratingsRouter,
     dlVerificationRouter,
     adminRouter,

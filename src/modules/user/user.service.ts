@@ -68,7 +68,7 @@ export const getFullProfileService = async (
   try {
     // Single query with includes - no N+1 problem
     // Plus parallel stats aggregation
-    const [userWithRelations, totalRides, totalBookings, ratingStats] = await Promise.all([
+    const [userWithRelations, totalRides, totalBookings, successfulPublishedRides, successfulCompletedRides, ratingStats] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
         include: {
@@ -80,6 +80,8 @@ export const getFullProfileService = async (
       }),
       prisma.ride.count({ where: { driverId: userId } }),
       prisma.rideBooking.count({ where: { passengerId: userId } }),
+      prisma.ride.count({ where: { driverId: userId, status: 'COMPLETED' } }),
+      prisma.rideBooking.count({ where: { passengerId: userId, status: 'COMPLETED' } }),
       prisma.userRatingStats.findUnique({ where: { userId } }),
     ]);
 
@@ -137,6 +139,8 @@ export const getFullProfileService = async (
     const stats: UserStats = {
       totalRides,
       totalBookings,
+      successfulPublishedRides,
+      successfulCompletedRides,
       memberSince: userWithRelations.createdAt,
     };
 
@@ -365,7 +369,7 @@ export const getPublicProfileService = async (
   try {
     // Single query with includes - no N+1 problem
     // Plus parallel stats aggregation
-    const [userWithRelations, totalRides, totalBookings, ratingStats] = await Promise.all([
+    const [userWithRelations, totalRides, totalBookings, successfulPublishedRides, successfulCompletedRides, ratingStats] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
         select: {
@@ -384,6 +388,8 @@ export const getPublicProfileService = async (
       }),
       prisma.ride.count({ where: { driverId: userId } }),
       prisma.rideBooking.count({ where: { passengerId: userId } }),
+      prisma.ride.count({ where: { driverId: userId, status: 'COMPLETED' } }),
+      prisma.rideBooking.count({ where: { passengerId: userId, status: 'COMPLETED' } }),
       prisma.userRatingStats.findUnique({ where: { userId } }),
     ]);
 
@@ -428,6 +434,8 @@ export const getPublicProfileService = async (
     const stats: UserStats = {
       totalRides,
       totalBookings,
+      successfulPublishedRides,
+      successfulCompletedRides,
       memberSince: userWithRelations.createdAt,
     };
 

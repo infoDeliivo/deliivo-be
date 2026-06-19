@@ -2,29 +2,55 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, CreditCard, Plus, Trash2, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
+import { ChevronLeft, CreditCard, Plus, Trash2, CheckCircle, Loader2, AlertCircle, ReceiptText } from 'lucide-react';
 import { useStripe, useElements, CardElement } from '@stripe/react-stripe-js';
 import { isStripeConfigured, StripeProvider } from '@/lib/stripe';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import { paymentMethodsApi, PaymentMethod } from '@/lib/api';
+import { paymentMethodsApi, PaymentMethod, paymentsApi, RiderTransaction } from '@/lib/api';
+
+function formatMoney(amount?: number, currency?: string) {
+  if (typeof amount !== 'number') return '--';
+  return `${currency || 'EUR'} ${amount.toFixed(2)}`;
+}
+
+function paymentStatusClass(status: string) {
+  if (['PAID', 'HELD_IN_ESCROW', 'PAYOUT_ELIGIBLE', 'PAYOUT_COMPLETED'].includes(status)) return 'bg-green-50 text-green-700 border border-green-200';
+  if (['PAYMENT_PENDING', 'CREATED', 'REFUND_PENDING', 'TRANSFER_CREATED'].includes(status)) return 'bg-amber-50 text-amber-700 border border-amber-200';
+  if (['REFUNDED', 'PAYMENT_FAILED'].includes(status)) return 'bg-red-50 text-red-700 border border-red-200';
+  return 'bg-gray-50 text-gray-600 border border-gray-200';
+}
 
 function PaymentMethodsContent() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [transactions, setTransactions] = useState<RiderTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddCard, setShowAddCard] = useState(false);
   const [error, setError] = useState('');
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
-  useEffect(() => { loadMethods(); }, []);
+  useEffect(() => { loadPage(); }, []);
 
-  async function loadMethods() {
+  async function loadPage() {
     setLoading(true);
+    await Promise.all([loadMethods(false), loadTransactions()]);
+    setLoading(false);
+  }
+
+  async function loadMethods(manageLoading = true) {
+    if (manageLoading) setLoading(true);
     try {
       const res = await paymentMethodsApi.list();
       setMethods(res.data || []);
     } catch { /* ignore */ }
-    finally { setLoading(false); }
+    finally { if (manageLoading) setLoading(false); }
+  }
+
+  async function loadTransactions() {
+    try {
+      const res = await paymentsApi.transactions();
+      setTransactions(res.data || []);
+    } catch { /* ignore */ }
   }
 
   async function handleSetDefault(id: string) {
@@ -68,10 +94,10 @@ function PaymentMethodsContent() {
         <Link href="/profile" className="flex items-center gap-1 text-sm text-gray-600 hover:text-deliivo-orange transition-colors">
           <ChevronLeft className="w-4 h-4" /> Profile
         </Link>
-        <h1 className="text-lg font-semibold text-gray-900 ml-2">Payment Methods</h1>
+        <h1 className="text-lg font-semibold text-gray-900 ml-2">Payments & History</h1>
       </header>
 
-      <div className="max-w-lg mx-auto px-4 py-6 flex flex-col gap-4">
+      <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-4">
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <h2 className="text-sm font-semibold text-gray-900">Saved cards</h2>
           <p className="mt-1 text-sm text-deliivo-gray">
@@ -157,6 +183,70 @@ function PaymentMethodsContent() {
           <button onClick={() => setShowAddCard(true)} className="btn-primary w-full py-3 gap-2">
             <Plus className="w-4 h-4" /> Add payment method
           </button>
+        )}
+
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <div className="flex items-center gap-2">
+            <ReceiptText className="h-4 w-4 text-deliivo-orange" />
+            <h2 className="text-sm font-semibold text-gray-900">Payment history</h2>
+          </div>
+          <p className="mt-1 text-sm text-deliivo-gray">Ride payments, driver approval state, refunds, and disputes.</p>
+        </div>
+
+        {transactions.length === 0 ? (
+          <div className="bg-white rounded-2xl shadow-sm p-8 text-center">
+            <ReceiptText className="w-12 h-12 text-gray-200 mx-auto mb-3" />
+            <p className="text-sm text-deliivo-gray">No ride transactions yet.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {transactions.map((tx) => {
+              const ride = tx.booking?.ride;
+              const from = tx.booking?.pickupAddress || ride?.originAddress || 'Ride';
+              const to = tx.booking?.dropoffAddress || ride?.destinationAddress || '';
+              const openDispute = tx.booking?.disputes?.find((d) => !d.status.startsWith('RESOLVED'));
+              return (
+                <div key={tx.id} className="bg-white rounded-2xl shadow-sm p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{from.split(',')[0]}{to ? ` to ${to.split(',')[0]}` : ''}</p>
+                      <p className="mt-1 text-xs text-deliivo-gray">
+                        {ride ? `${new Date(ride.departureDate).toLocaleDateString()} at ${ride.departureTime}` : new Date(tx.createdAt).toLocaleString()}
+                      </p>
+                      <p className="mt-1 text-xs text-deliivo-gray">Booking: {tx.booking?.status || 'Unknown'}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-gray-900">{formatMoney(tx.amountTotal, tx.currency)}</p>
+                      <span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${paymentStatusClass(tx.status)}`}>
+                        {tx.status.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                    <div className="rounded-xl bg-gray-50 px-3 py-2">
+                      <p className="text-[11px] text-deliivo-gray">Fare</p>
+                      <p className="text-xs font-semibold text-gray-900">{formatMoney(tx.fareAmount, tx.currency)}</p>
+                    </div>
+                    <div className="rounded-xl bg-gray-50 px-3 py-2">
+                      <p className="text-[11px] text-deliivo-gray">Service fee</p>
+                      <p className="text-xs font-semibold text-gray-900">{formatMoney(tx.platformFeeAmount, tx.currency)}</p>
+                    </div>
+                    <div className="rounded-xl bg-gray-50 px-3 py-2">
+                      <p className="text-[11px] text-deliivo-gray">Refund</p>
+                      <p className="text-xs font-semibold text-gray-900">{tx.booking?.refundedAt ? formatMoney(tx.booking.refundAmount || 0, tx.currency) : 'None'}</p>
+                    </div>
+                  </div>
+
+                  {openDispute && (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="text-xs text-amber-800">Dispute open: {openDispute.reason.replace(/_/g, ' ')} ({openDispute.status.replace(/_/g, ' ')})</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

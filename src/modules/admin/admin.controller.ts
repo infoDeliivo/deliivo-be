@@ -56,6 +56,36 @@ export const getStats = async (req: AuthRequest, res: Response) => {
     }
 };
 
+/* ================= RIDE HISTORY ================= */
+export const listRides = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.listRides({
+            page: req.query.page ? Number(req.query.page) : undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            status: req.query.status as string | undefined,
+            search: req.query.search as string | undefined,
+            searchBy: req.query.searchBy as string | undefined,
+        });
+        return sendSuccess(res, { message: 'Rides fetched', data: result });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch rides' });
+    }
+};
+
+/* ================= REVENUE LEDGER ================= */
+export const getRevenueLedger = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.getRevenueLedger({
+            page: req.query.page ? Number(req.query.page) : undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            accountType: req.query.accountType as string | undefined,
+        });
+        return sendSuccess(res, { message: 'Revenue ledger fetched', data: result });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch revenue ledger' });
+    }
+};
+
 /* ================= VERIFY VEHICLE ================= */
 export const verifyVehicle = async (req: AuthRequest, res: Response) => {
     try {

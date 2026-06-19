@@ -129,25 +129,29 @@ function RideResultCard({ ride }: { ride: SearchRideResult }) {
   const dateLabel = new Date(ride.departureDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
   return (
-    <Link href={`/rides/${ride.id}${ride.segmentId ? `?segmentId=${ride.segmentId}` : ''}`} className="block">
       <article className="card flex flex-col gap-4 transition-shadow hover:shadow-md sm:flex-row sm:items-start">
         {/* Driver */}
         <div className="flex items-center gap-3 sm:flex-col sm:items-center sm:gap-2 sm:w-24 sm:shrink-0 sm:text-center">
-          <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-primary-100 sm:h-14 sm:w-14">
+          <Link href={`/profile/users/${ride.driverId}`} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-primary-100 sm:h-14 sm:w-14">
             {ride.driver?.avatarUrl ? (
               <img src={ride.driver.avatarUrl} alt={driverName} className="h-full w-full object-cover" />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-primary-600">{initials}</div>
             )}
-          </div>
+          </Link>
           <div>
-            <p className="text-sm font-semibold text-deliivo-dark leading-tight">{driverName}</p>
-            {ride.driver?.rating && (
+            <Link href={`/profile/users/${ride.driverId}`} className="text-sm font-semibold text-deliivo-dark leading-tight hover:text-deliivo-orange">
+              {driverName}
+            </Link>
+            {ride.driver?.rating ? (
               <div className="mt-0.5 flex items-center gap-1 sm:justify-center">
                 <Star size={13} className="fill-amber-400 text-amber-400" />
-                <span className="text-xs text-deliivo-gray">{ride.driver.rating.toFixed(1)}</span>
+                <span className="text-xs text-deliivo-gray">{ride.driver.rating.toFixed(1)} ({ride.driver.ratingCount || 0})</span>
               </div>
-            )}
+            ) : <p className="mt-0.5 text-xs text-deliivo-gray">No ratings yet</p>}
+            <p className="mt-1 text-[11px] text-deliivo-gray">
+              {ride.driver?.successfulPublishedRides || 0} driven • {ride.driver?.successfulCompletedRides || 0} ridden
+            </p>
           </div>
         </div>
 
@@ -199,10 +203,9 @@ function RideResultCard({ ride }: { ride: SearchRideResult }) {
             <p className="text-xl font-bold text-primary-500">{ride.currency} {price.toFixed(2)}</p>
             <p className="text-xs text-deliivo-gray">per seat</p>
           </div>
-          <span className="btn-primary py-2 px-5 text-sm">View</span>
+          <Link href={`/rides/${ride.id}${ride.segmentId ? `?segmentId=${ride.segmentId}` : ''}`} className="btn-primary py-2 px-5 text-sm">View</Link>
         </div>
       </article>
-    </Link>
   );
 }
 
@@ -230,6 +233,7 @@ function SearchPageContent() {
 
   // Recent searches
   const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
+  const hydratedQueryRef = useRef(false);
 
   // Ride alert
   const [alertCreating, setAlertCreating] = useState(false);
@@ -240,6 +244,68 @@ function SearchPageContent() {
       setRecentSearches(res.data || []);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (hydratedQueryRef.current) return;
+    hydratedQueryRef.current = true;
+
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
+    const female = searchParams.get('femaleOnly');
+    if (female === '1' || female === 'true') setFemaleOnly(true);
+    if (!from && !to) return;
+
+    async function resolvePlace(input: string | null): Promise<PlaceSelection | null> {
+      if (!input) return null;
+      try {
+        const predictions = await mapsApi.autocomplete(input);
+        const first = predictions.data?.[0];
+        if (!first) {
+          return { placeId: '', address: input, lat: 0, lng: 0 };
+        }
+        const details = await mapsApi.placeDetails(first.placeId);
+        return {
+          placeId: first.placeId,
+          address: first.description,
+          lat: details.data.location.lat,
+          lng: details.data.location.lng,
+        };
+      } catch {
+        return { placeId: '', address: input, lat: 0, lng: 0 };
+      }
+    }
+
+    Promise.all([resolvePlace(from), resolvePlace(to)]).then(async ([resolvedFrom, resolvedTo]) => {
+      if (resolvedFrom) setOrigin(resolvedFrom);
+      if (resolvedTo) setDestination(resolvedTo);
+      if (resolvedFrom?.lat && resolvedTo?.lat && date) {
+        setLoading(true);
+        setError('');
+        setSearched(true);
+        try {
+          const params: SearchRidesParams = {
+            originLat: resolvedFrom.lat,
+            originLng: resolvedFrom.lng,
+            destinationLat: resolvedTo.lat,
+            destinationLng: resolvedTo.lng,
+            departureDate: date,
+            seatsRequired: seats,
+            femaleOnly: female === '1' || female === 'true' || undefined,
+            sortBy,
+            limit: 20,
+          };
+          const res = await searchRidesApi.search(params);
+          setResults(res.data.rides || []);
+          setTotal(res.data.pagination?.total || 0);
+        } catch (err: unknown) {
+          setError(err instanceof Error ? err.message : 'Search failed');
+          setResults([]);
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+  }, [searchParams]);
 
   async function handleCreateAlert() {
     if (!origin || !destination || !date) return;

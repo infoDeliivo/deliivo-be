@@ -110,6 +110,22 @@ export const markPaymentPaid = async (paymentId: string, driverId: string) => {
     return updated;
 };
 
+export const markBookingPaymentPaid = async (bookingId: string, driverId: string) => {
+    const payment = await prisma.payment.findUnique({ where: { bookingId } });
+    if (!payment) return null;
+
+    if (payment.status === PAYMENT_STATUSES.CREATED) {
+        await markPaymentPending(payment.id);
+        return markPaymentPaid(payment.id, driverId);
+    }
+
+    if (payment.status === PAYMENT_STATUSES.PAYMENT_PENDING) {
+        return markPaymentPaid(payment.id, driverId);
+    }
+
+    return payment;
+};
+
 export const markHeldInEscrow = async (paymentId: string) => {
     const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     assertTransition(payment.status, PAYMENT_STATUSES.HELD_IN_ESCROW);
@@ -158,9 +174,19 @@ export const markRefundPending = async (paymentId: string) => {
     });
 };
 
-export const markRefunded = async (paymentId: string, driverId: string) => {
+export const markRefunded = async (paymentId: string, driverId: string, refundAmount?: number) => {
     const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    assertTransition(payment.status, PAYMENT_STATUSES.REFUNDED);
+    if (payment.status === PAYMENT_STATUSES.REFUNDED) return payment;
+
+    if (payment.status !== PAYMENT_STATUSES.REFUND_PENDING) {
+        assertTransition(payment.status, PAYMENT_STATUSES.REFUND_PENDING);
+        await prisma.payment.update({
+            where: { id: paymentId },
+            data: { status: PAYMENT_STATUSES.REFUND_PENDING },
+        });
+    }
+
+    assertTransition(PAYMENT_STATUSES.REFUND_PENDING, PAYMENT_STATUSES.REFUNDED);
 
     const updated = await prisma.payment.update({
         where: { id: paymentId },
@@ -172,11 +198,21 @@ export const markRefunded = async (paymentId: string, driverId: string) => {
         bookingId: payment.bookingId,
         riderId: payment.riderId,
         driverId,
-        refundAmount: payment.amountTotal,
+        refundAmount: refundAmount ?? payment.amountTotal,
         currency: payment.currency,
     });
 
     return updated;
+};
+
+export const markBookingPaymentRefunded = async (
+    bookingId: string,
+    driverId: string,
+    refundAmount?: number
+) => {
+    const payment = await prisma.payment.findUnique({ where: { bookingId } });
+    if (!payment) return null;
+    return markRefunded(payment.id, driverId, refundAmount);
 };
 
 export const markPaymentFailed = async (paymentId: string, reason?: string) => {
@@ -198,6 +234,41 @@ export const getPaymentByBookingId = async (bookingId: string) => {
 
 export const getPaymentsByRideId = async (rideId: string) => {
     return prisma.payment.findMany({ where: { rideId }, orderBy: { createdAt: 'desc' } });
+};
+
+export const getRiderTransactions = async (riderId: string) => {
+    return prisma.payment.findMany({
+        where: { riderId },
+        orderBy: { createdAt: 'desc' },
+        include: {
+            booking: {
+                select: {
+                    id: true,
+                    status: true,
+                    pickupAddress: true,
+                    dropoffAddress: true,
+                    refundAmount: true,
+                    refundPercent: true,
+                    refundedAt: true,
+                    cancelledAt: true,
+                    disputes: {
+                        select: { id: true, status: true, reason: true },
+                        orderBy: { createdAt: 'desc' },
+                    },
+                    ride: {
+                        select: {
+                            id: true,
+                            originAddress: true,
+                            destinationAddress: true,
+                            departureDate: true,
+                            departureTime: true,
+                            driver: { select: { id: true, name: true } },
+                        },
+                    },
+                },
+            },
+        },
+    });
 };
 
 export const getEligiblePaymentsForPayout = async (driverId?: string) => {
