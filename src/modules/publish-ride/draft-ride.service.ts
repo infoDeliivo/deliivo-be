@@ -110,6 +110,9 @@ interface DraftRide {
   vehicleId?: string | null;
   maxLuggagePerPerson?: number;
   backSeatOnly?: boolean;
+  noSmoking?: boolean;
+  noBicycles?: boolean;
+  childSeatAvailable?: boolean;
 
   // Notes (Step 13)
   notes?: string;
@@ -674,6 +677,9 @@ export const updateCapacity = async (
   draft.vehicleId = vehicle?.id || null;
   draft.maxLuggagePerPerson = input.maxLuggagePerPerson ?? 2;
   draft.backSeatOnly = input.backSeatOnly ?? false;
+  draft.noSmoking = input.noSmoking ?? false;
+  draft.noBicycles = input.noBicycles ?? false;
+  draft.childSeatAvailable = input.childSeatAvailable ?? false;
   draft.step = Math.max(draft.step, 10);
 
   return saveDraft(draft);
@@ -995,8 +1001,6 @@ export const updatePricing = async (
 //  STEP 13: UPDATE NOTES
 // ============================================================
 
-const FEMALE_SALUTATIONS = ['MS', 'MRS', 'MX'];
-
 export const updateNotes = async (
     driverId: string,
     notes: string,
@@ -1009,9 +1013,9 @@ export const updateNotes = async (
         // Only female drivers can publish female-only rides
         const driver = await prisma.user.findUnique({
             where: { id: driverId },
-            select: { salutation: true },
+            select: { gender: true },
         });
-        if (!driver?.salutation || !FEMALE_SALUTATIONS.includes(driver.salutation)) {
+        if (driver?.gender !== 'FEMALE') {
             throw new Error('FEMALE_ONLY_NOT_ALLOWED');
         }
         draft.femaleOnly = true;
@@ -1103,6 +1107,9 @@ export const publishRide = async (driverId: string) => {
 
         maxLuggagePerPerson: draft.maxLuggagePerPerson ?? 2,
         backSeatOnly: draft.backSeatOnly ?? false,
+        noSmoking: draft.noSmoking ?? false,
+        noBicycles: draft.noBicycles ?? false,
+        childSeatAvailable: draft.childSeatAvailable ?? false,
 
         notes: draft.notes || null,
                 femaleOnly: draft.femaleOnly ?? false,

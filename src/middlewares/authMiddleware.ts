@@ -21,6 +21,7 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
           name: true,
           nickName: true,
           salutation: true,
+          gender: true,
           dob: true,
           email: true,
           phone: true,

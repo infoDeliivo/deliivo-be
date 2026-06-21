@@ -15,6 +15,9 @@ It summarizes the current codebase, existing documentation, implementation histo
 - `06-implementation-cross-check.md` records the second-pass check against implemented code.
 - `07-architecture-and-flow-diagrams.md` contains Mermaid architecture, state, and sequence diagrams.
 - `08-feature-decisions-bottlenecks.md` summarizes final decisions, open questions, and bottlenecks by feature.
+- `09-phase-history.md` records chronological implementation phases, touched code areas, documentation updates, and verification.
+- `10-production-readiness.md` lists production launch checks for environment, Stripe, notifications, operations, and deployment verification.
+- `11-kpis-slas-monitoring.md` defines initial business KPIs, internal SLAs, monitoring signals, and dashboard needs.
 - `features/` contains feature-specific PRDs and ADRs.
 
 ## Feature Areas

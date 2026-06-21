@@ -666,13 +666,12 @@ export const createBooking = async (
             select: {
                 name: true,
                 avatarUrl: true,
-                salutation: true,
+                gender: true,
             },
         });
 
         if (ride.femaleOnly) {
-            const allowed = ['MS', 'MRS', 'MX'];
-            if (!passenger?.salutation || !allowed.includes(passenger.salutation)) {
+            if (passenger?.gender !== 'FEMALE') {
                 throw new Error('FEMALE_ONLY_RIDE');
             }
         }
@@ -1428,10 +1427,14 @@ export const listUserBookings = async (
     query: ListBookingsQuery
 ): Promise<BookingListResponse> => {
     const { status, page = 1, limit = 10 } = query;
+    const statuses = status
+        ? String(status).split(',').filter(Boolean) as BookingStatus[]
+        : [];
 
     const where: Prisma.RideBookingWhereInput = {
         passengerId,
-        ...(status ? { status } : {}),
+        ...(statuses.length === 1 ? { status: statuses[0] } : {}),
+        ...(statuses.length > 1 ? { status: { in: statuses } } : {}),
     };
 
     const [allBookings, total] = await Promise.all([

@@ -6,6 +6,7 @@ import { Car, Plus, Trash2, ArrowLeft, Upload, CheckCircle } from 'lucide-react'
 import { vehicleApi, Vehicle, VehicleType } from '@/lib/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Navbar from '@/components/Navbar';
+import { useTranslation } from '@/lib/i18n-context';
 
 export default function VehiclePage() {
   return (
@@ -16,19 +17,8 @@ export default function VehiclePage() {
   );
 }
 
-const VEHICLE_TYPES: { value: VehicleType; label: string }[] = [
-  { value: 'sedan', label: 'Sedan' },
-  { value: 'hatchback', label: 'Hatchback' },
-  { value: 'suv', label: 'SUV' },
-  { value: 'minibus', label: 'Minibus' },
-  { value: 'coupe', label: 'Coupe' },
-  { value: 'convertible', label: 'Convertible' },
-  { value: 'pickup', label: 'Pickup' },
-  { value: 'van', label: 'Van' },
-  { value: 'truck', label: 'Truck' },
-];
-
 function VehicleContent() {
+  const { t } = useTranslation();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -70,7 +60,7 @@ function VehicleContent() {
       await vehicleApi.createDraft(licenseCountry, licenseNumber);
       setStep(2);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create draft');
+      setError(err instanceof Error ? err.message : t('profile.vehicleDraftFailed'));
     } finally {
       setSaving(false);
     }
@@ -79,6 +69,17 @@ function VehicleContent() {
   // Document upload state
   const [documents, setDocuments] = useState<{ imageUrl: string; documentType: string }[]>([]);
   const [uploading, setUploading] = useState(false);
+  const vehicleTypes: { value: VehicleType; label: string }[] = [
+    { value: 'sedan', label: t('profile.vehicleTypeSedan') },
+    { value: 'hatchback', label: t('profile.vehicleTypeHatchback') },
+    { value: 'suv', label: t('profile.vehicleTypeSuv') },
+    { value: 'minibus', label: t('profile.vehicleTypeMinibus') },
+    { value: 'coupe', label: t('profile.vehicleTypeCoupe') },
+    { value: 'convertible', label: t('profile.vehicleTypeConvertible') },
+    { value: 'pickup', label: t('profile.vehicleTypePickup') },
+    { value: 'van', label: t('profile.vehicleTypeVan') },
+    { value: 'truck', label: t('profile.vehicleTypeTruck') },
+  ];
 
   const handleSaveDetails = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,7 +89,7 @@ function VehicleContent() {
       await vehicleApi.updateDraftDetails({ brand, model_num: modelNum, model_name: modelName, type, color, year });
       setStep(3); // Go to document upload step
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to save details');
+      setError(err instanceof Error ? err.message : t('profile.vehicleDetailsFailed'));
     } finally {
       setSaving(false);
     }
@@ -101,7 +102,7 @@ function VehicleContent() {
       const res = await vehicleApi.uploadDraftDocument(file, documentType);
       setDocuments(prev => [...prev, { imageUrl: res.data.imageUrl, documentType: res.data.documentType }]);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
+      setError(err instanceof Error ? err.message : t('profile.vehicleUploadFailed'));
     } finally {
       setUploading(false);
     }
@@ -118,14 +119,14 @@ function VehicleContent() {
       resetForm();
       setDocuments([]);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to save vehicle');
+      setError(err instanceof Error ? err.message : t('profile.vehicleSaveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this vehicle?')) return;
+    if (!confirm(t('profile.deleteVehicleConfirm'))) return;
     setDeleting(id);
     try {
       await vehicleApi.delete(id);
@@ -163,7 +164,7 @@ function VehicleContent() {
         <Link href="/profile" className="rounded-full p-2 hover:bg-gray-100">
           <ArrowLeft size={20} />
         </Link>
-        <h1 className="text-2xl font-bold">Your Vehicles</h1>
+        <h1 className="text-2xl font-bold">{t('profile.yourVehicles')}</h1>
       </div>
 
       {vehicles.length > 0 && (
@@ -183,7 +184,7 @@ function VehicleContent() {
                   {v.color} &middot; {v.type} &middot; {v.year}
                 </p>
                 {v.isVerified && (
-                  <span className="text-xs text-green-600 font-medium">Verified</span>
+                  <span className="text-xs text-green-600 font-medium">{t('profile.verified')}</span>
                 )}
               </div>
               <button
@@ -200,22 +201,22 @@ function VehicleContent() {
 
       {showAddForm ? (
         <div className="card">
-          <h2 className="mb-4 text-lg font-bold">Add Vehicle</h2>
+          <h2 className="mb-4 text-lg font-bold">{t('profile.addVehicle')}</h2>
 
           {step === 1 && (
             <form onSubmit={handleCreateDraft} className="space-y-4">
               <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Country</label>
-                <input type="text" value={licenseCountry} onChange={(e) => setLicenseCountry(e.target.value)} placeholder="EE, LV, or LT" className="input-field" required />
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.country')}</label>
+                <input type="text" value={licenseCountry} onChange={(e) => setLicenseCountry(e.target.value)} placeholder={t('profile.countryPlaceholder')} className="input-field" required />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">License Number</label>
-                <input type="text" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} placeholder="123ABC" className="input-field" required />
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.licenseNumber')}</label>
+                <input type="text" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} placeholder={t('profile.licenseNumberPlaceholder')} className="input-field" required />
               </div>
               {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
               <div className="flex gap-3">
-                <button type="button" onClick={() => { setShowAddForm(false); resetForm(); }} className="btn-outline flex-1 py-2 text-sm">Cancel</button>
-                <button type="submit" disabled={saving} className="btn-primary flex-1 py-2 text-sm disabled:opacity-50">{saving ? 'Creating...' : 'Next'}</button>
+                <button type="button" onClick={() => { setShowAddForm(false); resetForm(); }} className="btn-outline flex-1 py-2 text-sm">{t('common.cancel')}</button>
+                <button type="submit" disabled={saving} className="btn-primary flex-1 py-2 text-sm disabled:opacity-50">{saving ? t('profile.creating') : t('profile.next')}</button>
               </div>
             </form>
           )}
@@ -224,40 +225,40 @@ function VehicleContent() {
             <form onSubmit={handleSaveDetails} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Brand</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.brand')}</label>
                   <input type="text" value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Toyota" className="input-field" required />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Model Number</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.modelNumber')}</label>
                   <input type="text" value={modelNum} onChange={(e) => setModelNum(e.target.value)} placeholder="Avanza" className="input-field" required />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Model Name</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.modelName')}</label>
                   <input type="text" value={modelName} onChange={(e) => setModelName(e.target.value)} placeholder="Avanza G" className="input-field" required />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Type</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.type')}</label>
                   <select value={type} onChange={(e) => setType(e.target.value as VehicleType)} className="input-field" required>
-                    {VEHICLE_TYPES.map((t) => (<option key={t.value} value={t.value}>{t.label}</option>))}
+                    {vehicleTypes.map((item) => (<option key={item.value} value={item.value}>{item.label}</option>))}
                   </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Color</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.color')}</label>
                   <input type="text" value={color} onChange={(e) => setColor(e.target.value)} placeholder="Black" className="input-field" required />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Year</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.year')}</label>
                   <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} min={1990} max={new Date().getFullYear()} className="input-field" required />
                 </div>
               </div>
               {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
               <div className="flex gap-3">
-                <button type="button" onClick={() => setStep(1)} className="btn-outline flex-1 py-2 text-sm">Back</button>
-                <button type="submit" disabled={saving} className="btn-primary flex-1 py-2 text-sm disabled:opacity-50">{saving ? 'Saving...' : 'Next'}</button>
+                <button type="button" onClick={() => setStep(1)} className="btn-outline flex-1 py-2 text-sm">{t('common.back')}</button>
+                <button type="submit" disabled={saving} className="btn-primary flex-1 py-2 text-sm disabled:opacity-50">{saving ? t('profile.saving') : t('profile.next')}</button>
               </div>
             </form>
           )}

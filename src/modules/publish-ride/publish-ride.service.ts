@@ -18,10 +18,14 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 10;
     const skip = (page - 1) * limit;
+    const statuses = status
+        ? String(status).split(',').filter(Boolean) as RideStatus[]
+        : [];
 
     const where = {
         driverId,
-        ...(status && { status }),
+        ...(statuses.length === 1 ? { status: statuses[0] } : {}),
+        ...(statuses.length > 1 ? { status: { in: statuses } } : {}),
     };
 
     const [rides, total] = await Promise.all([

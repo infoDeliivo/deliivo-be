@@ -10,7 +10,7 @@ Users need quick feedback for actions across separate sessions and devices. Howe
 
 ## Decision
 
-Use persisted Notification records as the durable notification source. Emit Socket.IO events for active web sessions. Use Firebase Admin for push-capable clients. Use mail and SMS workers for out-of-band communication. UI screens should refetch canonical state after actions and use notification events as acceleration, not authority.
+Use persisted Notification records as the durable notification source. Emit Socket.IO events for active web sessions. Use Firebase Admin for push-capable clients, including web browser push when Firebase public config and VAPID key are configured. Use mail and SMS workers for out-of-band communication. UI screens should refetch canonical state after actions, on focus, and on periodic notification panel refresh; notification events are acceleration, not authority.
 
 ## Rationale
 
@@ -25,6 +25,7 @@ Use persisted Notification records as the durable notification source. Emit Sock
 - Notification payload design matters because it drives UX and deep links.
 - Clients must handle duplicate or delayed events.
 - Mobile and web can share notification backend behavior while using different presentation layers.
+- Web browser push is optional and configuration-gated; the persisted notification panel remains the fallback.
 
 ## Alternatives Considered
 

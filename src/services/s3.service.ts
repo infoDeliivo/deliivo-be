@@ -15,6 +15,7 @@ export interface S3UploadResult {
 export interface S3UploadOptions {
     folder: string; // e.g., 'avatar', 'vehicles', 'documents'
     file: Express.Multer.File;
+    ownerId?: string;
 }
 
 /**
@@ -50,8 +51,10 @@ const uploadToLocal = async (options: S3UploadOptions): Promise<S3UploadResult> 
 export const uploadToS3 = async (options: S3UploadOptions): Promise<S3UploadResult> => {
     const { folder, file } = options;
 
-    const bucketName = process.env.AWS_S3_BUCKET_NAME;
-    const region = process.env.AWS_REGION;
+    const storageProvider = process.env.PROFILE_IMAGE_STORAGE_PROVIDER?.toLowerCase();
+    const isR2 = storageProvider === 'r2' || !!process.env.R2_ENDPOINT;
+    const bucketName = isR2 ? process.env.R2_BUCKET_NAME : process.env.AWS_S3_BUCKET_NAME;
+    const region = isR2 ? 'auto' : process.env.AWS_REGION;
 
     // Fallback to local storage if S3 is not configured
     if (!bucketName || !region) {
@@ -61,7 +64,8 @@ export const uploadToS3 = async (options: S3UploadOptions): Promise<S3UploadResu
     try {
         // Generate unique key for the file
         const fileExtension = file.originalname.split(".").pop();
-        const key = `uploads/${folder}/${uuidv4()}.${fileExtension}`;
+        const ownerPrefix = options.ownerId ? `${options.ownerId}/` : '';
+        const key = `uploads/${folder}/${ownerPrefix}${uuidv4()}.${fileExtension}`;
 
         // Create and send the upload command
         const command = new PutObjectCommand({
@@ -74,7 +78,12 @@ export const uploadToS3 = async (options: S3UploadOptions): Promise<S3UploadResu
         await s3.send(command);
 
         // Construct the public URL
-        const url = `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
+        const configuredPublicBaseUrl = isR2 ? process.env.R2_PUBLIC_BASE_URL : process.env.AWS_S3_PUBLIC_BASE_URL;
+        const url = configuredPublicBaseUrl
+            ? `${configuredPublicBaseUrl.replace(/\/$/, '')}/${key}`
+            : isR2
+                ? `https://${bucketName}.${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`
+                : `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
 
         return {
             success: true,

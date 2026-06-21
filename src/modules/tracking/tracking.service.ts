@@ -48,6 +48,7 @@ export const createTrackingLink = async (params: {
     createdBy: string;
     accessScope?: string;
     ttlHours?: number;
+    allowSystemCreation?: boolean;
 }) => {
     const booking = await prisma.rideBooking.findUnique({
         where: { id: params.bookingId },
@@ -55,7 +56,7 @@ export const createTrackingLink = async (params: {
     });
 
     if (!booking) throw new Error('BOOKING_NOT_FOUND');
-    if (booking.passengerId !== params.createdBy) throw new Error('FORBIDDEN');
+    if (!params.allowSystemCreation && booking.passengerId !== params.createdBy) throw new Error('FORBIDDEN');
 
     // Only allow tracking for active rides
     const activeStatuses = ['CONFIRMED', 'WAITING_FOR_PICKUP', 'DRIVER_ARRIVED', 'ONBOARD', 'IN_PROGRESS'];

@@ -25,7 +25,10 @@ Keep users informed about marketplace events and support direct communication wh
 - Notifications must contain enough context: ride route, date/time, actor, status, and a deep link when possible.
 - Web notification panel must show persisted notifications after reload.
 - Realtime notification events should update panels and surface on-screen feedback when the user is active.
-- Chat must support user conversations around ride context.
+- Web notification surfaces must reconcile from persisted notifications on focus and periodic refresh so missed socket events do not leave the UI stale.
+- Browser push may be enabled for web users when Firebase public config and VAPID key are configured; in-app notifications remain required even without browser push.
+- Chat remains a backend capability, but the web portal chat UI is disabled by default through `NEXT_PUBLIC_ENABLE_WEB_CHAT=false`.
+- Emergency SOS notifications must be stored for admins and should surface through the same persisted plus realtime notification path.
 - Email and SMS workers should handle out-of-band messages without blocking user actions.
 
 ## Non-Functional Requirements
@@ -39,6 +42,7 @@ Keep users informed about marketplace events and support direct communication wh
 
 - Notification creation count by event type.
 - Realtime delivery latency.
+- Notification panel reconciliation latency.
 - Notification panel open rate.
 - Missed notification support tickets.
 - Mail and SMS queue failure rate.
@@ -47,6 +51,7 @@ Keep users informed about marketplace events and support direct communication wh
 
 - `src/modules/notification`
 - `src/modules/chat`
+- `src/modules/safety`
 - `src/modules/mail`
 - `src/modules/sms`
 - `src/realtime`

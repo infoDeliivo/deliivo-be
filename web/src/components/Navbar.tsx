@@ -1,16 +1,20 @@
 'use client';
 
 import Link from "next/link";
-import { useEffect, useState, type ComponentType } from "react";
+import { useState, type ComponentType } from "react";
 import { Menu, X, ChevronDown, User, LogOut, Car, Wallet, Bell } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { notificationsApi } from "@/lib/api";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { featureFlags } from "@/lib/features";
+import { useTranslation } from "@/lib/i18n-context";
+import { useNotificationStore } from "@/lib/notification-store";
 
 export default function Navbar() {
   const { user, loading, logout } = useAuth();
+  const { t } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const { unreadCount } = useNotificationStore(user?.id);
 
   type NavLink = {
     label: string;
@@ -19,19 +23,13 @@ export default function Navbar() {
     badge?: number;
   };
 
-  useEffect(() => {
-    if (!user) return;
-    notificationsApi.getUnreadCount()
-      .then((res) => setUnreadCount(res.data.unreadCount || 0))
-      .catch(() => setUnreadCount(0));
-  }, [user]);
-
   const navLinks: NavLink[] = [
-    { label: "Search a ride", href: "/search" },
-    { label: "Offer a ride", href: "/publish" },
-    { label: "Your rides", href: "/rides" },
-    { label: "Notifications", href: "/profile/notifications", icon: Bell, badge: unreadCount > 0 ? unreadCount : 0 },
-    { label: "Messages", href: "/chat" },
+    { label: t('nav.searchRide'), href: "/search" },
+    { label: t('nav.offerRide'), href: "/publish" },
+    { label: t('nav.yourRides'), href: "/rides" },
+    { label: t('nav.guides'), href: "/blog" },
+    { label: t('nav.notifications'), href: "/profile/notifications", icon: Bell, badge: unreadCount > 0 ? unreadCount : 0 },
+    ...(featureFlags.webChat ? [{ label: t('nav.messages'), href: "/chat" }] : []),
   ];
 
   return (
@@ -63,6 +61,7 @@ export default function Navbar() {
 
         {/* Desktop right side */}
         <div className="hidden md:flex items-center gap-3">
+          <LanguageSwitcher compact />
           {loading ? (
             <div className="h-8 w-24 animate-pulse rounded-full bg-gray-100" />
           ) : user ? (
@@ -90,7 +89,7 @@ export default function Navbar() {
                     onClick={() => setDropdownOpen(false)}
                   >
                     <User size={14} />
-                    My profile
+                    {t('nav.myProfile')}
                   </Link>
                   <Link
                     href="/rides"
@@ -98,7 +97,7 @@ export default function Navbar() {
                     onClick={() => setDropdownOpen(false)}
                   >
                     <Car size={14} />
-                    My rides
+                    {t('nav.myRides')}
                   </Link>
                   <Link
                     href="/profile/earnings"
@@ -106,7 +105,7 @@ export default function Navbar() {
                     onClick={() => setDropdownOpen(false)}
                   >
                     <Wallet size={14} />
-                    Earnings
+                    {t('nav.earnings')}
                   </Link>
                   {user.role === 'ADMIN' && (
                     <Link
@@ -114,7 +113,7 @@ export default function Navbar() {
                       className="flex items-center gap-2 px-4 py-2 text-sm text-deliivo-dark hover:bg-primary-50"
                       onClick={() => setDropdownOpen(false)}
                     >
-                      <span className="text-xs">Admin</span>
+                      <span className="text-xs">{t('nav.admin')}</span>
                     </Link>
                   )}
                   <hr className="my-1 border-gray-100" />
@@ -123,7 +122,7 @@ export default function Navbar() {
                     onClick={() => { setDropdownOpen(false); logout(); }}
                   >
                     <LogOut size={14} />
-                    Sign out
+                    {t('nav.signOut')}
                   </button>
                 </div>
               )}
@@ -131,10 +130,10 @@ export default function Navbar() {
           ) : (
             <>
               <Link href="/auth/signin" className="btn-outline py-2 px-5 text-sm">
-                Sign in
+                {t('nav.signIn')}
               </Link>
               <Link href="/auth/signup" className="btn-primary py-2 px-5 text-sm">
-                Sign up
+                {t('nav.signUp')}
               </Link>
             </>
           )}
@@ -144,7 +143,7 @@ export default function Navbar() {
         <button
           className="md:hidden rounded-lg p-2 text-deliivo-gray hover:bg-gray-100 transition-colors"
           onClick={() => setMobileOpen((prev) => !prev)}
-          aria-label="Toggle menu"
+          aria-label={t('nav.toggleMenu')}
         >
           {mobileOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
@@ -166,6 +165,7 @@ export default function Navbar() {
             ))}
           </nav>
           <div className="mt-3 flex flex-col gap-2">
+            <LanguageSwitcher />
             {user ? (
               <>
                 <Link
@@ -173,13 +173,13 @@ export default function Navbar() {
                   className="btn-outline w-full text-center"
                   onClick={() => setMobileOpen(false)}
                 >
-                  My profile
+                  {t('nav.myProfile')}
                 </Link>
                 <button
                   className="btn-outline w-full text-center text-red-500 border-red-200"
                   onClick={() => { setMobileOpen(false); logout(); }}
                 >
-                  Sign out
+                  {t('nav.signOut')}
                 </button>
               </>
             ) : (
@@ -189,14 +189,14 @@ export default function Navbar() {
                   className="btn-outline w-full text-center"
                   onClick={() => setMobileOpen(false)}
                 >
-                  Sign in
+                  {t('nav.signIn')}
                 </Link>
                 <Link
                   href="/auth/signup"
                   className="btn-primary w-full text-center"
                   onClick={() => setMobileOpen(false)}
                 >
-                  Sign up
+                  {t('nav.signUp')}
                 </Link>
               </>
             )}

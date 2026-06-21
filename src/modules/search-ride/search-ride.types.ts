@@ -93,6 +93,9 @@ export interface SearchRideResult {
 
     // Flags
     femaleOnly?: boolean;
+    noSmoking?: boolean;
+    noBicycles?: boolean;
+    childSeatAvailable?: boolean;
 
     // Distance from search origin/destination (km)
     distanceFromOrigin?: number;

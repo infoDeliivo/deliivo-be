@@ -141,7 +141,7 @@ export interface BookingListResponse {
 
 /* ================= LIST BOOKINGS QUERY ================= */
 export interface ListBookingsQuery {
-    status?: BookingStatus;
+    status?: BookingStatus | string;
     page?: number;
     limit?: number;
 }

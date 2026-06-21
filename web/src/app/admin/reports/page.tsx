@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { Flag, ChevronDown, ChevronLeft, ChevronRight, Loader2, AlertCircle } from 'lucide-react'
-import { adminApi, AdminDispute, Pagination } from '@/lib/api'
+import { adminApi, AdminDispute, Pagination, getApiErrorMessage } from '@/lib/api'
+import { showError, showSuccess } from '@/lib/app-feedback'
 
 const statusStyle: Record<string, string> = {
   OPEN: 'bg-yellow-50 text-yellow-700 border border-yellow-200',
@@ -46,7 +47,7 @@ export default function AdminReportsPage() {
       setDisputes(res.data.disputes)
       setPagination(res.data.pagination)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load disputes')
+      setError(getApiErrorMessage(err, 'Failed to load disputes'))
     } finally {
       setLoading(false)
     }
@@ -64,9 +65,12 @@ export default function AdminReportsPage() {
     setActionLoading(id)
     try {
       await adminApi.resolveDispute(id, resolution, refundPercent)
-      loadDisputes()
+      await loadDisputes()
+      showSuccess('Dispute resolved', `Resolution: ${resolution}`)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to resolve dispute')
+      const message = getApiErrorMessage(err, 'Failed to resolve dispute')
+      setError(message)
+      showError('Resolve failed', message)
     }
     finally { setActionLoading(null); setOpenMenu(null) }
   }
@@ -75,9 +79,12 @@ export default function AdminReportsPage() {
     setActionLoading(id)
     try {
       await adminApi.collectEvidence(id)
-      loadDisputes()
+      await loadDisputes()
+      showSuccess('Evidence collected', 'Dispute lifecycle evidence was refreshed.')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to collect evidence')
+      const message = getApiErrorMessage(err, 'Failed to collect evidence')
+      setError(message)
+      showError('Evidence collection failed', message)
     }
     finally { setActionLoading(null); setOpenMenu(null) }
   }
@@ -86,9 +93,12 @@ export default function AdminReportsPage() {
     setActionLoading(id)
     try {
       await adminApi.evaluateDispute(id)
-      loadDisputes()
+      await loadDisputes()
+      showSuccess('Dispute evaluated', 'Recommendation and risk score were updated.')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to evaluate dispute')
+      const message = getApiErrorMessage(err, 'Failed to evaluate dispute')
+      setError(message)
+      showError('Evaluation failed', message)
     }
     finally { setActionLoading(null); setOpenMenu(null) }
   }
@@ -100,7 +110,9 @@ export default function AdminReportsPage() {
       const res = await adminApi.getDisputeById(id)
       setSelectedDispute(res.data)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load dispute details')
+      const message = getApiErrorMessage(err, 'Failed to load dispute details')
+      setError(message)
+      showError('Could not load lifecycle', message)
     } finally {
       setDetailLoading(false)
     }
@@ -133,11 +145,14 @@ export default function AdminReportsPage() {
               <p className="mt-1 text-xs text-gray-500">
                 {selectedDispute.ride ? (
                   <span className="flex flex-wrap items-center gap-2">
-                    <Link href={`/rides/${selectedDispute.ride.id}`} className="text-[#F97316] hover:underline">
+                    <Link
+                      href={`/admin/rides?search=${encodeURIComponent(selectedDispute.ride.id)}&searchBy=rideId`}
+                      className="text-[#F97316] hover:underline"
+                    >
                       {selectedDispute.ride.originAddress.split(',')[0]} to {selectedDispute.ride.destinationAddress.split(',')[0]}
                     </Link>
                     <Link
-                      href={`/admin/rides?search=${selectedDispute.ride.id}&searchBy=rideId`}
+                      href={`/admin/rides?search=${encodeURIComponent(selectedDispute.ride.id)}&searchBy=rideId`}
                       className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-semibold text-gray-600 hover:border-[#F97316] hover:text-[#F97316]"
                     >
                       Open in rides
@@ -174,6 +189,9 @@ export default function AdminReportsPage() {
                 <p className="text-xs font-semibold text-gray-500">Resolution status</p>
                 <p className="mt-1 text-sm font-semibold text-gray-900">{selectedDispute.status.replace(/_/g, ' ')}</p>
                 <p className="mt-1 text-xs text-gray-500">{selectedDispute.resolvedAt ? new Date(selectedDispute.resolvedAt).toLocaleString() : 'Open dispute'}</p>
+                {selectedDispute.resolvedBy && (
+                  <p className="mt-1 text-xs text-gray-500">Resolved by {selectedDispute.resolvedBy.slice(0, 8)}</p>
+                )}
               </div>
 
               <div className="rounded-xl bg-gray-50 p-4">
@@ -200,6 +218,24 @@ export default function AdminReportsPage() {
                   {renderEvidenceItem('Rider drop-off confirmation', Boolean((selectedDispute.evidenceJson as any)?.riderConfirmedDropoff), (selectedDispute.evidenceJson as any)?.riderConfirmedDropoff ? 'Rider confirmed drop-off.' : 'Rider did not confirm drop-off.')}
                   {renderEvidenceItem('No-show marked', Boolean((selectedDispute.evidenceJson as any)?.noShowMarked), (selectedDispute.evidenceJson as any)?.noShowMarked ? 'No-show was marked.' : 'No no-show mark recorded.')}
                 </div>
+                {Array.isArray((selectedDispute.evidenceJson as any)?.rideEvents) && (selectedDispute.evidenceJson as any).rideEvents.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3">
+                    <p className="text-xs font-semibold text-gray-700">Ride event evidence</p>
+                    <div className="mt-2 space-y-1.5">
+                      {(selectedDispute.evidenceJson as any).rideEvents.map((event: any, index: number) => (
+                        <div key={`${event.eventType}-${index}`} className="flex items-start justify-between gap-3 rounded-lg bg-gray-50 px-2.5 py-2">
+                          <div>
+                            <p className="text-[11px] font-semibold text-gray-800">{String(event.eventType || 'UNKNOWN').replace(/_/g, ' ')}</p>
+                            <p className="text-[11px] text-gray-500">{event.actorType || 'UNKNOWN'}{event.timestamp ? ` - ${new Date(event.timestamp).toLocaleString()}` : ''}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${event.hasLocation ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                            {event.hasLocation ? 'GPS' : 'No GPS'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -259,8 +295,8 @@ export default function AdminReportsPage() {
                           Raised by {d.raisedBy === d.ride?.driverId ? 'driver' : d.raisedBy === d.booking?.passengerId ? 'rider' : d.raisedBy?.slice(0, 8) || '-'}
                         </p>
                         {d.ride && (
-                          <Link href={`/rides/${d.ride.id}`} className="mt-1 inline-flex text-[11px] font-medium text-[#F97316] hover:underline">
-                            Open ride details
+                          <Link href={`/admin/rides?search=${encodeURIComponent(d.ride.id)}&searchBy=rideId`} className="mt-1 inline-flex text-[11px] font-medium text-[#F97316] hover:underline">
+                            Open in ride history
                           </Link>
                         )}
                       </td>

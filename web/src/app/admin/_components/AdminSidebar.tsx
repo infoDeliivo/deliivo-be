@@ -10,15 +10,21 @@ import {
   DollarSign,
   Settings,
   Banknote,
+  Newspaper,
+  Siren,
+  Activity,
 } from 'lucide-react'
 
 const navItems = [
   { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
   { label: 'Users', href: '/admin/users', icon: Users },
   { label: 'Rides', href: '/admin/rides', icon: Car },
+  { label: 'SOS', href: '/admin/sos', icon: Siren },
   { label: 'Disputes', href: '/admin/reports', icon: Flag },
   { label: 'Payouts', href: '/admin/payouts', icon: Banknote },
   { label: 'Revenue', href: '/admin/revenue', icon: DollarSign },
+  { label: 'Monitoring', href: '/admin/monitoring', icon: Activity },
+  { label: 'Content', href: '/admin/content', icon: Newspaper },
   { label: 'Settings', href: '/admin/settings', icon: Settings },
 ]
 

@@ -15,6 +15,7 @@ The product is centered on these major aggregates:
 - Conversation and notifications
 - Dispute and reconciliation
 - Tracking link
+- Emergency alert
 
 ## User
 
@@ -23,6 +24,7 @@ The product is centered on these major aggregates:
 Important responsibilities:
 
 - identity and authentication profile
+- dedicated gender field used by safety filters such as women-only rides
 - verification state
 - role and onboarding state
 - Stripe Connect account state
@@ -246,3 +248,19 @@ Expected constraints:
 - token can be revoked
 - public endpoint should expose limited location-only data
 
+## Emergency Alert
+
+`EmergencyAlert` represents an SOS raised by a rider or driver from an authenticated ride context.
+
+Important fields:
+
+- user, role, ride, and optional booking references
+- optional message from the user
+- optional browser GPS coordinates
+- lifecycle status such as open, acknowledged, resolved, or false alarm
+
+Current behavior:
+
+- SOS can be raised by the ride driver or a passenger with a booking on the ride.
+- The alert is stored durably and creates admin notifications.
+- SOS is not a replacement for local emergency services; UI copy instructs users to call local emergency services first when in immediate danger.

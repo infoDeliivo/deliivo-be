@@ -11,7 +11,9 @@
 - Should pickup OTP be the only passenger boarding proof, or should rider-arrived and driver-arrived location evidence be mandatory before OTP verification?
 - Should dropoff OTP remain unsupported, or should dropoff confirmation require a rider-side action plus driver-side action?
 - What is the final cancellation and refund matrix for rider cancellation, driver per-passenger cancellation, full ride cancellation, no-show, and driver missed pickup?
-- What notification channels are required for web-only users: in-app panel, browser push, email, SMS, or all of them?
+- Web notification baseline is persisted in-app notifications plus socket acceleration. Browser push is optional when Firebase public config and VAPID key are present; email/SMS are reserved for selected critical ride-day and payment events.
+- Which content management model should own public guides and localized copy: static code, internal admin CMS, or external CMS?
+- Which language must be the fallback when a translation key is missing for Estonian or Russian?
 
 ## Architecture Risks
 
@@ -27,9 +29,16 @@
 - Notification summaries need enough ride context to be useful after reload: origin, destination, date/time, passenger or driver name, booking status, and a deep link.
 - Payment and payout readiness should be checked before users enter long forms. Publishing should block early if payout setup is incomplete.
 - Admin pages should fail with clear role or session messages rather than generic forbidden responses.
+- Language selection is only a foundation until full page-level translation catalogs are implemented.
+- Static guide content must not be treated as a complete admin publishing system.
 
 ## Data Risks
 
 - Ride status and booking status are separate state machines. UI code must not assume one status fully explains the other.
 - Segment capacity must be recalculated or transactionally maintained when bookings move between pending, confirmed, cancelled, rejected, expired, no-show, and disputed states.
 - Ledger and payment records should remain append-only where possible. Manual admin actions should create compensating events rather than editing history.
+
+## Production Tracking
+
+- See `10-production-readiness.md` for launch checks.
+- See `11-kpis-slas-monitoring.md` for KPIs, SLAs, and monitoring signals.

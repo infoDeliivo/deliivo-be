@@ -1,9 +1,12 @@
+'use client';
+
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { ArrowRight, MapPin, ShieldCheck, Star, Users } from 'lucide-react';
+import { ArrowRight, CalendarCheck, Car, CreditCard, MapPin, Route, Search, ShieldCheck, Star, Users, Wallet } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import SearchForm from '@/components/SearchForm';
+import { useTranslation } from '@/lib/i18n-context';
 
 const popularRoutes = [
   { id: 'r1', from: 'Tallinn', to: 'Tartu', price: 12, duration: '2h 20m', driverCount: 18 },
@@ -14,48 +17,63 @@ const popularRoutes = [
   { id: 'r6', from: 'Vilnius', to: 'Klaipeda', price: 15, duration: '3h 15m', driverCount: 10 },
 ];
 
-const howItWorks = [
+const riderSteps = [
   {
     step: '01',
-    icon: 'EE',
-    title: 'Search the Baltics',
-    description:
-      'Choose a route across Estonia, Latvia, or Lithuania and see available seats for your travel date.',
+    icon: <Search className="h-5 w-5" />,
+    titleKey: 'home.riderStep1Title',
+    descriptionKey: 'home.riderStep1Copy',
   },
   {
     step: '02',
-    icon: 'LV',
-    title: 'Book clearly',
-    description:
-      'Pick a verified driver, check ratings and vehicle details, then request your seat with upfront EUR pricing.',
+    icon: <CreditCard className="h-5 w-5" />,
+    titleKey: 'home.riderStep2Title',
+    descriptionKey: 'home.riderStep2Copy',
   },
   {
     step: '03',
-    icon: 'LT',
-    title: 'Travel together',
-    description:
-      'Meet at the agreed pickup point, confirm your OTP, and travel affordably between Baltic cities.',
+    icon: <CalendarCheck className="h-5 w-5" />,
+    titleKey: 'home.riderStep3Title',
+    descriptionKey: 'home.riderStep3Copy',
+  },
+];
+
+const driverSteps = [
+  {
+    step: '01',
+    icon: <Route className="h-5 w-5" />,
+    titleKey: 'home.driverStep1Title',
+    descriptionKey: 'home.driverStep1Copy',
+  },
+  {
+    step: '02',
+    icon: <Users className="h-5 w-5" />,
+    titleKey: 'home.driverStep2Title',
+    descriptionKey: 'home.driverStep2Copy',
+  },
+  {
+    step: '03',
+    icon: <Wallet className="h-5 w-5" />,
+    titleKey: 'home.driverStep3Title',
+    descriptionKey: 'home.driverStep3Copy',
   },
 ];
 
 const whyDeliivo = [
   {
     icon: <ShieldCheck className="h-7 w-7 text-primary-500" />,
-    title: 'Verified Drivers',
-    description:
-      'Drivers complete identity and licence checks before offering seats on Baltic routes.',
+    titleKey: 'home.verifiedDrivers',
+    descriptionKey: 'home.verifiedDriversCopy',
   },
   {
     icon: <Star className="h-7 w-7 text-primary-500" />,
-    title: 'Trusted Community',
-    description:
-      'Ratings and reviews after every trip build a community you can actually rely on.',
+    titleKey: 'home.trustedCommunity',
+    descriptionKey: 'home.trustedCommunityCopy',
   },
   {
     icon: <Users className="h-7 w-7 text-primary-500" />,
-    title: 'Women Only Option',
-    description:
-      'Passengers can choose women-only rides where available for more comfortable travel.',
+    titleKey: 'home.womenOnlyOption',
+    descriptionKey: 'home.womenOnlyOptionCopy',
   },
   {
     icon: (
@@ -63,13 +81,14 @@ const whyDeliivo = [
         EUR
       </span>
     ),
-    title: 'Regional Fares',
-    description:
-      'Split fuel costs in euros with upfront fares for city-to-city and cross-border trips.',
+    titleKey: 'home.regionalFares',
+    descriptionKey: 'home.regionalFaresCopy',
   },
 ];
 
 export default function HomePage() {
+  const { t } = useTranslation();
+
   return (
     <div className="flex min-h-full flex-col">
       <Navbar />
@@ -80,16 +99,14 @@ export default function HomePage() {
             <div className="text-center lg:text-left">
               <span className="mb-6 inline-flex items-center gap-2 rounded-full bg-primary-100 px-4 py-1.5 text-sm font-medium text-primary-600">
                 <MapPin size={14} />
-                Estonia, Latvia, Lithuania
+                {t('home.region')}
               </span>
 
               <h1 className="text-4xl font-extrabold tracking-tight text-deliivo-dark sm:text-5xl lg:text-6xl">
-                Ride between Baltic cities with trusted locals
+                {t('home.heroTitle')}
               </h1>
               <p className="mx-auto mt-5 max-w-2xl text-lg text-deliivo-gray sm:text-xl lg:mx-0">
-                Find seats or offer rides across Tallinn, Riga, Vilnius, Tartu,
-                Kaunas, Liepaja, and more. Built for regional travel in euros,
-                with verified drivers and clear pickup points.
+                {t('home.heroCopy')}
               </p>
 
               <div className="mt-10">
@@ -99,7 +116,7 @@ export default function HomePage() {
               </div>
 
               <p className="mt-6 text-sm text-deliivo-gray">
-                Practical city-to-city carpooling for Estonia, Latvia, and Lithuania.
+                {t('home.heroNote')}
               </p>
             </div>
 
@@ -107,10 +124,10 @@ export default function HomePage() {
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-primary-500">
-                    Baltic corridor
+                    {t('home.corridor')}
                   </p>
                   <h2 className="mt-1 text-xl font-bold text-deliivo-dark">
-                    Popular regional routes
+                    {t('home.popularRegionalRoutes')}
                   </h2>
                 </div>
                 <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-semibold text-primary-600">
@@ -150,17 +167,17 @@ export default function HomePage() {
             <div className="mb-10 flex items-end justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-deliivo-dark sm:text-3xl">
-                  Popular Baltic routes
+                  {t('home.popularRoutes')}
                 </h2>
                 <p className="mt-1 text-deliivo-gray">
-                  Frequently travelled city pairs across the region
+                  {t('home.popularRoutesCopy')}
                 </p>
               </div>
               <Link
                 href="/search"
                 className="hidden items-center gap-1 text-sm font-medium text-primary-500 hover:text-primary-600 sm:flex"
               >
-                See all <ArrowRight size={14} />
+                {t('home.seeAll')} <ArrowRight size={14} />
               </Link>
             </div>
 
@@ -183,9 +200,9 @@ export default function HomePage() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-lg font-bold text-primary-500">From EUR {route.price}</p>
+                    <p className="text-lg font-bold text-primary-500">{t('home.fromPrice', { price: route.price })}</p>
                     <p className="text-xs text-deliivo-gray">
-                      {route.driverCount} drivers &middot; {route.duration}
+                      {t('home.routeMeta', { drivers: route.driverCount, duration: route.duration })}
                     </p>
                   </div>
                 </Link>
@@ -198,28 +215,59 @@ export default function HomePage() {
           <div className="mx-auto max-w-6xl">
             <div className="mb-12 text-center">
               <h2 className="text-2xl font-bold text-deliivo-dark sm:text-3xl">
-                How Deliivo works
+                {t('home.howTitle')}
               </h2>
               <p className="mt-2 text-deliivo-gray">
-                Three simple steps to your next Baltic trip
+                {t('home.howCopy')}
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-8 sm:grid-cols-3">
-              {howItWorks.map((item) => (
-                <div key={item.step} className="flex flex-col items-center text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-xl font-bold text-primary-500 shadow-sm">
-                    {item.icon}
-                  </div>
-                  <span className="mt-4 text-xs font-bold uppercase tracking-widest text-primary-400">
-                    Step {item.step}
+            <div className="grid gap-8 lg:grid-cols-2">
+              <div>
+                <div className="mb-5 flex items-center gap-2">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-primary-500 shadow-sm">
+                    <Users className="h-5 w-5" />
                   </span>
-                  <h3 className="mt-1 text-lg font-bold text-deliivo-dark">{item.title}</h3>
-                  <p className="mt-2 text-sm leading-relaxed text-deliivo-gray">
-                    {item.description}
-                  </p>
+                  <h3 className="text-lg font-bold text-deliivo-dark">{t('home.forRiders')}</h3>
                 </div>
-              ))}
+                <div className="grid gap-4">
+                  {riderSteps.map((item) => (
+                    <div key={item.step} className="flex gap-4 rounded-2xl bg-white p-5 shadow-sm">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-500">
+                        {item.icon}
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold uppercase text-primary-400">{t('home.step', { step: item.step })}</span>
+                        <h4 className="mt-0.5 font-bold text-deliivo-dark">{t(item.titleKey)}</h4>
+                        <p className="mt-1 text-sm leading-relaxed text-deliivo-gray">{t(item.descriptionKey)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-5 flex items-center gap-2">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-primary-500 shadow-sm">
+                    <Car className="h-5 w-5" />
+                  </span>
+                  <h3 className="text-lg font-bold text-deliivo-dark">{t('home.forDrivers')}</h3>
+                </div>
+                <div className="grid gap-4">
+                  {driverSteps.map((item) => (
+                    <div key={item.step} className="flex gap-4 rounded-2xl bg-white p-5 shadow-sm">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-500">
+                        {item.icon}
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold uppercase text-primary-400">{t('home.step', { step: item.step })}</span>
+                        <h4 className="mt-0.5 font-bold text-deliivo-dark">{t(item.titleKey)}</h4>
+                        <p className="mt-1 text-sm leading-relaxed text-deliivo-gray">{t(item.descriptionKey)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -228,21 +276,21 @@ export default function HomePage() {
           <div className="mx-auto max-w-6xl">
             <div className="mb-12 text-center">
               <h2 className="text-2xl font-bold text-deliivo-dark sm:text-3xl">
-                Why choose Deliivo?
+                {t('home.whyTitle')}
               </h2>
               <p className="mt-2 text-deliivo-gray">
-                Safety, trust, and clear EUR pricing for Baltic travel
+                {t('home.whyCopy')}
               </p>
             </div>
 
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {whyDeliivo.map((item) => (
-                <div key={item.title} className="flex flex-col gap-3 rounded-2xl bg-primary-50 p-6">
+                <div key={item.titleKey} className="flex flex-col gap-3 rounded-2xl bg-primary-50 p-6">
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white shadow-sm">
                     {item.icon}
                   </div>
-                  <h3 className="font-bold text-deliivo-dark">{item.title}</h3>
-                  <p className="text-sm leading-relaxed text-deliivo-gray">{item.description}</p>
+                  <h3 className="font-bold text-deliivo-dark">{t(item.titleKey)}</h3>
+                  <p className="text-sm leading-relaxed text-deliivo-gray">{t(item.descriptionKey)}</p>
                 </div>
               ))}
             </div>
@@ -252,24 +300,23 @@ export default function HomePage() {
         <section className="bg-primary-500 px-4 py-14 sm:px-6 sm:py-20">
           <div className="mx-auto max-w-3xl text-center">
             <h2 className="text-2xl font-extrabold text-white sm:text-3xl">
-              Ready to share a Baltic route?
+              {t('home.ctaTitle')}
             </h2>
             <p className="mt-3 text-orange-100">
-              List your first Baltic route for free, or find a seat on a trip
-              happening tomorrow.
+              {t('home.ctaCopy')}
             </p>
             <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
               <Link
                 href="/auth/signup"
                 className="inline-flex items-center justify-center rounded-full bg-white px-8 py-3 text-sm font-semibold text-primary-500 shadow-sm transition-colors hover:bg-orange-50"
               >
-                Get started free
+                {t('home.getStarted')}
               </Link>
               <Link
                 href="/search"
                 className="inline-flex items-center justify-center rounded-full border border-white/50 px-8 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/10"
               >
-                Find a ride
+                {t('home.findRide')}
               </Link>
             </div>
           </div>

@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Bell, CheckCheck, Loader2, RefreshCw, ArrowRight, MapPin, Calendar, Clock } from 'lucide-react';
-import { NotificationRecord, notificationsApi } from '@/lib/api';
-import { onSocketEvent, getSocket, NotificationPayload } from '@/lib/socket';
+import { NotificationRecord } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { useNotificationStore } from '@/lib/notification-store';
 import { getBrowserNotificationStatus, registerBrowserPushDevice } from '@/lib/web-push';
+import LoadFailureCard from '@/components/LoadFailureCard';
 
 type Props = {
   title?: string;
@@ -37,9 +38,14 @@ function getNotificationLink(item: NotificationRecord): string | null {
   const rideId = getString(data, 'rideId');
   const bookingId = getString(data, 'bookingId');
   const deepLink = getString(data, 'deepLink');
+  const liveTrackingUrl = getString(data, 'liveTrackingUrl');
 
   if (deepLink?.startsWith('app://driver/booking-request/')) {
     return rideId ? `/rides/${rideId}/manage${bookingId ? `?bookingId=${bookingId}` : ''}` : null;
+  }
+
+  if (liveTrackingUrl) {
+    return liveTrackingUrl.startsWith('http') ? liveTrackingUrl : liveTrackingUrl;
   }
 
   if (deepLink?.startsWith('app://booking/')) {
@@ -80,70 +86,23 @@ export default function NotificationPanel({
   showViewAll = true,
   className = '',
 }: Props) {
-  const [items, setItems] = useState<NotificationRecord[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [pushStatus, setPushStatus] = useState<ReturnType<typeof getBrowserNotificationStatus>>('unsupported');
   const [pushBusy, setPushBusy] = useState(false);
   const { user } = useAuth();
-
-  const unreadIds = useMemo(() => items.filter((item) => !item.isRead).map((item) => item.id), [items]);
-
-  async function load() {
-    setLoading(true);
-    try {
-      const [listRes, unreadRes] = await Promise.all([
-        notificationsApi.list(undefined, maxItems),
-        notificationsApi.getUnreadCount(),
-      ]);
-      setItems(listRes.data.notifications || []);
-      setUnreadCount(unreadRes.data.unreadCount || 0);
-    } catch {
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { items, unreadCount, loading, refresh, markAllRead: markAllReadInStore, lastSyncedAt, lastSyncAttemptAt, lastError } = useNotificationStore(user?.id);
+  const visibleItems = useMemo<NotificationRecord[]>(() => items.slice(0, maxItems), [items, maxItems]);
 
   useEffect(() => {
     if (!user) return;
-
-    getSocket();
     setPushStatus(getBrowserNotificationStatus());
-    load();
+  }, [user?.id]);
 
-    const unsub = onSocketEvent<NotificationPayload>('notification:new', (payload) => {
-      setItems((prev) => [
-        {
-          id: payload.data.id,
-          type: payload.data.notificationType,
-          title: payload.data.title,
-          body: payload.data.body,
-          data: (payload.data.data || {}) as Record<string, unknown>,
-          isRead: false,
-          readAt: null,
-          createdAt: payload.data.createdAt,
-        },
-        ...prev,
-      ].slice(0, maxItems));
-      setUnreadCount((prev) => prev + 1);
-    });
-
-    return unsub;
-  }, [maxItems, user?.id]);
-
-  async function markAllRead() {
-    if (unreadIds.length === 0) return;
+  async function handleMarkAllRead() {
+    if (unreadCount === 0) return;
     setBusy(true);
     try {
-      await notificationsApi.markRead(unreadIds);
-      setItems((prev) =>
-        prev.map((item) =>
-          unreadIds.includes(item.id) ? { ...item, isRead: true, readAt: new Date().toISOString() } : item
-        )
-      );
-      setUnreadCount(0);
+      await markAllReadInStore();
     } catch {
       // ignore
     } finally {
@@ -188,18 +147,18 @@ export default function NotificationPanel({
               Browser alerts on
             </span>
           )}
-          <button
-            type="button"
-            onClick={load}
+            <button
+              type="button"
+            onClick={() => { void refresh(); }}
             className="rounded-full p-2 text-deliivo-gray hover:bg-gray-100 hover:text-deliivo-dark"
             aria-label="Refresh notifications"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          <button
-            type="button"
-            onClick={markAllRead}
-            disabled={busy || unreadIds.length === 0}
+            <button
+              type="button"
+            onClick={handleMarkAllRead}
+            disabled={busy || unreadCount === 0}
             className="rounded-full p-2 text-deliivo-gray hover:bg-gray-100 hover:text-deliivo-dark disabled:opacity-40"
             aria-label="Mark notifications as read"
           >
@@ -207,19 +166,38 @@ export default function NotificationPanel({
           </button>
         </div>
       </div>
+      {(lastSyncedAt || lastSyncAttemptAt || lastError) && (
+        <div className="border-b border-gray-100 px-4 py-2 text-[11px] text-deliivo-gray">
+          {lastError ? (
+            <span className="text-red-600">{lastError}</span>
+          ) : lastSyncedAt ? (
+            <span>Synced {new Date(lastSyncedAt as string).toLocaleTimeString()}</span>
+          ) : (
+            <span>Syncing {lastSyncAttemptAt ? new Date(lastSyncAttemptAt).toLocaleTimeString() : ''}</span>
+          )}
+        </div>
+      )}
 
       <div className="max-h-[70vh] overflow-auto">
         {loading ? (
           <div className="flex items-center gap-2 px-4 py-6 text-sm text-deliivo-gray">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading notifications...
           </div>
-        ) : items.length === 0 ? (
+        ) : lastError ? (
+          <div className="p-4">
+            <LoadFailureCard
+              title="Notifications are temporarily unavailable"
+              message={lastError}
+              onRetry={() => { void refresh(); }}
+            />
+          </div>
+        ) : visibleItems.length === 0 ? (
           <div className="px-4 py-6 text-sm text-deliivo-gray">
             No notifications yet.
           </div>
         ) : (
           <div className="divide-y divide-gray-100">
-            {items.map((item) => {
+            {visibleItems.map((item) => {
               const summary = getNotificationSummary(item);
               const rideId = getString(item.data, 'rideId');
               const bookingId = getString(item.data, 'bookingId');

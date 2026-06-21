@@ -1,39 +1,7 @@
-import Link from "next/link";
+'use client';
 
-const footerColumns = [
-  {
-    heading: "About",
-    links: [
-      { label: "About Deliivo", href: "/" },
-      { label: "Search a ride", href: "/search" },
-      { label: "Offer a ride", href: "/publish" },
-    ],
-  },
-  {
-    heading: "Drivers",
-    links: [
-      { label: "Publish a ride", href: "/publish" },
-      { label: "Your rides", href: "/rides" },
-      { label: "Vehicle", href: "/profile/vehicle" },
-    ],
-  },
-  {
-    heading: "Passengers",
-    links: [
-      { label: "Search a ride", href: "/search" },
-      { label: "Your rides", href: "/rides" },
-      { label: "Profile", href: "/profile" },
-    ],
-  },
-  {
-    heading: "Support",
-    links: [
-      { label: "Sign in", href: "/auth/signin" },
-      { label: "Sign up", href: "/auth/signup" },
-      { label: "Ratings", href: "/profile/ratings" },
-    ],
-  },
-];
+import Link from "next/link";
+import { useTranslation } from "@/lib/i18n-context";
 
 const socialLinks = [
   { label: "Twitter / X", href: "https://twitter.com", icon: "X" },
@@ -43,6 +11,45 @@ const socialLinks = [
 ];
 
 export default function Footer() {
+  const { t } = useTranslation();
+  const footerColumns = [
+    {
+      heading: t('footer.about'),
+      links: [
+        { label: t('footer.aboutDeliivo'), href: "/" },
+        { label: t('nav.guides'), href: "/blog" },
+        { label: t('nav.searchRide'), href: "/search" },
+        { label: t('nav.offerRide'), href: "/publish" },
+      ],
+    },
+    {
+      heading: t('footer.drivers'),
+      links: [
+        { label: t('footer.publishRide'), href: "/publish" },
+        { label: t('nav.yourRides'), href: "/rides" },
+        { label: t('footer.vehicle'), href: "/profile/vehicle" },
+      ],
+    },
+    {
+      heading: t('footer.passengers'),
+      links: [
+        { label: t('nav.searchRide'), href: "/search" },
+        { label: t('nav.yourRides'), href: "/rides" },
+        { label: t('footer.profile'), href: "/profile" },
+      ],
+    },
+    {
+      heading: t('footer.support'),
+      links: [
+        { label: t('footer.faq'), href: "/faq" },
+        { label: t('nav.guides'), href: "/blog" },
+        { label: t('footer.contact'), href: "/contact" },
+        { label: t('footer.privacy'), href: "/privacy" },
+        { label: t('footer.terms'), href: "/terms" },
+      ],
+    },
+  ];
+
   return (
     <footer style={{ backgroundColor: "#1a1a2e" }} className="text-gray-400">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
@@ -59,8 +66,7 @@ export default function Footer() {
               </span>
             </Link>
             <p className="text-sm leading-relaxed text-gray-500">
-              Baltic carpooling for Estonia, Latvia, and Lithuania. Share
-              intercity routes, split fuel costs, and travel with local drivers.
+              {t('footer.description')}
             </p>
           </div>
 
@@ -89,7 +95,7 @@ export default function Footer() {
         {/* Bottom bar */}
         <div className="mt-12 border-t border-white/10 pt-8 flex flex-col items-center justify-between gap-4 sm:flex-row">
           <p className="text-sm text-gray-600">
-            &copy; {new Date().getFullYear()} Deliivo. All rights reserved.
+            &copy; {new Date().getFullYear()} Deliivo. {t('footer.rights')}
           </p>
 
           {/* Social links */}

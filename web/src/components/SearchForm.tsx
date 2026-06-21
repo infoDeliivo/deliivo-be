@@ -1,19 +1,83 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { MapPin, Calendar, ArrowLeftRight } from 'lucide-react';
+import { MapPin, Calendar, ArrowLeftRight, Users, Loader2 } from 'lucide-react';
+import { mapsApi, PlacePrediction } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n-context';
 
 export default function SearchForm() {
   const router = useRouter();
+  const { t } = useTranslation();
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [date, setDate] = useState('');
+  const [seats, setSeats] = useState(1);
   const [femaleOnly, setFemaleOnly] = useState(false);
+  const [fromLoading, setFromLoading] = useState(false);
+  const [toLoading, setToLoading] = useState(false);
+  const [fromOpen, setFromOpen] = useState(false);
+  const [toOpen, setToOpen] = useState(false);
+  const [fromPredictions, setFromPredictions] = useState<PlacePrediction[]>([]);
+  const [toPredictions, setToPredictions] = useState<PlacePrediction[]>([]);
+  const fromDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const toDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => () => {
+    if (fromDebounceRef.current) clearTimeout(fromDebounceRef.current);
+    if (toDebounceRef.current) clearTimeout(toDebounceRef.current);
+  }, []);
 
   function swap() {
     setFrom(to);
     setTo(from);
+    setFromPredictions([]);
+    setToPredictions([]);
+    setFromOpen(false);
+    setToOpen(false);
+  }
+
+  function searchPlaces(
+    input: string,
+    kind: 'from' | 'to',
+  ) {
+    const setLoading = kind === 'from' ? setFromLoading : setToLoading;
+    const setPredictions = kind === 'from' ? setFromPredictions : setToPredictions;
+    const setOpen = kind === 'from' ? setFromOpen : setToOpen;
+    const debounceRef = kind === 'from' ? fromDebounceRef : toDebounceRef;
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (input.trim().length < 2) {
+      setPredictions([]);
+      setOpen(false);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const res = await mapsApi.autocomplete(input);
+        setPredictions(res.data || []);
+        setOpen((res.data || []).length > 0);
+      } catch {
+        setPredictions([]);
+        setOpen(false);
+      } finally {
+        setLoading(false);
+      }
+    }, 250);
+  }
+
+  function handleSelectPlace(description: string, kind: 'from' | 'to') {
+    if (kind === 'from') {
+      setFrom(description);
+      setFromOpen(false);
+      setFromPredictions([]);
+      return;
+    }
+    setTo(description);
+    setToOpen(false);
+    setToPredictions([]);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -22,6 +86,7 @@ export default function SearchForm() {
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     if (date) params.set('date', date);
+    params.set('seats', String(seats));
     if (femaleOnly) params.set('femaleOnly', '1');
     router.push('/search?' + params.toString());
   }
@@ -40,18 +105,43 @@ export default function SearchForm() {
           />
           <input
             type="text"
-            placeholder="Leaving from, e.g. Tallinn"
+            placeholder={t('search.fromPlaceholder')}
             value={from}
-            onChange={(e) => setFrom(e.target.value)}
+            onChange={(e) => {
+              setFrom(e.target.value);
+              searchPlaces(e.target.value, 'from');
+            }}
+            onFocus={() => fromPredictions.length > 0 && setFromOpen(true)}
+            onBlur={() => setTimeout(() => setFromOpen(false), 150)}
             className="input-field pl-9"
           />
+          {fromLoading && (
+            <div className="absolute inset-y-0 right-3 flex items-center">
+              <Loader2 className="h-4 w-4 animate-spin text-deliivo-gray" />
+            </div>
+          )}
+          {fromOpen && fromPredictions.length > 0 && (
+            <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-gray-100 bg-white shadow-lg">
+              {fromPredictions.map((prediction) => (
+                <button
+                  key={prediction.placeId}
+                  type="button"
+                  onMouseDown={() => handleSelectPlace(prediction.description, 'from')}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-primary-50"
+                >
+                  <MapPin className="h-4 w-4 shrink-0 text-deliivo-gray" />
+                  <span className="truncate text-deliivo-dark">{prediction.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Swap button */}
         <button
           type="button"
           onClick={swap}
-          aria-label="Swap from and to"
+          aria-label={t('search.swap')}
           className="mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-primary-500 transition-colors hover:bg-primary-50 sm:mx-0"
         >
           <ArrowLeftRight size={16} />
@@ -65,11 +155,36 @@ export default function SearchForm() {
           />
           <input
             type="text"
-            placeholder="Going to, e.g. Riga"
+            placeholder={t('search.toPlaceholder')}
             value={to}
-            onChange={(e) => setTo(e.target.value)}
+            onChange={(e) => {
+              setTo(e.target.value);
+              searchPlaces(e.target.value, 'to');
+            }}
+            onFocus={() => toPredictions.length > 0 && setToOpen(true)}
+            onBlur={() => setTimeout(() => setToOpen(false), 150)}
             className="input-field pl-9"
           />
+          {toLoading && (
+            <div className="absolute inset-y-0 right-3 flex items-center">
+              <Loader2 className="h-4 w-4 animate-spin text-deliivo-gray" />
+            </div>
+          )}
+          {toOpen && toPredictions.length > 0 && (
+            <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-gray-100 bg-white shadow-lg">
+              {toPredictions.map((prediction) => (
+                <button
+                  key={prediction.placeId}
+                  type="button"
+                  onMouseDown={() => handleSelectPlace(prediction.description, 'to')}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-primary-50"
+                >
+                  <MapPin className="h-4 w-4 shrink-0 text-deliivo-gray" />
+                  <span className="truncate text-deliivo-dark">{prediction.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Date */}
@@ -84,6 +199,25 @@ export default function SearchForm() {
             onChange={(e) => setDate(e.target.value)}
             className="input-field pl-9"
           />
+        </div>
+
+        <div className="relative w-full sm:w-32">
+          <Users
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-deliivo-gray"
+            size={18}
+          />
+          <select
+            value={seats}
+            onChange={(e) => setSeats(Number(e.target.value))}
+            className="input-field pl-9"
+            aria-label={t('search.seats')}
+          >
+            {[1, 2, 3, 4].map((count) => (
+              <option key={count} value={count}>
+                {count} {count > 1 ? t('search.seatsPlural') : t('search.seat')}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -107,13 +241,13 @@ export default function SearchForm() {
             />
           </button>
           <span className="text-sm font-medium text-deliivo-dark">
-            Women only
+            {t('search.womenOnly')}
           </span>
         </label>
 
         {/* Search button */}
         <button type="submit" className="btn-primary w-full px-10 py-3 text-base sm:w-auto">
-          Search rides
+          {t('search.submit')}
         </button>
       </div>
     </form>

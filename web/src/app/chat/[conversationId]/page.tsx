@@ -7,6 +7,7 @@ import { ArrowLeft, Send, Loader2 } from 'lucide-react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { chatApi, ChatMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { featureFlags } from '@/lib/features';
 
 function ChatConversationContent() {
   const { conversationId } = useParams<{ conversationId: string }>();
@@ -132,7 +133,29 @@ function ChatConversationContent() {
 export default function ChatConversationPage() {
   return (
     <ProtectedRoute>
-      <ChatConversationContent />
+      {featureFlags.webChat ? (
+        <ChatConversationContent />
+      ) : (
+        <div className="min-h-screen bg-deliivo-cream">
+          <header className="bg-white border-b border-orange-100 px-4 py-3 flex items-center gap-3">
+            <Link href="/rides" className="flex items-center gap-1 text-sm text-gray-600 hover:text-deliivo-orange">
+              <ArrowLeft className="w-4 h-4" /> Rides
+            </Link>
+            <h1 className="text-base font-semibold text-gray-900">Messages unavailable</h1>
+          </header>
+          <main className="mx-auto max-w-2xl px-4 py-10">
+            <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
+              <p className="text-base font-semibold text-deliivo-dark">Web messages are disabled</p>
+              <p className="mt-2 text-sm text-deliivo-gray">
+                Use ride details and notifications for booking and ride-day updates.
+              </p>
+              <Link href="/rides" className="btn-primary mt-5 inline-flex px-6 py-2.5 text-sm">
+                Back to rides
+              </Link>
+            </div>
+          </main>
+        </div>
+      )}
     </ProtectedRoute>
   );
 }

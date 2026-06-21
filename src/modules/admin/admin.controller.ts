@@ -72,6 +72,15 @@ export const listRides = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const getOperationsSummary = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.getOperationsSummary();
+        return sendSuccess(res, { message: 'Operations summary fetched', data: result });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch operations summary' });
+    }
+};
+
 /* ================= REVENUE LEDGER ================= */
 export const getRevenueLedger = async (req: AuthRequest, res: Response) => {
     try {
@@ -83,6 +92,36 @@ export const getRevenueLedger = async (req: AuthRequest, res: Response) => {
         return sendSuccess(res, { message: 'Revenue ledger fetched', data: result });
     } catch {
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch revenue ledger' });
+    }
+};
+
+/* ================= EMERGENCY SOS ================= */
+export const listEmergencyAlerts = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.listEmergencyAlerts({
+            page: req.query.page ? Number(req.query.page) : undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            status: req.query.status as string | undefined,
+        });
+        return sendSuccess(res, { message: 'Emergency alerts fetched', data: result });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch emergency alerts' });
+    }
+};
+
+export const updateEmergencyAlertStatus = async (req: AuthRequest, res: Response) => {
+    try {
+        const status = req.body?.status;
+        if (!['ACKNOWLEDGED', 'RESOLVED', 'FALSE_ALARM'].includes(status)) {
+            return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'Invalid alert status' });
+        }
+        const result = await AdminService.updateEmergencyAlertStatus(req.params.id as string, req.user.id, status);
+        return sendSuccess(res, { message: 'Emergency alert updated', data: result });
+    } catch (error: any) {
+        if (error.message === 'ALERT_NOT_FOUND') {
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Emergency alert not found' });
+        }
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to update emergency alert' });
     }
 };
 

@@ -6,6 +6,32 @@ import { ArrowLeft, MessageSquare, Loader2 } from 'lucide-react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { chatApi, ConversationItem } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { featureFlags } from '@/lib/features';
+
+function ChatDisabled() {
+  return (
+    <div className="min-h-screen bg-deliivo-cream">
+      <header className="bg-white border-b border-orange-100 px-6 py-4 flex items-center gap-3">
+        <Link href="/rides" className="flex items-center gap-1 text-sm text-gray-600 hover:text-deliivo-orange">
+          <ArrowLeft className="w-4 h-4" /> Rides
+        </Link>
+        <h1 className="text-lg font-semibold text-gray-900 ml-2">Messages</h1>
+      </header>
+      <main className="mx-auto max-w-2xl px-4 py-10">
+        <div className="bg-white rounded-2xl shadow-sm p-8 flex flex-col items-center gap-3 text-center">
+          <MessageSquare className="w-12 h-12 text-orange-200" />
+          <p className="text-base font-semibold text-deliivo-dark">Web messages are not available yet</p>
+          <p className="text-sm text-deliivo-gray">
+            Ride updates, booking decisions, and safety alerts are handled through notifications and ride detail screens for now.
+          </p>
+          <Link href="/rides" className="btn-primary mt-3 px-6 py-2.5 text-sm">
+            Back to rides
+          </Link>
+        </div>
+      </main>
+    </div>
+  );
+}
 
 function ChatListContent() {
   const { user } = useAuth();
@@ -85,7 +111,7 @@ function ChatListContent() {
 export default function ChatPage() {
   return (
     <ProtectedRoute>
-      <ChatListContent />
+      {featureFlags.webChat ? <ChatListContent /> : <ChatDisabled />}
     </ProtectedRoute>
   );
 }

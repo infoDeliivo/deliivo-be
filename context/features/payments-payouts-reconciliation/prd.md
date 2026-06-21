@@ -24,10 +24,15 @@ Collect rider payments, prepare driver payouts, and maintain a clear financial a
 ## Functional Requirements
 
 - Riders can add, view, and select saved payment methods.
+- Rider payment settings must show saved cards first and ride payment history below it in a desktop-friendly layout.
+- Rider card actions must provide immediate success/failure feedback.
 - Riders can provide a new card during booking when no saved card exists.
 - Booking payment must not proceed without card details or a selected saved method.
 - Drivers must complete payout setup before publishing rides where payouts are required.
+- Driver earnings must stay simple: total earnings, pending earnings, paid earnings, payout-eligible amount, plus pending/paid item tabs.
+- Driver payout setup and payout request actions must provide immediate success/failure feedback.
 - Stripe webhook events must be recorded idempotently.
+- Test and live Stripe modes must be fully separated by environment variables for secret key, publishable key, webhook secret, and Connect account data.
 - Payment state must update booking state consistently.
 - Refund and payout handling must reflect cancellation, no-show, and dispute outcomes.
 - Admin can inspect and resolve reconciliation issues.
@@ -38,6 +43,7 @@ Collect rider payments, prepare driver payouts, and maintain a clear financial a
 - Webhook signature validation must use the raw request body.
 - Payment and ledger records should preserve audit history.
 - Financial state changes must be idempotent against webhook retries and repeated user actions.
+- Production Stripe readiness requires dashboard-configured webhooks; Stripe CLI is only for local test mode.
 
 ## Success Metrics
 

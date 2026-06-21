@@ -24,6 +24,9 @@ Provide a trusted identity and profile foundation for riders, drivers, and admin
 
 - Users can authenticate with OTP and keep a valid session through refresh tokens.
 - Users can update profile fields required for marketplace participation.
+- Users must provide a dedicated gender field during onboarding because women-only ride safety filters depend on `User.gender`.
+- Profile must show public trust signals such as rating, successful driver rides, and successful rider rides in the profile banner.
+- Public profile links and trust signals must be discoverable from marketplace decision points such as search result cards and ride details.
 - Users can define travel preferences such as chattiness, pets, and other matching signals.
 - Drivers can add vehicles with enough metadata for rider confidence and compliance.
 - Drivers can upload or connect required verification documents.
@@ -36,6 +39,7 @@ Provide a trusted identity and profile foundation for riders, drivers, and admin
 - Authentication failures must not leak sensitive user information.
 - Verification states must be auditable.
 - Profile and vehicle actions must return typed validation errors that the web portal can render next to fields.
+- Profile actions in the web portal must provide immediate success/failure feedback.
 - Dev bypasses must be impossible to enable accidentally in production.
 
 ## Success Metrics

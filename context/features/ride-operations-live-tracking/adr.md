@@ -10,7 +10,7 @@ Ride-day operations require reliable evidence and responsive UI. Drivers and rid
 
 ## Decision
 
-Use backend ride operation endpoints for all state transitions. Persist operational evidence through ride events and location updates. Emit realtime updates over Socket.IO where available, but require web screens to refetch canonical state after actions and on relevant events. Gate simulation behavior with development environment flags.
+Use backend ride operation endpoints for all state transitions. Persist operational evidence through ride events and location updates. Emit realtime updates over Socket.IO where available, but require web screens to refetch canonical state after actions and on relevant events. Gate simulation behavior with development environment flags. Keep ride detail pages map-light and surface live tracking through compact status cards, notification links, and public tracking URLs.
 
 ## Rationale
 
@@ -18,6 +18,7 @@ Use backend ride operation endpoints for all state transitions. Persist operatio
 - Socket.IO improves responsiveness but should not be the only source of truth.
 - Public tracking links need a dedicated token model rather than exposing authenticated ride APIs.
 - Development simulation allows testing complete ride-day flows without physical travel.
+- Map-heavy ride detail pages increase clutter and duplicate route context already available in live tracking URLs and notifications.
 
 ## Consequences
 
@@ -25,6 +26,7 @@ Use backend ride operation endpoints for all state transitions. Persist operatio
 - Driver screens must manage multiple passengers independently.
 - Rider screens must distinguish full ride status from the rider's booking status.
 - Location simulation and real tracking must share display paths to keep testing realistic.
+- The live tracking link becomes the primary handoff artifact for riders, email, SMS, and notification panels.
 
 ## Alternatives Considered
 

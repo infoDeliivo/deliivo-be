@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ChevronLeft, Star, Loader2 } from 'lucide-react'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { userApi } from '@/lib/api'
+import { useTranslation } from '@/lib/i18n-context'
 
 interface ProfileRating {
   average: number | null;
@@ -26,6 +27,7 @@ function StarRow({ count }: { count: number }) {
 }
 
 function RatingsContent() {
+  const { t } = useTranslation()
   const [rating, setRating] = useState<ProfileRating | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -59,9 +61,9 @@ function RatingsContent() {
           className="flex items-center gap-1 text-sm text-gray-600 hover:text-[#F97316] transition-colors"
         >
           <ChevronLeft className="w-4 h-4" />
-          Back
+          {t('common.back')}
         </Link>
-        <h1 className="text-lg font-semibold text-gray-900 ml-2">Ratings &amp; Reviews</h1>
+        <h1 className="text-lg font-semibold text-gray-900 ml-2">{t('profile.ratings')}</h1>
       </header>
 
       <div className="max-w-2xl mx-auto px-4 py-8 flex flex-col gap-5">
@@ -71,7 +73,7 @@ function RatingsContent() {
             <div className="text-center">
               <p className="text-5xl font-bold text-[#F97316]">{avg > 0 ? avg.toFixed(1) : '--'}</p>
               <StarRow count={roundedAvg} />
-              <p className="text-xs text-gray-400 mt-1">{total} review{total !== 1 ? 's' : ''}</p>
+              <p className="text-xs text-gray-400 mt-1">{t('profile.reviewsCount', { total, plural: total !== 1 ? 's' : '' })}</p>
             </div>
 
             <div className="flex-1 flex flex-col gap-2">
@@ -80,8 +82,8 @@ function RatingsContent() {
               )}
               <p className="text-sm text-gray-500">
                 {total === 0
-                  ? 'No reviews yet. Complete rides to get rated by other users.'
-                  : `Based on ${total} review${total !== 1 ? 's' : ''} from your trips.`
+                  ? t('profile.noReviewsYet')
+                  : t('profile.basedOnReviews', { total, plural: total !== 1 ? 's' : '' })
                 }
               </p>
             </div>
@@ -91,9 +93,9 @@ function RatingsContent() {
         {total === 0 && (
           <div className="bg-white rounded-2xl shadow-sm p-8 text-center">
             <Star className="w-12 h-12 text-orange-200 mx-auto mb-3" />
-            <p className="text-sm text-gray-500">Complete rides to start receiving ratings.</p>
+            <p className="text-sm text-gray-500">{t('profile.completeRidesForRatings')}</p>
             <Link href="/search" className="mt-3 inline-block text-sm font-semibold text-[#F97316] hover:underline">
-              Find a ride
+              {t('home.findRide')}
             </Link>
           </div>
         )}

@@ -1,5 +1,5 @@
 import { Request } from 'express';
-import { Salutation, OnboardingStatus, Chattiness, PetsPreference, VehicleType } from '@prisma/client';
+import { Salutation, Gender, OnboardingStatus, Chattiness, PetsPreference, VehicleType } from '@prisma/client';
 
 // Auth request interface
 export interface AuthRequest extends Request {
@@ -24,6 +24,7 @@ export interface UserBasicInfo {
   name: string | null;
   nickName: string | null;
   salutation: Salutation | null;
+  gender: Gender | null;
   dob: Date | null;
   tosAcceptedAt: Date | null;
   privacyAcceptedAt: Date | null;
@@ -111,6 +112,7 @@ export interface UpdateProfileInput {
   name?: string;
   nickName?: string;
   salutation?: Salutation;
+  gender?: Gender;
   dob?: string;
   travelPreference?: TravelPreferenceInput;
 }

@@ -106,7 +106,7 @@ let rides: InMemoryRide[] = [];
 let bookings: InMemoryBooking[] = [];
 let segmentCapacities: InMemorySegmentCapacity[] = [];
 let waypoints: InMemoryWaypoint[] = [];
-let users: Array<{ id: string; name: string; avatarUrl: string | null; tosAcceptedAt: Date | null; isBanned: boolean; dlVerified: boolean; salutation: string | null }> = [];
+let users: Array<{ id: string; name: string; avatarUrl: string | null; tosAcceptedAt: Date | null; isBanned: boolean; dlVerified: boolean; salutation: string | null; gender: string | null }> = [];
 let vehicles: Array<{ id: string; userId: string; deletedAt: null }> = [];
 let blocks: Array<{ blockerId: string; blockedId: string }> = [];
 let draftStore: Record<string, string> = {};
@@ -119,11 +119,11 @@ const resetState = () => {
     blocks = [];
     draftStore = {};
     users = [
-        { id: 'driver-1', name: 'Alice Driver', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: true, salutation: 'MS' },
-        { id: 'passenger-1', name: 'Bob Rider', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: false, salutation: 'MR' },
-        { id: 'passenger-2', name: 'Carol Rider', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: false, salutation: 'MS' },
-        { id: 'passenger-banned', name: 'Banned User', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: true, dlVerified: false, salutation: 'MR' },
-        { id: 'passenger-no-tos', name: 'No TOS', avatarUrl: null, tosAcceptedAt: null, isBanned: false, dlVerified: false, salutation: 'MR' },
+        { id: 'driver-1', name: 'Alice Driver', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: true, salutation: 'MS', gender: 'FEMALE' },
+        { id: 'passenger-1', name: 'Bob Rider', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE' },
+        { id: 'passenger-2', name: 'Carol Rider', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: false, salutation: 'MS', gender: 'FEMALE' },
+        { id: 'passenger-banned', name: 'Banned User', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: true, dlVerified: false, salutation: 'MR', gender: 'MALE' },
+        { id: 'passenger-no-tos', name: 'No TOS', avatarUrl: null, tosAcceptedAt: null, isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE' },
     ];
     vehicles = [
         { id: 'vehicle-1', userId: 'driver-1', deletedAt: null },
@@ -1117,7 +1117,7 @@ describe('Integration: Publish → Book → Driver Actions', () => {
         });
 
         it('allows female passenger to book female-only ride', async () => {
-            // passenger-2 has salutation MS
+            // passenger-2 has gender FEMALE
             const booking = await createBooking('passenger-2', {
                 rideId: rides[0].id,
                 seatsBooked: 1,
@@ -1126,7 +1126,7 @@ describe('Integration: Publish → Book → Driver Actions', () => {
         });
 
         it('rejects male passenger from booking female-only ride', async () => {
-            // passenger-1 has salutation MR
+            // passenger-1 has gender MALE
             await expect(
                 createBooking('passenger-1', {
                     rideId: rides[0].id,
@@ -1154,7 +1154,7 @@ describe('Integration: Publish → Book → Driver Actions', () => {
 
             // P2: origin → gatwick, 2 seats → edge 0→1 gets +2
             // (Need a third user)
-            users.push({ id: 'passenger-3', name: 'Dave', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: false, salutation: 'MR' });
+            users.push({ id: 'passenger-3', name: 'Dave', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE' });
             await createBooking('passenger-2', { rideId, seatsBooked: 2, dropoffWaypointId: gatwickWp.id });
 
             // Edge 0→1: 1 + 2 = 3 (full!)

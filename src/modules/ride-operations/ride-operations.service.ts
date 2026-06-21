@@ -1,6 +1,10 @@
 import { BookingStatus, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
+import logger from '../../utils/logger.js';
+import { sendMail } from '../mail/mail.service.js';
+import { sendSms } from '../sms/sms.service.js';
+import { createTrackingLink } from '../tracking/tracking.service.js';
 import { isOtpValid } from '../ride-booking/booking-otp.utils.js';
 import {
     RIDE_TRANSITIONS,
@@ -61,6 +65,11 @@ const recordEvent = async (
             validationStatus: options?.validationStatus ?? 'VALID',
         },
     });
+};
+
+const buildAppUrl = (path: string) => {
+    const base = process.env.APP_BASE_URL || process.env.WEB_APP_URL || 'http://localhost:3000';
+    return new URL(path, base).toString();
 };
 
 const resolvePickupPoint = (booking: {
@@ -155,7 +164,27 @@ const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string)
 export const startRide = async (driverId: string, rideId: string, input: RideEventInput) => {
     const ride = await prisma.ride.findUnique({
         where: { id: rideId },
-        include: { bookings: { where: { status: { in: ['CONFIRMED', 'DRIVER_PENDING'] as BookingStatus[] } } } },
+        include: {
+            bookings: {
+                where: { status: { in: ['CONFIRMED', 'DRIVER_PENDING'] as BookingStatus[] } },
+                select: {
+                    id: true,
+                    passengerId: true,
+                    status: true,
+                    rideId: true,
+                    pickupWaypointId: true,
+                    dropoffWaypointId: true,
+                    passenger: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            phone: true,
+                        },
+                    },
+                },
+            },
+        },
     });
 
     if (!ride) throw new Error('RIDE_NOT_FOUND');
@@ -217,6 +246,25 @@ export const startRide = async (driverId: string, rideId: string, input: RideEve
     await emitToUsers([driverId, ...passengerIds], 'ride:updated', rideUpdatedPayload);
 
     for (const booking of bookings) {
+        let trackingLink;
+        try {
+            trackingLink = await createTrackingLink({
+                bookingId: booking.id,
+                createdBy: booking.passengerId,
+                allowSystemCreation: true,
+                ttlHours: 24,
+                accessScope: 'LOCATION_AND_ETA',
+            });
+        } catch (error) {
+            logger.warn('Failed to create auto live tracking link on ride start', {
+                rideId,
+                bookingId: booking.id,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+
+        const liveTrackingUrl = trackingLink ? buildAppUrl(trackingLink.trackingUrl || `/tracking/${trackingLink.token}`) : buildAppUrl(`/rides/${rideId}?bookingId=${booking.id}`);
+
         if (booking.status === BookingStatus.CONFIRMED) {
             await emitToUsers([driverId, booking.passengerId], 'booking:updated', {
                 bookingId: booking.id,
@@ -239,8 +287,28 @@ export const startRide = async (driverId: string, rideId: string, input: RideEve
                 rideId,
                 bookingId: booking.id,
                 deepLink: `app://ride/${rideId}/live`,
+                liveTrackingUrl,
+                trackingToken: trackingLink?.token,
             },
         });
+
+        const routeLabel = `${ride.originAddress.split(',')[0]} to ${ride.destinationAddress.split(',')[0]}`;
+        const subject = `Live tracking started for ${routeLabel}`;
+        const text = `Your driver has started the ride. Live tracking: ${liveTrackingUrl}`;
+        const html = `
+            <div style="font-family: Arial, sans-serif; padding: 20px">
+              <h2>Ride started</h2>
+              <p>Your driver has started the ride for ${routeLabel}.</p>
+              <p><a href="${liveTrackingUrl}">Open live tracking</a></p>
+            </div>
+        `;
+
+        if (booking.passenger?.email) {
+            sendMail({ to: booking.passenger.email, subject, html, text }).catch(() => {});
+        }
+        if (booking.passenger?.phone) {
+            sendSms(booking.passenger.phone, `Ride started. Live tracking: ${liveTrackingUrl}`).catch(() => {});
+        }
     }
 
     return {

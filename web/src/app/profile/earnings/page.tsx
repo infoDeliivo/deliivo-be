@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, Loader2, Wallet } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ExternalLink, Loader2, Wallet } from 'lucide-react';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import { ConnectStatus, DriverEarningItem, DriverEarnings, paymentsApi, payoutsApi } from '@/lib/api';
+import LoadFailureCard from '@/components/LoadFailureCard';
+import { ConnectStatus, DriverEarningItem, DriverEarnings, getApiErrorMessage, paymentsApi, payoutsApi } from '@/lib/api';
+import { showError, showSuccess } from '@/lib/app-feedback';
+import { useTranslation } from '@/lib/i18n-context';
 
 function formatMoney(amount?: number, currency?: string) {
   if (typeof amount !== 'number') return '--';
@@ -32,6 +35,7 @@ export default function EarningsPage() {
 }
 
 function EarningsContent() {
+  const { t } = useTranslation();
   const [connectStatus, setConnectStatus] = useState<ConnectStatus | null>(null);
   const [earnings, setEarnings] = useState<DriverEarnings | null>(null);
   const [items, setItems] = useState<DriverEarningItem[]>([]);
@@ -57,7 +61,9 @@ function EarningsContent() {
       setEarnings(earningsRes.data);
       setItems(itemRes.data || []);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load earnings');
+      const message = getApiErrorMessage(err, t('profile.earningsLoadFailed'));
+      setError(message);
+      showError(t('profile.earningsLoadError'), message);
     } finally {
       setLoading(false);
     }
@@ -70,7 +76,9 @@ function EarningsContent() {
       const res = await paymentsApi.connectOnboard();
       window.location.href = res.data.url;
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to start Stripe onboarding');
+      const message = getApiErrorMessage(err, t('profile.payoutSetupFailed'));
+      setError(message);
+      showError(t('profile.payoutSetupError'), message);
       setOnboarding(false);
     }
   }
@@ -80,10 +88,13 @@ function EarningsContent() {
     setMessage('');
     try {
       const res = await payoutsApi.requestPayout();
-      setMessage(res.data.amount ? `Payout requested for ${formatMoney(res.data.amount, 'EUR')}.` : `Payout status: ${res.data.status}.`);
+      setMessage(res.data.amount ? t('profile.payoutRequestedAmount', { amount: formatMoney(res.data.amount, 'EUR') }) : t('profile.payoutStatus', { status: res.data.status }));
       await loadData();
+      showSuccess(t('profile.payoutRequested'), res.data.amount ? t('profile.amount', { amount: formatMoney(res.data.amount, 'EUR') }) : t('profile.statusValue', { status: res.data.status }));
     } catch (err: unknown) {
-      setMessage(err instanceof Error ? err.message : 'Payout request failed');
+      const message = getApiErrorMessage(err, t('profile.payoutRequestFailed'));
+      setMessage(message);
+      showError(t('profile.payoutRequestFailed'), message);
     } finally {
       setRequesting(false);
     }
@@ -93,6 +104,10 @@ function EarningsContent() {
   const paidItems = useMemo(() => items.filter(isPaid), [items]);
   const visibleItems = activeTab === 'pending' ? pendingItems : paidItems;
   const currency = items[0]?.currency || 'EUR';
+  const eligiblePending = useMemo(
+    () => pendingItems.reduce((sum, item) => sum + (item.status === 'PAYOUT_ELIGIBLE' ? item.fareAmount : 0), 0),
+    [pendingItems],
+  );
   const payoutsReady = Boolean(connectStatus?.connected && connectStatus?.onboardingComplete && connectStatus?.payoutsEnabled);
 
   if (loading) {
@@ -103,17 +118,18 @@ function EarningsContent() {
     <div className="min-h-screen bg-deliivo-cream">
       <header className="bg-white border-b border-orange-100 px-6 py-4 flex items-center gap-3">
         <Link href="/profile" className="flex items-center gap-1 text-sm text-gray-600 hover:text-deliivo-orange transition-colors">
-          <ChevronLeft className="w-4 h-4" /> Profile
+          <ChevronLeft className="w-4 h-4" /> {t('profile.title')}
         </Link>
-        <h1 className="text-lg font-semibold text-gray-900 ml-2">Earnings</h1>
+        <h1 className="text-lg font-semibold text-gray-900 ml-2">{t('profile.earnings')}</h1>
       </header>
 
-      <main className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-5">
+      <main className="max-w-5xl mx-auto px-4 py-6 flex flex-col gap-5">
         {error && (
-          <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-100 px-4 py-3">
-            <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
-            <p className="text-sm text-red-600">{error}</p>
-          </div>
+          <LoadFailureCard
+            title={t('profile.earnings')}
+            message={error}
+            onRetry={loadData}
+          />
         )}
 
         <section className={`rounded-2xl border p-5 shadow-sm ${payoutsReady ? 'border-green-100 bg-green-50' : 'border-amber-200 bg-white'}`}>
@@ -123,9 +139,9 @@ function EarningsContent() {
                 <Wallet className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="text-sm font-semibold text-gray-900">{payoutsReady ? 'Payout account ready' : 'Set up payouts'}</h2>
+                <h2 className="text-sm font-semibold text-gray-900">{payoutsReady ? t('profile.payoutReady') : t('profile.setUpPayouts')}</h2>
                 <p className="mt-1 text-sm text-deliivo-gray">
-                  {payoutsReady ? 'Eligible completed rides can be paid out through Stripe Connect.' : 'Connect Stripe before publishing rides that need real payouts.'}
+                  {payoutsReady ? t('profile.payoutReadyCopy') : t('profile.setUpPayoutsCopy')}
                 </p>
               </div>
             </div>
@@ -136,7 +152,7 @@ function EarningsContent() {
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-deliivo-orange px-4 py-2 text-sm font-semibold text-white hover:bg-deliivo-orange-dark disabled:opacity-50"
               >
                 {onboarding ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
-                Connect
+                {t('profile.connect')}
               </button>
             )}
           </div>
@@ -144,16 +160,19 @@ function EarningsContent() {
 
         <section className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-2xl bg-white p-5 shadow-sm">
-            <p className="text-xs font-medium uppercase text-deliivo-gray">Total earnings</p>
+            <p className="text-xs font-medium uppercase text-deliivo-gray">{t('profile.totalEarnings')}</p>
             <p className="mt-1 text-2xl font-bold text-gray-900">{formatMoney(earnings?.totalEarned, currency)}</p>
+            <p className="mt-1 text-xs text-deliivo-gray">{t('profile.totalEarningsCopy')}</p>
           </div>
           <div className="rounded-2xl bg-white p-5 shadow-sm">
-            <p className="text-xs font-medium uppercase text-deliivo-gray">Pending</p>
+            <p className="text-xs font-medium uppercase text-deliivo-gray">{t('profile.pending')}</p>
             <p className="mt-1 text-2xl font-bold text-deliivo-orange">{formatMoney(earnings?.pendingBalance, currency)}</p>
+            <p className="mt-1 text-xs text-deliivo-gray">{t('profile.currentlyEligible', { amount: formatMoney(eligiblePending, currency) })}</p>
           </div>
           <div className="rounded-2xl bg-white p-5 shadow-sm">
-            <p className="text-xs font-medium uppercase text-deliivo-gray">Paid</p>
+            <p className="text-xs font-medium uppercase text-deliivo-gray">{t('profile.paid')}</p>
             <p className="mt-1 text-2xl font-bold text-gray-900">{formatMoney(earnings?.totalPaidOut, currency)}</p>
+            <p className="mt-1 text-xs text-deliivo-gray">{t('profile.paidCopy')}</p>
           </div>
         </section>
 
@@ -161,11 +180,11 @@ function EarningsContent() {
           <section className="rounded-2xl bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h3 className="text-sm font-semibold text-gray-900">Request payout</h3>
-                <p className="mt-1 text-xs text-deliivo-gray">Pays out eligible completed rides.</p>
+                <h3 className="text-sm font-semibold text-gray-900">{t('profile.requestPayout')}</h3>
+                <p className="mt-1 text-xs text-deliivo-gray">{t('profile.requestPayoutCopy')}</p>
               </div>
               <button onClick={handleRequestPayout} disabled={requesting} className="btn-primary px-4 py-2 text-sm disabled:opacity-50">
-                {requesting ? 'Requesting...' : 'Request payout'}
+                {requesting ? t('profile.requesting') : t('profile.requestPayout')}
               </button>
             </div>
             {message && <p className="mt-3 text-xs text-deliivo-gray">{message}</p>}
@@ -179,19 +198,28 @@ function EarningsContent() {
               onClick={() => setActiveTab('pending')}
               className={`rounded-xl px-4 py-2 text-sm font-semibold ${activeTab === 'pending' ? 'bg-deliivo-orange text-white' : 'bg-gray-50 text-deliivo-gray'}`}
             >
-              Pending ({pendingItems.length})
+              {t('profile.pendingTab', { count: pendingItems.length })}
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('paid')}
               className={`rounded-xl px-4 py-2 text-sm font-semibold ${activeTab === 'paid' ? 'bg-deliivo-orange text-white' : 'bg-gray-50 text-deliivo-gray'}`}
             >
-              Paid ({paidItems.length})
+              {t('profile.paidTab', { count: paidItems.length })}
             </button>
           </div>
 
           {visibleItems.length === 0 ? (
-            <p className="py-8 text-center text-sm text-deliivo-gray">No {activeTab} earnings yet.</p>
+            <div className="py-8 text-center">
+              <p className="text-sm text-deliivo-gray">{activeTab === 'pending' ? t('profile.noPendingEarnings') : t('profile.noPaidEarnings')}</p>
+              <button
+                type="button"
+                onClick={loadData}
+                className="mt-4 rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-deliivo-dark hover:bg-gray-50"
+              >
+                Refresh
+              </button>
+            </div>
           ) : (
             <div className="space-y-3">
               {visibleItems.map((item) => {
@@ -206,7 +234,7 @@ function EarningsContent() {
                         <p className="mt-1 text-xs text-deliivo-gray">
                           {ride ? `${new Date(ride.departureDate).toLocaleDateString()} at ${ride.departureTime}` : new Date(item.createdAt).toLocaleString()}
                         </p>
-                        <p className="mt-1 text-xs text-deliivo-gray">Passenger: {item.booking?.passenger?.name || 'Rider'}</p>
+                        <p className="mt-1 text-xs text-deliivo-gray">{t('profile.passenger')}: {item.booking?.passenger?.name || t('profile.rider')}</p>
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-sm font-bold text-gray-900">{formatMoney(item.fareAmount, item.currency)}</p>
@@ -215,8 +243,18 @@ function EarningsContent() {
                         </span>
                       </div>
                     </div>
-                    {item.booking?.refundedAt && <p className="mt-3 text-xs text-red-600">Refunded: {formatMoney(item.booking.refundAmount || 0, item.currency)}</p>}
-                    {item.payoutItems?.[0]?.batch?.stripeTransferId && <p className="mt-3 text-xs text-deliivo-gray">Transfer: {item.payoutItems[0].batch?.stripeTransferId}</p>}
+                    {item.booking?.refundedAt && <p className="mt-3 text-xs text-red-600">{t('profile.refunded')}: {formatMoney(item.booking.refundAmount || 0, item.currency)}</p>}
+                    {item.payoutItems?.[0]?.batch?.stripeTransferId && <p className="mt-3 text-xs text-deliivo-gray">{t('profile.transfer')}: {item.payoutItems[0].batch?.stripeTransferId}</p>}
+                    {ride?.id && (
+                      <div className="mt-4">
+                        <Link
+                          href={`/rides/${ride.id}`}
+                          className="inline-flex items-center rounded-full border border-gray-200 px-3 py-1.5 text-xs font-semibold text-deliivo-dark hover:bg-white"
+                        >
+                          {t('ride.view')}
+                        </Link>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -224,7 +262,7 @@ function EarningsContent() {
           )}
         </section>
 
-        {payoutsReady && <p className="flex items-center gap-1 text-xs text-green-700"><CheckCircle2 className="h-3.5 w-3.5" /> Stripe Connect is ready for payouts.</p>}
+        {payoutsReady && <p className="flex items-center gap-1 text-xs text-green-700"><CheckCircle2 className="h-3.5 w-3.5" /> {t('profile.stripeConnectReady')}</p>}
       </main>
     </div>
   );

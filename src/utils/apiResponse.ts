@@ -18,11 +18,13 @@ export const sendSuccess = (
   res: Response,
   { status = HttpStatus.OK, message = 'Success', data = null }: SuccessPayload,
 ) => {
+  const requestId = (res.locals as { requestId?: string }).requestId;
   return res.status(statusMap[status]).json({
     success: true,
     status,
     message,
     data,
+    ...(requestId ? { requestId } : {}),
   });
 };
 
@@ -34,10 +36,12 @@ export const sendError = (
     error = undefined,
   }: ErrorPayload,
 ) => {
+  const requestId = (res.locals as { requestId?: string }).requestId;
   return res.status(statusMap[status]).json({
     success: false,
     status,
     message,
     error,
+    ...(requestId ? { requestId } : {}),
   });
 };

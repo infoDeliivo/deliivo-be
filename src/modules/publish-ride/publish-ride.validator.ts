@@ -95,8 +95,13 @@ export const publishRideSchema = z.object({
 });
 
 /* ================= LIST RIDES QUERY SCHEMA ================= */
+const rideStatusValues = Object.values(RideStatus);
+
 export const listRidesQuerySchema = z.object({
-    status: z.nativeEnum(RideStatus).optional(),
+    status: z.string().optional().refine(
+        (value) => !value || value.split(',').every((status) => rideStatusValues.includes(status as RideStatus)),
+        'Invalid ride status'
+    ),
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(100).default(10),
 });
@@ -153,6 +158,9 @@ export const updateCapacitySchema = z.object({
     totalSeats: z.number().int().min(1, 'At least 1 seat required').max(50, 'Maximum 50 seats'),
     maxLuggagePerPerson: z.number().int().min(0, 'Luggage count cannot be negative').max(10, 'Maximum 10 bags per person').default(2),
     backSeatOnly: z.boolean().default(false),
+    noSmoking: z.boolean().default(false),
+    noBicycles: z.boolean().default(false),
+    childSeatAvailable: z.boolean().default(false),
 });
 
 

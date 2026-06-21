@@ -36,8 +36,13 @@ export const bookingIdParamSchema = z.object({
 });
 
 /* ================= LIST BOOKINGS QUERY SCHEMA ================= */
+const bookingStatusValues = Object.values(BookingStatus);
+
 export const listBookingsQuerySchema = z.object({
-    status: z.nativeEnum(BookingStatus).optional(),
+    status: z.string().optional().refine(
+        (value) => !value || value.split(',').every((status) => bookingStatusValues.includes(status as BookingStatus)),
+        'Invalid booking status'
+    ),
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(50).default(10),
 });

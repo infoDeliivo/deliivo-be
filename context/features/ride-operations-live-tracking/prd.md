@@ -34,8 +34,13 @@ Support the ride-day journey from scheduled departure through pickup, onboard tr
 - Driver can mark no-show with a reason and evidence context.
 - Driver can mark passenger dropoff.
 - Rider can confirm dropoff where the flow requires rider confirmation.
-- Driver and rider maps must show relevant route, pickup/dropoff context, and live location.
+- Driver and rider ride-detail pages should not depend on embedded maps for primary UX.
+- Live tracking link surfaces must remain available on ride detail, notification, email, and SMS channels.
 - Live tracking links must expose only the minimum safe ride location information.
+- Ride detail pages should show compact live location, ETA, and status summaries instead of full maps.
+- Rider ride details must expose live tracking open/copy/create actions directly in the live status panel.
+- Driver ride management must make it clear that confirmed riders receive live tracking links when the ride starts.
+- Active and next-24-hour rides must be reachable through a sticky ongoing ride panel across authenticated web pages.
 - Development simulation controls can move ride date, pickup, dropoff, and driver location without physical travel.
 
 ## Non-Functional Requirements

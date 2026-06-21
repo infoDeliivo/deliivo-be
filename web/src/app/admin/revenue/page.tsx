@@ -1,8 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { DollarSign, AlertTriangle, CheckCircle2, Loader2, AlertCircle, Play, ChevronDown } from 'lucide-react'
-import { adminApi, ReconciliationSummary, ReconciliationIssue, Pagination, AdminRevenueLedger } from '@/lib/api'
+import Link from 'next/link'
+import { DollarSign, AlertTriangle, CheckCircle2, Loader2, AlertCircle, Play, ChevronDown, Clipboard, ExternalLink } from 'lucide-react'
+import { adminApi, ReconciliationSummary, ReconciliationIssue, Pagination, AdminRevenueLedger, getApiErrorMessage } from '@/lib/api'
+import { showError, showSuccess } from '@/lib/app-feedback'
+import LoadFailureCard from '@/components/LoadFailureCard'
 
 const severityStyle: Record<string, string> = {
   LOW: 'bg-gray-100 text-gray-600',
@@ -17,23 +20,27 @@ const issueTypeStyle: Record<string, string> = {
   ORPHAN_INTENT: 'bg-gray-100 text-gray-700',
   LEDGER_IMBALANCE: 'bg-red-50 text-red-600',
   STALE_ESCROW: 'bg-orange-50 text-orange-700',
+  DISPUTE_PAYMENT_MISMATCH: 'bg-rose-50 text-rose-700',
 }
 
 export default function AdminRevenuePage() {
   const [summary, setSummary] = useState<ReconciliationSummary | null>(null)
   const [issues, setIssues] = useState<ReconciliationIssue[]>([])
   const [ledger, setLedger] = useState<AdminRevenueLedger | null>(null)
-  const [pagination, setPagination] = useState<Pagination | null>(null)
+  const [issuePagination, setIssuePagination] = useState<Pagination | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [statusFilter, setStatusFilter] = useState<'open' | 'resolved'>('open')
-  const [page, setPage] = useState(1)
+  const [issuePage, setIssuePage] = useState(1)
+  const [ledgerPage, setLedgerPage] = useState(1)
   const [runningJob, setRunningJob] = useState<string | null>(null)
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [resolveText, setResolveText] = useState('')
   const [accountType, setAccountType] = useState('ALL')
+  const [issueType, setIssueType] = useState('ALL')
+  const [severity, setSeverity] = useState('ALL')
 
-  useEffect(() => { loadData() }, [page, statusFilter, accountType])
+  useEffect(() => { loadData() }, [issuePage, ledgerPage, statusFilter, accountType, issueType, severity])
 
   async function loadData() {
     setLoading(true)
@@ -41,15 +48,23 @@ export default function AdminRevenuePage() {
     try {
       const [summaryRes, issuesRes, ledgerRes] = await Promise.all([
         adminApi.getReconciliationSummary(),
-        adminApi.getReconciliationIssues({ status: statusFilter, page, limit: 20 }),
-        adminApi.getRevenueLedger({ page, limit: 20, accountType }),
+        adminApi.getReconciliationIssues({
+          status: statusFilter,
+          page: issuePage,
+          limit: 20,
+          issueType: issueType === 'ALL' ? undefined : issueType,
+          severity: severity === 'ALL' ? undefined : severity,
+        }),
+        adminApi.getRevenueLedger({ page: ledgerPage, limit: 20, accountType }),
       ])
       setSummary(summaryRes.data)
       setIssues(issuesRes.data.issues)
-      setPagination(issuesRes.data.pagination)
+      setIssuePagination(issuesRes.data.pagination)
       setLedger(ledgerRes.data)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load data')
+      const message = getApiErrorMessage(err, 'Failed to load data')
+      setError(message)
+      showError('Could not load revenue data', message)
     } finally {
       setLoading(false)
     }
@@ -60,8 +75,13 @@ export default function AdminRevenuePage() {
     try {
       if (type === 'hourly') await adminApi.runHourlyReconciliation()
       else await adminApi.runDailyReconciliation()
-      loadData()
-    } catch { /* ignore */ }
+      await loadData()
+      showSuccess('Reconciliation completed', `${type === 'hourly' ? 'Hourly' : 'Daily'} reconciliation finished.`)
+    } catch (err: unknown) {
+      const message = getApiErrorMessage(err, 'Failed to run reconciliation')
+      setError(message)
+      showError('Reconciliation failed', message)
+    }
     finally { setRunningJob(null) }
   }
 
@@ -71,8 +91,13 @@ export default function AdminRevenuePage() {
       await adminApi.resolveReconciliationIssue(id, resolveText.trim())
       setOpenMenu(null)
       setResolveText('')
-      loadData()
-    } catch { /* ignore */ }
+      await loadData()
+      showSuccess('Issue resolved', resolveText.trim())
+    } catch (err: unknown) {
+      const message = getApiErrorMessage(err, 'Failed to resolve issue')
+      setError(message)
+      showError('Resolve failed', message)
+    }
   }
 
   return (
@@ -103,10 +128,7 @@ export default function AdminRevenuePage() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-100 px-4 py-3">
-          <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
-          <p className="text-sm text-red-600">{error}</p>
-        </div>
+        <LoadFailureCard title="Revenue tools reported an error" message={error} onRetry={loadData} />
       )}
 
       {/* Summary cards */}
@@ -177,7 +199,7 @@ export default function AdminRevenuePage() {
           <button
             key={s}
             type="button"
-            onClick={() => { setStatusFilter(s); setPage(1) }}
+            onClick={() => { setStatusFilter(s); setIssuePage(1) }}
             className={`px-4 py-2 text-xs font-medium rounded-xl border transition-colors capitalize ${
               statusFilter === s
                 ? 'bg-[#F97316] text-white border-[#F97316]'
@@ -197,7 +219,7 @@ export default function AdminRevenuePage() {
           </div>
           <select
             value={accountType}
-            onChange={(event) => { setAccountType(event.target.value); setPage(1) }}
+            onChange={(event) => { setAccountType(event.target.value); setLedgerPage(1) }}
             className="rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-[#F97316] focus:outline-none"
           >
             {['ALL', 'RIDER', 'DRIVER', 'PLATFORM', 'PROVIDER'].map((value) => <option key={value} value={value}>{value}</option>)}
@@ -211,6 +233,7 @@ export default function AdminRevenuePage() {
                 <th className="px-3 py-2 text-left font-medium">Account</th>
                 <th className="px-3 py-2 text-left font-medium">Entry</th>
                 <th className="px-3 py-2 text-left font-medium">Booking</th>
+                <th className="px-3 py-2 text-left font-medium">Payment/User</th>
                 <th className="px-3 py-2 text-right font-medium">Amount</th>
               </tr>
             </thead>
@@ -220,7 +243,23 @@ export default function AdminRevenuePage() {
                   <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{new Date(entry.createdAt).toLocaleString()}</td>
                   <td className="px-3 py-2 text-gray-700">{entry.accountType}</td>
                   <td className="px-3 py-2 text-gray-600">{entry.entryType.replace(/_/g, ' ')}</td>
-                  <td className="px-3 py-2 font-mono text-gray-400">{entry.bookingId?.slice(0, 8) || '-'}</td>
+                  <td className="px-3 py-2 text-gray-500">
+                    {entry.bookingId ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <CopyableId id={entry.bookingId} label="Booking ID" />
+                        <Link href={`/admin/rides?search=${encodeURIComponent(entry.bookingId)}&searchBy=bookingId`} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#F97316] hover:underline">
+                          Ride <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </div>
+                    ) : '-'}
+                  </td>
+                  <td className="px-3 py-2 text-gray-500">
+                    <div className="flex flex-col gap-1">
+                      {entry.paymentId ? <span>Payment <CopyableId id={entry.paymentId} label="Payment ID" /></span> : null}
+                      {entry.userId ? <span>User <CopyableId id={entry.userId} label="User ID" /></span> : null}
+                      {!entry.paymentId && !entry.userId ? '-' : null}
+                    </div>
+                  </td>
                   <td className={`px-3 py-2 text-right font-semibold ${entry.direction === 'CREDIT' ? 'text-green-700' : 'text-red-600'}`}>
                     {entry.direction === 'CREDIT' ? '+' : '-'}{entry.currency} {entry.amount.toFixed(2)}
                   </td>
@@ -230,6 +269,19 @@ export default function AdminRevenuePage() {
           </table>
           {ledger?.entries.length === 0 && <div className="py-10 text-center text-sm text-gray-400">No ledger entries found.</div>}
         </div>
+        {ledger?.pagination && ledger.pagination.totalPages > 1 && (
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-xs text-gray-400">Ledger page {ledgerPage} of {ledger.pagination.totalPages}</p>
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={() => setLedgerPage((value) => Math.max(1, value - 1))} disabled={ledgerPage === 1} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30">
+                &lt;
+              </button>
+              <button type="button" onClick={() => setLedgerPage((value) => Math.min(ledger.pagination.totalPages, value + 1))} disabled={ledgerPage === ledger.pagination.totalPages} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30">
+                &gt;
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Issues table */}
@@ -240,12 +292,33 @@ export default function AdminRevenuePage() {
           </div>
         ) : (
           <>
+            <div className="border-b border-gray-100 px-6 py-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-900">Reconciliation issues</h2>
+                  <p className="mt-0.5 text-xs text-gray-500">Filter financial drift by type and severity before resolving.</p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <select value={issueType} onChange={(event) => { setIssueType(event.target.value); setIssuePage(1) }} className="rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-[#F97316] focus:outline-none">
+                    {['ALL', 'STRIPE_MISMATCH', 'MISSING_WEBHOOK', 'ORPHAN_INTENT', 'LEDGER_IMBALANCE', 'STALE_ESCROW', 'DISPUTE_PAYMENT_MISMATCH'].map((value) => (
+                      <option key={value} value={value}>{value === 'ALL' ? 'All issue types' : value.replace(/_/g, ' ')}</option>
+                    ))}
+                  </select>
+                  <select value={severity} onChange={(event) => { setSeverity(event.target.value); setIssuePage(1) }} className="rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-[#F97316] focus:outline-none">
+                    {['ALL', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].map((value) => (
+                      <option key={value} value={value}>{value === 'ALL' ? 'All severities' : value}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs text-gray-400 border-b border-gray-100">
                     <th className="text-left px-6 py-3 font-medium">Type</th>
                     <th className="text-left px-4 py-3 font-medium">Severity</th>
+                    <th className="text-left px-4 py-3 font-medium">Booking / Payment</th>
                     <th className="text-left px-4 py-3 font-medium">Description</th>
                     <th className="text-left px-4 py-3 font-medium">Detected</th>
                     <th className="text-right px-6 py-3 font-medium">Actions</th>
@@ -263,6 +336,19 @@ export default function AdminRevenuePage() {
                         <span className={`text-xs font-medium px-2 py-1 rounded-full ${severityStyle[issue.severity] || severityStyle.LOW}`}>
                           {issue.severity}
                         </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        <div className="flex flex-col gap-1">
+                          {issue.bookingId ? (
+                            <div className="flex items-center gap-2">
+                              <CopyableId id={issue.bookingId} label="Booking ID" />
+                              <Link href={`/admin/rides?search=${encodeURIComponent(issue.bookingId)}&searchBy=bookingId`} className="inline-flex items-center gap-1 font-semibold text-[#F97316] hover:underline">
+                                Ride <ExternalLink className="h-3 w-3" />
+                              </Link>
+                            </div>
+                          ) : <span>-</span>}
+                          {issue.paymentId ? <span>Payment <CopyableId id={issue.paymentId} label="Payment ID" /></span> : null}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-600 max-w-xs truncate">{issue.description || '-'}</td>
                       <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
@@ -309,17 +395,23 @@ export default function AdminRevenuePage() {
             </div>
 
             {issues.length === 0 && (
-              <div className="py-12 text-center text-gray-400 text-sm">No issues found.</div>
+              <div className="p-5">
+                <LoadFailureCard
+                  title="No reconciliation issues matched"
+                  message="Try a broader status, issue type, or severity filter."
+                  onRetry={() => { setIssueType('ALL'); setSeverity('ALL'); setStatusFilter('open'); setIssuePage(1); }}
+                />
+              </div>
             )}
 
-            {pagination && pagination.totalPages > 1 && (
+            {issuePagination && issuePagination.totalPages > 1 && (
               <div className="px-6 py-3 border-t border-gray-50 flex items-center justify-between">
-                <p className="text-xs text-gray-400">Page {page} of {pagination.totalPages}</p>
+                <p className="text-xs text-gray-400">Issue page {issuePage} of {issuePagination.totalPages}</p>
                 <div className="flex items-center gap-1">
-                  <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30">
+                  <button type="button" onClick={() => setIssuePage(p => Math.max(1, p - 1))} disabled={issuePage === 1} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30">
                     &lt;
                   </button>
-                  <button type="button" onClick={() => setPage(p => Math.min(pagination!.totalPages, p + 1))} disabled={page === pagination.totalPages} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30">
+                  <button type="button" onClick={() => setIssuePage(p => Math.min(issuePagination.totalPages, p + 1))} disabled={issuePage === issuePagination.totalPages} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30">
                     &gt;
                   </button>
                 </div>
@@ -329,5 +421,28 @@ export default function AdminRevenuePage() {
         )}
       </div>
     </div>
+  )
+}
+
+async function copyText(value: string, label: string) {
+  try {
+    await navigator.clipboard?.writeText(value)
+    showSuccess(`${label} copied`, value)
+  } catch {
+    showError('Copy failed', `Could not copy ${label.toLowerCase()}.`)
+  }
+}
+
+function CopyableId({ id, label }: { id: string; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => copyText(id, label)}
+      title={id}
+      className="inline-flex items-center gap-1 rounded-md font-mono text-[11px] font-semibold text-gray-500 hover:text-[#F97316]"
+    >
+      {id.slice(0, 8)}
+      <Clipboard className="h-3 w-3" />
+    </button>
   )
 }

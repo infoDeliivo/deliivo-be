@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Star, Users, Car } from 'lucide-react';
+import { useTranslation } from '@/lib/i18n-context';
 
 export interface Ride {
   id: string;
@@ -17,6 +18,9 @@ export interface Ride {
   seatsTotal: number;
   pricePerSeat: number;
   femaleOnly?: boolean;
+  noSmoking?: boolean;
+  noBicycles?: boolean;
+  childSeatAvailable?: boolean;
 }
 
 interface RideCardProps {
@@ -42,6 +46,7 @@ function StarRating({ rating }: { rating: number }) {
 }
 
 export default function RideCard({ ride }: RideCardProps) {
+  const { t } = useTranslation();
   const seatsLeft = ride.seatsTotal - ride.seatsBooked;
 
   return (
@@ -76,10 +81,17 @@ export default function RideCard({ ride }: RideCardProps) {
           <span>{ride.departureDate}</span>
           {ride.femaleOnly && (
             <span className="ml-1 rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-600">
-              Women only
+              {t('ride.womenOnly')}
             </span>
           )}
         </div>
+        {(ride.noSmoking || ride.noBicycles || ride.childSeatAvailable) && (
+          <div className="flex flex-wrap gap-1.5">
+            {ride.noSmoking && <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-deliivo-orange">{t('ride.noSmoking')}</span>}
+            {ride.noBicycles && <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-deliivo-orange">{t('ride.noBicycles')}</span>}
+            {ride.childSeatAvailable && <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">{t('ride.childSeat')}</span>}
+          </div>
+        )}
 
         {/* Route */}
         <div className="flex items-stretch gap-3">
@@ -107,10 +119,10 @@ export default function RideCard({ ride }: RideCardProps) {
           </span>
           <span className="flex items-center gap-1">
             <Users size={13} className="text-deliivo-gray" />
-            {ride.seatsBooked}/{ride.seatsTotal} booked
+            {t('ride.seatsBooked', { booked: ride.seatsBooked, total: ride.seatsTotal })}
             {seatsLeft <= 1 && seatsLeft > 0 && (
               <span className="ml-1 text-amber-500 font-medium">
-                ({seatsLeft} left!)
+                {t('ride.leftUrgent', { count: seatsLeft })}
               </span>
             )}
           </span>
@@ -123,13 +135,13 @@ export default function RideCard({ ride }: RideCardProps) {
           <p className="text-xl font-bold text-primary-500">
             EUR {ride.pricePerSeat}
           </p>
-          <p className="text-xs text-deliivo-gray">per seat</p>
+          <p className="text-xs text-deliivo-gray">{t('ride.perSeat')}</p>
         </div>
         <Link
           href={`/rides/${ride.id}`}
           className="btn-primary py-2 px-5 text-sm"
         >
-          Book
+          {t('ride.book')}
         </Link>
       </div>
     </article>

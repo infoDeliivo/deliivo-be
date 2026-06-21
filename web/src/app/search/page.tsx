@@ -30,6 +30,7 @@ import {
   SearchRidesParams,
   RecentSearch,
 } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n-context';
 
 // ─── Place Input (reusable autocomplete) ──────────────────────────────────────
 
@@ -121,6 +122,7 @@ function PlaceInput({
 // ─── Ride Result Card ─────────────────────────────────────────────────────────
 
 function RideResultCard({ ride }: { ride: SearchRideResult }) {
+  const { t } = useTranslation();
   const seatsLeft = ride.availableSeats;
   const driverName = ride.driver?.name || 'Driver';
   const initials = driverName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
@@ -148,10 +150,23 @@ function RideResultCard({ ride }: { ride: SearchRideResult }) {
                 <Star size={13} className="fill-amber-400 text-amber-400" />
                 <span className="text-xs text-deliivo-gray">{ride.driver.rating.toFixed(1)} ({ride.driver.ratingCount || 0})</span>
               </div>
-            ) : <p className="mt-0.5 text-xs text-deliivo-gray">No ratings yet</p>}
+            ) : <p className="mt-0.5 text-xs text-deliivo-gray">{t('ride.noRatings')}</p>}
             <p className="mt-1 text-[11px] text-deliivo-gray">
               {ride.driver?.successfulPublishedRides || 0} driven • {ride.driver?.successfulCompletedRides || 0} ridden
             </p>
+            <div className="mt-2 grid grid-cols-2 gap-1 text-center sm:w-full">
+              <div className="rounded-lg bg-gray-50 px-2 py-1">
+                <p className="text-[11px] font-semibold text-deliivo-dark">{ride.driver?.successfulPublishedRides || 0}</p>
+                <p className="text-[10px] text-deliivo-gray">{t('ride.driverTrips')}</p>
+              </div>
+              <div className="rounded-lg bg-gray-50 px-2 py-1">
+                <p className="text-[11px] font-semibold text-deliivo-dark">{ride.driver?.successfulCompletedRides || 0}</p>
+                <p className="text-[10px] text-deliivo-gray">{t('ride.riderTrips')}</p>
+              </div>
+            </div>
+            <Link href={`/profile/users/${ride.driverId}`} className="mt-1 inline-flex text-[11px] font-semibold text-deliivo-orange hover:underline">
+              {t('ride.viewProfile')}
+            </Link>
           </div>
         </div>
 
@@ -162,9 +177,16 @@ function RideResultCard({ ride }: { ride: SearchRideResult }) {
             <span>&middot;</span>
             <span>{dateLabel}</span>
             {ride.femaleOnly && (
-              <span className="ml-1 rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-600">Women only</span>
+              <span className="ml-1 rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-600">{t('ride.womenOnly')}</span>
             )}
           </div>
+          {(ride.noSmoking || ride.noBicycles || ride.childSeatAvailable) && (
+            <div className="flex flex-wrap gap-1.5">
+              {ride.noSmoking && <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-deliivo-orange">{t('ride.noSmoking')}</span>}
+              {ride.noBicycles && <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-deliivo-orange">{t('ride.noBicycles')}</span>}
+              {ride.childSeatAvailable && <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">{t('ride.childSeat')}</span>}
+            </div>
+          )}
 
           {/* Route */}
           <div className="flex items-stretch gap-3">
@@ -187,7 +209,7 @@ function RideResultCard({ ride }: { ride: SearchRideResult }) {
               </span>
             )}
             <span className="flex items-center gap-1">
-              <Users size={13} /> {seatsLeft} seat{seatsLeft !== 1 ? 's' : ''} left
+              <Users size={13} /> {t('ride.seatsLeft', { count: seatsLeft, plural: seatsLeft !== 1 ? 's' : '' })}
             </span>
             {ride.routeDurationSeconds && (
               <span className="flex items-center gap-1">
@@ -201,9 +223,9 @@ function RideResultCard({ ride }: { ride: SearchRideResult }) {
         <div className="flex shrink-0 flex-row items-center justify-between gap-3 sm:flex-col sm:items-end sm:justify-start">
           <div className="text-right">
             <p className="text-xl font-bold text-primary-500">{ride.currency} {price.toFixed(2)}</p>
-            <p className="text-xs text-deliivo-gray">per seat</p>
+            <p className="text-xs text-deliivo-gray">{t('ride.perSeat')}</p>
           </div>
-          <Link href={`/rides/${ride.id}${ride.segmentId ? `?segmentId=${ride.segmentId}` : ''}`} className="btn-primary py-2 px-5 text-sm">View</Link>
+          <Link href={`/rides/${ride.id}${ride.segmentId ? `?segmentId=${ride.segmentId}` : ''}`} className="btn-primary py-2 px-5 text-sm">{t('ride.view')}</Link>
         </div>
       </article>
   );
@@ -212,12 +234,16 @@ function RideResultCard({ ride }: { ride: SearchRideResult }) {
 // ─── Main Search Page ─────────────────────────────────────────────────────────
 
 function SearchPageContent() {
+  const { t } = useTranslation();
   const searchParams = useSearchParams();
 
   const [origin, setOrigin] = useState<PlaceSelection | null>(null);
   const [destination, setDestination] = useState<PlaceSelection | null>(null);
   const [date, setDate] = useState(searchParams.get('date') || '');
-  const [seats, setSeats] = useState(1);
+  const [seats, setSeats] = useState(() => {
+    const parsed = Number(searchParams.get('seats') || '1');
+    return Number.isInteger(parsed) && parsed >= 1 && parsed <= 4 ? parsed : 1;
+  });
   const [femaleOnly, setFemaleOnly] = useState(false);
 
   const [results, setResults] = useState<SearchRideResult[]>([]);
@@ -252,6 +278,9 @@ function SearchPageContent() {
     const from = searchParams.get('from');
     const to = searchParams.get('to');
     const female = searchParams.get('femaleOnly');
+    const querySeats = Number(searchParams.get('seats') || '1');
+    const hydratedSeats = Number.isInteger(querySeats) && querySeats >= 1 && querySeats <= 4 ? querySeats : 1;
+    setSeats(hydratedSeats);
     if (female === '1' || female === 'true') setFemaleOnly(true);
     if (!from && !to) return;
 
@@ -289,7 +318,7 @@ function SearchPageContent() {
             destinationLat: resolvedTo.lat,
             destinationLng: resolvedTo.lng,
             departureDate: date,
-            seatsRequired: seats,
+            seatsRequired: hydratedSeats,
             femaleOnly: female === '1' || female === 'true' || undefined,
             sortBy,
             limit: 20,
@@ -298,7 +327,7 @@ function SearchPageContent() {
           setResults(res.data.rides || []);
           setTotal(res.data.pagination?.total || 0);
         } catch (err: unknown) {
-          setError(err instanceof Error ? err.message : 'Search failed');
+          setError(err instanceof Error ? err.message : t('search.failed'));
           setResults([]);
         } finally {
           setLoading(false);
@@ -333,7 +362,7 @@ function SearchPageContent() {
   async function handleSearch(e?: React.FormEvent) {
     if (e) e.preventDefault();
     if (!origin || !destination || !date) {
-      setError('Please select origin, destination, and date');
+      setError(t('search.requiredError'));
       return;
     }
 
@@ -358,7 +387,7 @@ function SearchPageContent() {
       setResults(res.data.rides || []);
       setTotal(res.data.pagination?.total || 0);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Search failed';
+      const message = err instanceof Error ? err.message : t('search.failed');
       setError(message);
       setResults([]);
     } finally {
@@ -379,7 +408,7 @@ function SearchPageContent() {
       <main className="flex-1 px-4 py-8 sm:px-6">
         <div className="mx-auto max-w-5xl">
           <Link href="/" className="mb-5 inline-flex items-center gap-1.5 text-sm text-deliivo-gray hover:text-deliivo-dark transition-colors">
-            <ArrowLeft size={15} /> Back to home
+            <ArrowLeft size={15} /> {t('common.backHome')}
           </Link>
 
           {/* Search form */}
@@ -388,16 +417,16 @@ function SearchPageContent() {
               <PlaceInput
                 value={origin}
                 onChange={setOrigin}
-                placeholder="Leaving from, e.g. Tallinn"
+                placeholder={t('search.fromPlaceholder')}
                 icon={<MapPin size={18} className="text-primary-500" />}
               />
-              <button type="button" onClick={swap} aria-label="Swap" className="mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-primary-500 hover:bg-primary-50 sm:mx-0">
+              <button type="button" onClick={swap} aria-label={t('search.swap')} className="mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-primary-500 hover:bg-primary-50 sm:mx-0">
                 <ArrowLeftRight size={16} />
               </button>
               <PlaceInput
                 value={destination}
                 onChange={setDestination}
-                placeholder="Going to, e.g. Riga"
+                placeholder={t('search.toPlaceholder')}
                 icon={<MapPin size={18} className="text-deliivo-gray" />}
               />
               <div className="relative flex-1">
@@ -412,7 +441,7 @@ function SearchPageContent() {
                 <div className="flex items-center gap-2">
                   <Users size={16} className="text-deliivo-gray" />
                   <select value={seats} onChange={(e) => setSeats(Number(e.target.value))} className="text-sm border border-gray-200 rounded-lg px-2 py-1.5">
-                    {[1,2,3,4].map(n => <option key={n} value={n}>{n} seat{n > 1 ? 's' : ''}</option>)}
+                    {[1,2,3,4].map(n => <option key={n} value={n}>{n} {n > 1 ? t('search.seatsPlural') : t('search.seat')}</option>)}
                   </select>
                 </div>
                 {/* Women only */}
@@ -421,16 +450,16 @@ function SearchPageContent() {
                     className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors ${femaleOnly ? 'bg-primary-500' : 'bg-gray-200'}`}>
                     <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${femaleOnly ? 'translate-x-5' : 'translate-x-0'}`} />
                   </button>
-                  <span className="text-sm font-medium text-deliivo-dark">Women only</span>
+                  <span className="text-sm font-medium text-deliivo-dark">{t('search.womenOnly')}</span>
                 </label>
                 {/* Filters toggle */}
                 <button type="button" onClick={() => setShowFilters(v => !v)} className="flex items-center gap-1 text-sm text-deliivo-gray hover:text-deliivo-orange">
-                  <SlidersHorizontal size={14} /> Filters
+                  <SlidersHorizontal size={14} /> {t('common.filters')}
                 </button>
               </div>
               <button type="submit" disabled={loading} className="btn-primary w-full px-10 py-3 text-base sm:w-auto disabled:opacity-60">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                Search rides
+                {t('search.submit')}
               </button>
             </div>
 
@@ -438,15 +467,15 @@ function SearchPageContent() {
             {showFilters && (
               <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap gap-4 items-center">
                 <div className="flex items-center gap-2">
-                  <label className="text-xs font-medium text-deliivo-gray">Max price:</label>
-                  <input type="number" min={0} value={maxPrice} onChange={(e) => setMaxPrice(e.target.value ? Number(e.target.value) : '')} placeholder="Any" className="w-20 text-sm border border-gray-200 rounded-lg px-2 py-1.5" />
+                  <label className="text-xs font-medium text-deliivo-gray">{t('search.maxPrice')}:</label>
+                  <input type="number" min={0} value={maxPrice} onChange={(e) => setMaxPrice(e.target.value ? Number(e.target.value) : '')} placeholder={t('common.any')} className="w-20 text-sm border border-gray-200 rounded-lg px-2 py-1.5" />
                 </div>
                 <div className="flex items-center gap-2">
-                  <label className="text-xs font-medium text-deliivo-gray">Sort by:</label>
+                  <label className="text-xs font-medium text-deliivo-gray">{t('search.sortBy')}:</label>
                   <select value={sortBy} onChange={(e) => setSortBy(e.target.value as 'departure' | 'price' | 'distance')} className="text-sm border border-gray-200 rounded-lg px-2 py-1.5">
-                    <option value="departure">Departure time</option>
-                    <option value="price">Price</option>
-                    <option value="distance">Distance</option>
+                    <option value="departure">{t('search.sortDeparture')}</option>
+                    <option value="price">{t('search.sortPrice')}</option>
+                    <option value="distance">{t('search.sortDistance')}</option>
                   </select>
                 </div>
               </div>
@@ -470,7 +499,7 @@ function SearchPageContent() {
                     {origin?.address?.split(',')[0]} to {destination?.address?.split(',')[0]}
                   </h1>
                   <p className="mt-0.5 text-sm text-deliivo-gray">
-                    {loading ? 'Searching...' : `${total} ride${total !== 1 ? 's' : ''} found`}
+                    {loading ? t('common.searching') : t('search.resultsFound', { total, plural: total !== 1 ? 's' : '' })}
                   </p>
                 </div>
               </div>
@@ -482,9 +511,9 @@ function SearchPageContent() {
               ) : results.length === 0 ? (
                 <div className="flex flex-col items-center justify-center rounded-2xl bg-white py-20 px-6 text-center shadow-sm">
                   <Search size={48} className="text-gray-200 mb-4" />
-                  <h2 className="text-lg font-semibold text-deliivo-dark">No rides found</h2>
+                  <h2 className="text-lg font-semibold text-deliivo-dark">{t('search.noResultsTitle')}</h2>
                   <p className="mt-2 text-sm text-deliivo-gray max-w-xs">
-                    Try adjusting your search or filters, or check back later as new rides are added daily.
+                    {t('search.noResultsCopy')}
                   </p>
                 </div>
               ) : (
@@ -503,13 +532,13 @@ function SearchPageContent() {
               {alertCreated ? (
                 <div className="flex items-center gap-2">
                   <CheckCircle className="h-5 w-5 text-green-600 shrink-0" />
-                  <p className="text-sm text-green-700 font-medium">Alert created! We&apos;ll notify you when a matching ride is published.</p>
+                  <p className="text-sm text-green-700 font-medium">{t('search.alertCreated')}</p>
                 </div>
               ) : (
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-sm font-semibold text-deliivo-dark">No rides found?</p>
-                    <p className="text-xs text-deliivo-gray mt-0.5">Get notified when a ride matching your route is published.</p>
+                    <p className="text-sm font-semibold text-deliivo-dark">{t('search.noRidesFoundPrompt')}</p>
+                    <p className="text-xs text-deliivo-gray mt-0.5">{t('search.alertPrompt')}</p>
                   </div>
                   <button
                     onClick={handleCreateAlert}
@@ -517,7 +546,7 @@ function SearchPageContent() {
                     className="shrink-0 flex items-center gap-1.5 rounded-xl bg-deliivo-orange px-4 py-2.5 text-sm font-semibold text-white hover:bg-deliivo-orange/90 disabled:opacity-50 transition-colors"
                   >
                     {alertCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />}
-                    Set alert
+                    {t('search.setAlert')}
                   </button>
                 </div>
               )}
@@ -529,9 +558,9 @@ function SearchPageContent() {
             <div className="space-y-6">
               <div className="flex flex-col items-center justify-center rounded-2xl bg-white py-20 px-6 text-center shadow-sm">
                 <Search size={48} className="text-gray-200 mb-4" />
-                <h2 className="text-lg font-semibold text-deliivo-dark">Search for rides</h2>
+                <h2 className="text-lg font-semibold text-deliivo-dark">{t('search.title')}</h2>
                 <p className="mt-2 text-sm text-deliivo-gray max-w-xs">
-                  Enter your origin, destination, and travel date to find available rides.
+                  {t('search.emptyCopy')}
                 </p>
               </div>
 
@@ -540,7 +569,7 @@ function SearchPageContent() {
                 <div className="rounded-2xl bg-white shadow-sm p-5">
                   <div className="flex items-center gap-2 mb-3">
                     <History className="w-4 h-4 text-deliivo-orange" />
-                    <h3 className="text-sm font-semibold text-deliivo-dark">Recent searches</h3>
+                    <h3 className="text-sm font-semibold text-deliivo-dark">{t('search.recentSearches')}</h3>
                   </div>
                   <div className="flex flex-col gap-2">
                     {recentSearches.map(rs => (

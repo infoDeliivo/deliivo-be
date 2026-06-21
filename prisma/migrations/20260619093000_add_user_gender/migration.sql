@@ -1,0 +1,9 @@
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'Gender') THEN
+    CREATE TYPE "Gender" AS ENUM ('MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY');
+  END IF;
+END $$;
+
+ALTER TABLE "User"
+ADD COLUMN IF NOT EXISTS "gender" "Gender";

@@ -126,7 +126,7 @@ Shared web infrastructure:
 - `web/src/lib/auth-context.tsx` manages auth state.
 - `web/src/lib/socket.ts` manages Socket.IO client events.
 - `web/src/lib/stripe.tsx` provides Stripe.js/Elements.
-- components include maps, navbar, protected routes, notification panel/toasts, and UI pieces.
+- components include navbar, protected routes, notification panel/toasts, live tracking link surfaces, and other UI pieces. Maps remain available in the codebase where needed, but ride detail pages now prioritize compact live status and link handoff instead of full embedded map views.
 
 ## Data Architecture
 

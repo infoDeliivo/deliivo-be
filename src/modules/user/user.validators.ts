@@ -7,7 +7,7 @@ export const updateProfileSchema = z.object({
     .max(30)
     .regex(/^[a-zA-Z0-9_]+$/)
     .optional(),
-  gender: z.enum(['male', 'female', 'other']).optional(),
+  gender: z.enum(['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY']).optional(),
   dob: z.string().datetime().optional(), // ISO string
   preferences: z
     .object({
@@ -25,6 +25,7 @@ export const updateProfileSchemaOnBoarding = z.object({
     .max(50, 'Name must be at most 50 characters'),
 
   salutation: z.enum(['MR', 'MS', 'MRS', 'MX', 'OTHER']),
+  gender: z.enum(['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY']),
 
   dob: z.string().refine((val) => !isNaN(Date.parse(val)), 'Date of birth must be a valid date'),
 });
@@ -51,6 +52,7 @@ export const fullProfileUpdateSchema = z.object({
     .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers and underscores')
     .optional(),
   salutation: z.enum(['MR', 'MS', 'MRS', 'MX', 'OTHER']).optional(),
+  gender: z.enum(['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY']).optional(),
   dob: z.string().refine((val) => !isNaN(Date.parse(val)), 'Date of birth must be a valid date').optional(),
 
   // Travel preferences (inline update)

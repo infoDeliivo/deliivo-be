@@ -15,6 +15,10 @@ interface TokenPair {
   refreshToken: string;
 }
 
+function createRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 // Token storage (client-side only)
 const TOKEN_KEY = 'deliivo_access_token';
 const REFRESH_KEY = 'deliivo_refresh_token';
@@ -64,22 +68,42 @@ async function refreshAccessToken(): Promise<TokenPair> {
   return newTokens;
 }
 
-async function parseApiResponse(res: Response): Promise<{ json: unknown; rawText: string; isJson: boolean }> {
+async function parseApiResponse(res: Response): Promise<{ json: unknown; rawText: string; isJson: boolean; requestId?: string }> {
   const rawText = await res.text();
   if (!rawText) {
-    return { json: null, rawText, isJson: false };
+    return {
+      json: null,
+      rawText,
+      isJson: false,
+      requestId: res.headers.get('x-request-id') || undefined,
+    };
   }
 
   const contentType = res.headers.get('content-type') || '';
   const expectsJson = contentType.includes('application/json') || contentType.includes('+json');
 
   try {
-    return { json: JSON.parse(rawText), rawText, isJson: true };
+    return {
+      json: JSON.parse(rawText),
+      rawText,
+      isJson: true,
+      requestId: res.headers.get('x-request-id') || undefined,
+    };
   } catch {
     if (expectsJson) {
-      throw new ApiError('Invalid JSON response from API', res.status, rawText.slice(0, 300));
+      throw new ApiError(
+        'Invalid JSON response from API',
+        res.status,
+        rawText.slice(0, 300),
+        res.headers.get('x-request-id') || undefined,
+      );
     }
-    return { json: null, rawText, isJson: false };
+    return {
+      json: null,
+      rawText,
+      isJson: false,
+      requestId: res.headers.get('x-request-id') || undefined,
+    };
   }
 }
 
@@ -106,20 +130,31 @@ export async function apiFetch<T = unknown>(
 ): Promise<T> {
   const tokens = getTokens();
   const isFormData = options.body instanceof FormData;
+  const requestId = createRequestId();
   const headers: Record<string, string> = {
     'Accept': 'application/json',
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string> || {}),
+    'x-request-id': requestId,
   };
 
   if (tokens?.accessToken) {
     headers['Authorization'] = `Bearer ${tokens.accessToken}`;
   }
 
-  const res = await fetch(`${getApiBaseUrl()}${path}`, {
-    ...options,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${getApiBaseUrl()}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    throw new ApiError(
+      'Unable to reach the server. Check your connection and try again.',
+      0,
+      error instanceof Error ? error.message : error
+    );
+  }
 
   // If 401 and we have a refresh token, try refreshing
   if (res.status === 401 && retry && tokens?.refreshToken) {
@@ -140,14 +175,24 @@ export async function apiFetch<T = unknown>(
     }
   }
 
-  const { json, rawText, isJson } = await parseApiResponse(res);
+  const { json, rawText, isJson, requestId: responseRequestId } = await parseApiResponse(res);
 
   if (!res.ok) {
-    throw new ApiError(getResponseMessage(json, rawText, res.status), res.status, json ?? rawText);
+    throw new ApiError(
+      getResponseMessage(json, rawText, res.status),
+      res.status,
+      json ?? rawText,
+      responseRequestId || requestId,
+    );
   }
 
   if (!isJson) {
-    throw new ApiError(getResponseMessage(json, rawText, res.status), res.status, rawText);
+    throw new ApiError(
+      getResponseMessage(json, rawText, res.status),
+      res.status,
+      rawText,
+      responseRequestId || requestId,
+    );
   }
 
   return json as T;
@@ -156,12 +201,19 @@ export async function apiFetch<T = unknown>(
 export class ApiError extends Error {
   status: number;
   data: unknown;
+  requestId?: string;
 
-  constructor(message: string, status: number, data: unknown) {
+  constructor(message: string, status: number, data: unknown, requestId?: string) {
     super(message);
     this.status = status;
     this.data = data;
+    this.requestId = requestId;
   }
+}
+
+export function getApiErrorMessage(error: unknown, fallback = 'Request failed') {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }
 
 // Auth API
@@ -252,7 +304,7 @@ export const userApi = {
 
   uploadAvatar(file: File) {
     const formData = new FormData();
-    formData.append('avatar', file);
+    formData.append('image', file);
     return apiFetch<{ data: { avatarUrl: string } }>('/api/v1/users/me/avatar', {
       method: 'POST',
       headers: {},
@@ -449,10 +501,15 @@ export const publishRideApi = {
   },
 
   // Step 8: Set capacity
-  updateCapacity(totalSeats: number, maxLuggagePerPerson: number, backSeatOnly: boolean) {
+  updateCapacity(
+    totalSeats: number,
+    maxLuggagePerPerson: number,
+    backSeatOnly: boolean,
+    preferences?: { noSmoking?: boolean; noBicycles?: boolean; childSeatAvailable?: boolean }
+  ) {
     return apiFetch<{ data: DraftRide }>('/api/v1/publish-ride/draft/capacity', {
       method: 'PUT',
-      body: JSON.stringify({ totalSeats, maxLuggagePerPerson, backSeatOnly }),
+      body: JSON.stringify({ totalSeats, maxLuggagePerPerson, backSeatOnly, ...preferences }),
     });
   },
 
@@ -494,9 +551,10 @@ export const publishRideApi = {
   },
 
   // Get user's published rides
-  getUserRides(status?: string, page = 1, limit = 10) {
+  getUserRides(status?: string | string[], page = 1, limit = 10) {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-    if (status) params.set('status', status);
+    if (Array.isArray(status) && status.length > 0) params.set('status', status.join(','));
+    else if (typeof status === 'string' && status) params.set('status', status);
     return apiFetch<{ data: { rides: PublishedRide[]; pagination: Pagination } }>(`/api/v1/publish-ride?${params}`);
   },
 
@@ -567,9 +625,10 @@ export const bookingsApi = {
     });
   },
 
-  list(status?: string, page = 1, limit = 10) {
+  list(status?: string | string[], page = 1, limit = 10) {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-    if (status) params.set('status', status);
+    if (Array.isArray(status) && status.length > 0) params.set('status', status.join(','));
+    else if (typeof status === 'string' && status) params.set('status', status);
     return apiFetch<{ data: { bookings: Booking[]; pagination: Pagination } }>(`/api/v1/bookings?${params}`);
   },
 
@@ -764,10 +823,48 @@ export const notificationsApi = {
       body: JSON.stringify({ notificationIds }),
     });
   },
+  markOneRead(notificationId: string) {
+    return apiFetch<{ data: { markedCount: number } }>('/api/v1/notifications/mark-read', {
+      method: 'POST',
+      body: JSON.stringify({ notificationIds: [notificationId] }),
+    });
+  },
   registerDevice(platform: 'ios' | 'android' | 'web', token: string) {
     return apiFetch<{ data: { id: string; platform: string; token: string; userId: string } }>('/api/v1/notifications/device-token', {
       method: 'POST',
       body: JSON.stringify({ platform, token }),
+    });
+  },
+};
+
+// Safety / Emergency API
+export type EmergencySosRole = 'RIDER' | 'DRIVER';
+
+export interface EmergencyAlert {
+  id: string;
+  userId: string;
+  rideId: string | null;
+  bookingId: string | null;
+  role: EmergencySosRole;
+  status: string;
+  message: string | null;
+  lat: number | null;
+  lng: number | null;
+  createdAt: string;
+}
+
+export const safetyApi = {
+  createSos(data: {
+    rideId?: string;
+    bookingId?: string;
+    role?: EmergencySosRole;
+    message?: string;
+    lat?: number;
+    lng?: number;
+  }) {
+    return apiFetch<{ data: EmergencyAlert }>('/api/v1/safety/sos', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   },
 };
@@ -877,6 +974,12 @@ export const adminApi = {
   getStats() {
     return apiFetch<{ data: AdminStats }>('/api/v1/admin/stats');
   },
+  getOperationsSummary() {
+    return apiFetch<{ data: AdminOperationsSummary }>('/api/v1/admin/ops/summary');
+  },
+  getReadinessHealth() {
+    return apiFetch<{ data: HealthReadyStatus }>('/health/ready');
+  },
   getUsers(params?: { page?: number; limit?: number; search?: string; isBanned?: string; role?: string }) {
     const query = new URLSearchParams();
     if (params?.page) query.set('page', String(params.page));
@@ -952,6 +1055,19 @@ export const adminApi = {
     if (params?.accountType) query.set('accountType', params.accountType);
     return apiFetch<{ data: AdminRevenueLedger }>(`/api/v1/admin/revenue/ledger?${query}`);
   },
+  getEmergencyAlerts(params?: { status?: string; page?: number; limit?: number }) {
+    const query = new URLSearchParams();
+    if (params?.status) query.set('status', params.status);
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.limit) query.set('limit', String(params.limit));
+    return apiFetch<{ data: { alerts: AdminEmergencyAlert[]; openCount: number; pagination: Pagination } }>(`/api/v1/admin/sos?${query}`);
+  },
+  updateEmergencyAlertStatus(id: string, status: 'ACKNOWLEDGED' | 'RESOLVED' | 'FALSE_ALARM') {
+    return apiFetch<{ data: AdminEmergencyAlert }>(`/api/v1/admin/sos/${id}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status }),
+    });
+  },
   getReconciliationIssues(params?: { status?: string; issueType?: string; severity?: string; page?: number; limit?: number }) {
     const query = new URLSearchParams();
     if (params?.status) query.set('status', params.status);
@@ -974,12 +1090,85 @@ export const adminApi = {
   },
 };
 
+export const contentApi = {
+  listPublished(locale?: string) {
+    const query = new URLSearchParams();
+    if (locale) query.set('locale', locale);
+    const suffix = query.toString() ? `?${query}` : '';
+    return apiFetch<{ data: ContentPost[] }>(`/api/v1/content/posts${suffix}`);
+  },
+  listAdminPosts() {
+    return apiFetch<{ data: ContentPost[] }>('/api/v1/admin/content/posts');
+  },
+  saveAdminPost(input: Partial<ContentPost> & Pick<ContentPost, 'title' | 'excerpt' | 'body' | 'category' | 'readTime' | 'locale'>) {
+    return apiFetch<{ data: ContentPost }>('/api/v1/admin/content/posts', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+  deleteAdminPost(id: string) {
+    return apiFetch<{ data: { id: string; deleted: boolean } }>(`/api/v1/admin/content/posts/${id}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
 // Admin types
 export interface AdminStats {
   totalUsers: number;
   totalRides: number;
   totalBookings: number;
   totalRevenue: number;
+}
+
+export interface AdminOperationsSummary {
+  uptimeSeconds: number;
+  checks: {
+    database: boolean;
+    redis: boolean;
+  };
+  configuration: {
+    stripeSecretConfigured: boolean;
+    stripeWebhookConfigured: boolean;
+    firebaseConfigured: boolean;
+  };
+  operations: {
+    openReconciliationIssues: number;
+    payoutEligiblePayments: number;
+    pendingPaymentRecords: number;
+    webhookEvents24h: number;
+  };
+  content: {
+    total: number;
+    published: number;
+    drafts: number;
+    locales: string[];
+    updatedAt: string | null;
+  };
+}
+
+export interface HealthReadyStatus {
+  status: 'ready' | 'not_ready';
+  checks: {
+    database: boolean;
+    redis: boolean;
+    authSecrets: boolean;
+    stripe: boolean;
+    firebase: boolean;
+  };
+  uptime: number;
+}
+
+export interface HealthReadyStatus {
+  status: 'ready' | 'not_ready';
+  checks: {
+    database: boolean;
+    redis: boolean;
+    authSecrets: boolean;
+    stripe: boolean;
+    firebase: boolean;
+  };
+  uptime: number;
 }
 
 export interface AdminUser {
@@ -1013,6 +1202,25 @@ export interface AdminDispute {
   updatedAt: string;
   booking?: { id: string; passengerId: string; totalPrice: number; status: string; payment?: { id: string; status: string; amountTotal: number; fareAmount: number; currency: string } | null };
   ride?: { id: string; driverId: string; originAddress: string; destinationAddress: string; departureDate?: string; departureTime?: string };
+}
+
+export interface AdminEmergencyAlert {
+  id: string;
+  userId: string;
+  rideId: string | null;
+  bookingId: string | null;
+  role: 'RIDER' | 'DRIVER';
+  status: 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | 'FALSE_ALARM' | string;
+  message: string | null;
+  lat: number | null;
+  lng: number | null;
+  createdAt: string;
+  acknowledgedAt?: string | null;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  user?: { id: string; name: string | null; email: string | null; phone: string | null; avatarUrl: string | null };
+  ride?: { id: string; originAddress: string; destinationAddress: string; departureDate: string; departureTime: string; status: string } | null;
+  booking?: { id: string; passengerId: string; status: string; seatsBooked: number; totalPrice: number } | null;
 }
 
 export interface AdminRide {
@@ -1080,6 +1288,7 @@ export interface ReconciliationIssue {
   issueType: string;
   severity: string;
   paymentId?: string;
+  bookingId?: string;
   description?: string;
   detectedAt: string;
   resolvedAt?: string;
@@ -1298,6 +1507,22 @@ export interface NotificationRecord {
   createdAt: string;
 }
 
+export interface ContentPost {
+  id: string;
+  slug: string;
+  title: string;
+  excerpt: string;
+  body: string;
+  category: 'Rider guide' | 'Driver guide' | 'Safety' | 'Product update';
+  status: 'DRAFT' | 'PUBLISHED';
+  publishedAt: string | null;
+  readTime: string;
+  locale: string;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
 export interface AdminPayoutCandidate {
   driverId: string;
   driverName: string | null;
@@ -1372,6 +1597,9 @@ export interface SearchRideResult {
   currency: string;
   status: string;
   femaleOnly?: boolean;
+  noSmoking?: boolean;
+  noBicycles?: boolean;
+  childSeatAvailable?: boolean;
   matchType?: string;
   score?: number;
   bookingContext?: { rideId: string; pickupWaypointId: string | null; dropoffWaypointId: string | null };
@@ -1467,6 +1695,15 @@ export interface Booking {
   passengerId: string;
   seatsBooked: number;
   totalPrice: number;
+  priceBreakdown?: {
+    basePricePerSeat: number;
+    seatsBooked: number;
+    subtotal: number;
+    luggageFee: number;
+    serviceFee: number;
+    totalPrice: number;
+    currency: string;
+  };
   status: string;
   displayStatus?: string;
   pickupWaypointId: string | null;
@@ -1577,6 +1814,9 @@ export interface DraftRide {
   totalSeats?: number;
   maxLuggagePerPerson?: number;
   backSeatOnly?: boolean;
+  noSmoking?: boolean;
+  noBicycles?: boolean;
+  childSeatAvailable?: boolean;
   basePricePerSeat?: number;
   notes?: string;
   femaleOnly?: boolean;
@@ -1613,6 +1853,9 @@ export interface PublishedRide {
   notes?: string;
   routeDistanceMeters?: number;
   routeDurationSeconds?: number;
+  noSmoking?: boolean;
+  noBicycles?: boolean;
+  childSeatAvailable?: boolean;
 }
 
 export interface DriverRideBooking {
@@ -1655,6 +1898,8 @@ export interface UserProfile {
   phone?: string;
   name?: string;
   nickName?: string;
+  salutation?: string | null;
+  gender?: 'MALE' | 'FEMALE' | 'NON_BINARY' | 'OTHER' | 'PREFER_NOT_TO_SAY' | null;
   avatarUrl?: string;
   role: 'USER' | 'ADMIN';
   onboardingStatus: 'PENDING' | 'COMPLETED';
@@ -1665,6 +1910,7 @@ export interface UserProfile {
 
 export interface UserFullProfile extends UserProfile {
   salutation?: string;
+  gender?: 'MALE' | 'FEMALE' | 'NON_BINARY' | 'OTHER' | 'PREFER_NOT_TO_SAY' | null;
   dob?: string;
   travelPreference?: {
     chattiness: string | null;
@@ -1698,6 +1944,7 @@ export interface OnboardingData {
   name: string;
   nickName?: string;
   salutation?: string;
+  gender?: 'MALE' | 'FEMALE' | 'NON_BINARY' | 'OTHER' | 'PREFER_NOT_TO_SAY';
   dob?: string;
 }
 

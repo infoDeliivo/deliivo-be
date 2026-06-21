@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 import {
   User,
   CheckCircle,
-  FileText,
   Car,
   Bell,
   CreditCard,
@@ -20,11 +19,14 @@ import {
   Camera,
   Loader2,
   Pencil,
+  Route,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { userApi, travelPreferencesApi, TravelPreference, UserFullProfile } from '@/lib/api';
+import { getApiErrorMessage, userApi, travelPreferencesApi, TravelPreference, UserFullProfile } from '@/lib/api';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Navbar from '@/components/Navbar';
+import { showError, showSuccess } from '@/lib/app-feedback';
+import { useTranslation } from '@/lib/i18n-context';
 
 export default function ProfilePage() {
   return (
@@ -37,6 +39,7 @@ export default function ProfilePage() {
 
 function ProfileContent() {
   const { user, logout, refreshUser } = useAuth();
+  const { t } = useTranslation();
   const [travelPref, setTravelPref] = useState<TravelPreference | null>(null);
   const [fullProfile, setFullProfile] = useState<UserFullProfile | null>(null);
   const [editingPrefs, setEditingPrefs] = useState(false);
@@ -50,6 +53,7 @@ function ProfileContent() {
   const [profileNickName, setProfileNickName] = useState('');
   const [profileDob, setProfileDob] = useState('');
   const [profileSalutation, setProfileSalutation] = useState('');
+  const [profileGender, setProfileGender] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
 
   // Avatar upload
@@ -71,7 +75,10 @@ function ProfileContent() {
     try {
       await userApi.uploadAvatar(file);
       await refreshUser();
-    } catch { /* ignore */ }
+      showSuccess(t('profile.photoUpdated'));
+    } catch (err: unknown) {
+      showError(t('profile.photoUploadFailed'), getApiErrorMessage(err, t('profile.photoUploadFailed')));
+    }
     finally { setAvatarUploading(false); }
   }
 
@@ -80,7 +87,8 @@ function ProfileContent() {
     setProfileName(user?.name || '');
     setProfileNickName(user?.nickName || '');
     setProfileDob('');
-    setProfileSalutation('');
+    setProfileSalutation(user?.salutation || '');
+    setProfileGender(user?.gender || '');
   }
 
   async function handleSaveProfile() {
@@ -91,10 +99,14 @@ function ProfileContent() {
       if (profileNickName.trim()) data.nickName = profileNickName.trim();
       if (profileDob) data.dob = profileDob;
       if (profileSalutation) data.salutation = profileSalutation;
+      if (profileGender) data.gender = profileGender;
       await userApi.updateProfile(data);
       await refreshUser();
       setEditingProfile(false);
-    } catch { /* ignore */ }
+      showSuccess(t('profile.updated'), t('profile.updatedCopy'));
+    } catch (err: unknown) {
+      showError(t('profile.saveFailed'), getApiErrorMessage(err, t('profile.saveFailed')));
+    }
     finally { setProfileSaving(false); }
   }
 
@@ -107,47 +119,53 @@ function ProfileContent() {
       const res = await travelPreferencesApi.save(data as { chattiness?: 'quiet' | 'chatty_when_comfortable' | 'chatterbox'; pets?: 'love_pets' | 'no_pets' | 'depends_on_animal' });
       setTravelPref(res.data);
       setEditingPrefs(false);
-    } catch {
-      // ignore
+      showSuccess(t('profile.preferencesSaved'), t('profile.preferencesSavedCopy'));
+    } catch (err: unknown) {
+      showError(t('profile.preferencesSaveFailed'), getApiErrorMessage(err, t('profile.preferencesSaveFailed')));
     } finally {
       setSaving(false);
     }
   };
 
   const activityLinks = [
-    { label: 'Documents', href: '/profile/documents', icon: FileText },
-    { label: 'Vehicle', href: '/profile/vehicle', icon: Car },
-    { label: 'Notifications', href: '/profile/notifications', icon: Bell },
-    { label: 'Payments & History', href: '/profile/payment-methods', icon: CreditCard },
-    { label: 'Earnings & Payouts', href: '/profile/earnings', icon: Wallet },
-    { label: 'Disputes', href: '/profile/disputes', icon: Shield },
+    { label: t('rides.myRides'), href: '/rides', icon: Route },
+    { label: t('profile.vehicle'), href: '/profile/vehicle', icon: Car },
+    { label: t('nav.notifications'), href: '/profile/notifications', icon: Bell },
+    { label: t('profile.paymentsHistory'), href: '/profile/payment-methods', icon: CreditCard },
+    { label: t('profile.earningsPayouts'), href: '/profile/earnings', icon: Wallet },
+    { label: t('profile.disputes'), href: '/profile/disputes', icon: Shield },
   ];
 
   const helpLinks = [
     { label: 'FAQ', href: '/faq', icon: HelpCircle },
-    { label: 'Privacy Policy', href: '/privacy', icon: Shield },
-    { label: 'Terms & Conditions', href: '/terms', icon: ScrollText },
+    { label: t('privacy.title'), href: '/privacy', icon: Shield },
+    { label: t('legal.termsTitle'), href: '/terms', icon: ScrollText },
   ];
 
   const chattinessLabels: Record<string, string> = {
-    quiet: "I'm quiet and prefer silence",
-    chatty_when_comfortable: "I'm chatting when comfortable",
-    chatterbox: "I love chatting!",
+    quiet: t('profile.quiet'),
+    chatty_when_comfortable: t('profile.chattyComfortable'),
+    chatterbox: t('profile.chatterbox'),
   };
 
   const petsLabels: Record<string, string> = {
-    love_pets: "I love pets",
-    no_pets: "No pets please",
-    depends_on_animal: "Depends on the animal",
+    love_pets: t('profile.lovePets'),
+    no_pets: t('profile.noPets'),
+    depends_on_animal: t('profile.dependsOnAnimal'),
   };
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8">
-      <h1 className="mb-6 text-2xl font-bold">Profile</h1>
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mb-6 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-deliivo-dark">{t('profile.title')}</h1>
+          <p className="text-sm text-deliivo-gray">{t('profile.subtitle')}</p>
+        </div>
+      </div>
 
-      <div className="grid gap-6 md:grid-cols-[280px_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
         {/* Left: Profile card */}
-        <div className="card flex flex-col items-center text-center">
+        <aside className="card flex flex-col items-center text-center lg:sticky lg:top-24 lg:self-start">
           <div className="relative mb-3">
             <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary-100 overflow-hidden">
               {user?.avatarUrl ? (
@@ -161,12 +179,12 @@ function ProfileContent() {
               <input type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} disabled={avatarUploading} />
             </label>
           </div>
-          <h2 className="text-lg font-bold">{user?.name || 'User'}</h2>
+          <h2 className="text-lg font-bold">{user?.name || t('profile.user')}</h2>
           {user?.nickName && <p className="text-xs text-deliivo-gray">@{user.nickName}</p>}
           {user?.isVerified && (
             <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">
               <CheckCircle size={12} />
-              Verified
+              {t('profile.verified')}
             </span>
           )}
           <p className="mt-2 text-sm text-deliivo-gray">{user?.email || user?.phone}</p>
@@ -175,25 +193,25 @@ function ProfileContent() {
               <p className="text-xs font-semibold text-deliivo-dark">
                 {fullProfile?.rating?.average ? fullProfile.rating.average.toFixed(1) : '--'}
               </p>
-              <p className="text-[11px] text-deliivo-gray">Rating</p>
+              <p className="text-[11px] text-deliivo-gray">{t('profile.rating')}</p>
             </div>
             <div className="rounded-xl bg-gray-50 px-2 py-2">
               <p className="text-xs font-semibold text-deliivo-dark">
                 {fullProfile?.stats?.successfulPublishedRides ?? 0}
               </p>
-              <p className="text-[11px] text-deliivo-gray">Driven</p>
+              <p className="text-[11px] text-deliivo-gray">{t('profile.driven')}</p>
             </div>
             <div className="rounded-xl bg-gray-50 px-2 py-2">
               <p className="text-xs font-semibold text-deliivo-dark">
                 {fullProfile?.stats?.successfulCompletedRides ?? 0}
               </p>
-              <p className="text-[11px] text-deliivo-gray">Ridden</p>
+              <p className="text-[11px] text-deliivo-gray">{t('profile.ridden')}</p>
             </div>
           </div>
           <button onClick={startEditProfile} className="mt-3 flex items-center gap-1 text-xs font-semibold text-deliivo-orange hover:underline">
-            <Pencil size={12} /> Edit profile
+            <Pencil size={12} /> {t('profile.editProfile')}
           </button>
-        </div>
+        </aside>
 
         {/* Right: Settings */}
         <div className="space-y-6">
@@ -201,35 +219,46 @@ function ProfileContent() {
           {editingProfile && (
             <section className="card">
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-deliivo-gray">Edit Profile</h3>
-                <button onClick={() => setEditingProfile(false)} className="text-xs font-semibold text-deliivo-orange">Cancel</button>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.editProfile')}</h3>
+                <button onClick={() => setEditingProfile(false)} className="text-xs font-semibold text-deliivo-orange">{t('common.cancel')}</button>
               </div>
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">Name</label>
-                  <input type="text" value={profileName} onChange={e => setProfileName(e.target.value)} className="input-field" placeholder="Your name" />
+                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">{t('profile.name')}</label>
+                  <input type="text" value={profileName} onChange={e => setProfileName(e.target.value)} className="input-field" placeholder={t('profile.namePlaceholder')} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">Nickname</label>
-                  <input type="text" value={profileNickName} onChange={e => setProfileNickName(e.target.value)} className="input-field" placeholder="Username (alphanumeric)" />
+                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">{t('profile.nickname')}</label>
+                  <input type="text" value={profileNickName} onChange={e => setProfileNickName(e.target.value)} className="input-field" placeholder={t('profile.nicknamePlaceholder')} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">Salutation</label>
+                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">{t('profile.salutation')}</label>
                   <select value={profileSalutation} onChange={e => setProfileSalutation(e.target.value)} className="input-field">
-                    <option value="">Select...</option>
-                    <option value="MR">Mr</option>
-                    <option value="MS">Ms</option>
-                    <option value="MRS">Mrs</option>
-                    <option value="MX">Mx</option>
-                    <option value="OTHER">Other</option>
+                    <option value="">{t('profile.select')}</option>
+                    <option value="MR">{t('profile.mr')}</option>
+                    <option value="MS">{t('profile.ms')}</option>
+                    <option value="MRS">{t('profile.mrs')}</option>
+                    <option value="MX">{t('profile.mx')}</option>
+                    <option value="OTHER">{t('profile.other')}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">Date of Birth</label>
+                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">{t('profile.gender')}</label>
+                  <select value={profileGender} onChange={e => setProfileGender(e.target.value)} className="input-field">
+                    <option value="">{t('profile.select')}</option>
+                    <option value="FEMALE">{t('profile.female')}</option>
+                    <option value="MALE">{t('profile.male')}</option>
+                    <option value="NON_BINARY">{t('profile.nonBinary')}</option>
+                    <option value="OTHER">{t('profile.other')}</option>
+                    <option value="PREFER_NOT_TO_SAY">{t('profile.preferNotSay')}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">{t('profile.dob')}</label>
                   <input type="date" value={profileDob} onChange={e => setProfileDob(e.target.value)} className="input-field" />
                 </div>
                 <button onClick={handleSaveProfile} disabled={profileSaving} className="btn-primary py-2 px-4 text-sm disabled:opacity-50">
-                  {profileSaving ? 'Saving...' : 'Save Profile'}
+                  {profileSaving ? t('profile.saving') : t('profile.saveProfile')}
                 </button>
               </div>
             </section>
@@ -238,7 +267,7 @@ function ProfileContent() {
           {/* Travel Preferences */}
           <section className="card">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-deliivo-gray">Travel Preference</h3>
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.travelPreference')}</h3>
               <button
                 onClick={() => {
                   setEditingPrefs(!editingPrefs);
@@ -247,32 +276,32 @@ function ProfileContent() {
                 }}
                 className="text-xs font-semibold text-deliivo-orange"
               >
-                {editingPrefs ? 'Cancel' : 'Edit'}
+                {editingPrefs ? t('common.cancel') : t('profile.edit')}
               </button>
             </div>
 
             {editingPrefs ? (
               <div className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">Chattiness</label>
+                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">{t('profile.chattiness')}</label>
                   <select value={chattiness} onChange={(e) => setChattiness(e.target.value)} className="input-field">
-                    <option value="">Select...</option>
-                    <option value="quiet">Quiet</option>
-                    <option value="chatty_when_comfortable">Chatting when comfortable</option>
-                    <option value="chatterbox">Love chatting</option>
+                    <option value="">{t('profile.select')}</option>
+                    <option value="quiet">{t('profile.quietShort')}</option>
+                    <option value="chatty_when_comfortable">{t('profile.chattyComfortableShort')}</option>
+                    <option value="chatterbox">{t('profile.chatterboxShort')}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">Pets</label>
+                  <label className="mb-1 block text-xs font-medium text-deliivo-gray">{t('profile.pets')}</label>
                   <select value={pets} onChange={(e) => setPets(e.target.value)} className="input-field">
-                    <option value="">Select...</option>
-                    <option value="love_pets">Love pets</option>
-                    <option value="no_pets">No pets</option>
-                    <option value="depends_on_animal">Depends on animal</option>
+                    <option value="">{t('profile.select')}</option>
+                    <option value="love_pets">{t('profile.lovePetsShort')}</option>
+                    <option value="no_pets">{t('profile.noPetsShort')}</option>
+                    <option value="depends_on_animal">{t('profile.dependsOnAnimalShort')}</option>
                   </select>
                 </div>
                 <button onClick={handleSavePrefs} disabled={saving} className="btn-primary py-2 px-4 text-sm disabled:opacity-50">
-                  {saving ? 'Saving...' : 'Save Preferences'}
+                  {saving ? t('profile.saving') : t('profile.savePreferences')}
                 </button>
               </div>
             ) : (
@@ -290,15 +319,16 @@ function ProfileContent() {
                   </div>
                 )}
                 {!travelPref?.chattiness && !travelPref?.pets && (
-                  <p className="text-sm text-deliivo-gray italic">No preferences set yet</p>
+                  <p className="text-sm text-deliivo-gray italic">{t('profile.noPreferences')}</p>
                 )}
               </div>
             )}
           </section>
 
           {/* Activity Links */}
+          <div className="grid gap-6 xl:grid-cols-2">
           <section className="card">
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-deliivo-gray">Activity</h3>
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.activity')}</h3>
             <div className="divide-y divide-gray-100">
               {activityLinks.map((link) => (
                 <Link
@@ -318,7 +348,7 @@ function ProfileContent() {
 
           {/* Help */}
           <section className="card">
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-deliivo-gray">Help Center</h3>
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-deliivo-gray">{t('profile.helpCenter')}</h3>
             <div className="divide-y divide-gray-100">
               {helpLinks.map((link) => (
                 <Link
@@ -335,6 +365,7 @@ function ProfileContent() {
               ))}
             </div>
           </section>
+          </div>
 
           {/* Logout */}
           <button
@@ -342,7 +373,7 @@ function ProfileContent() {
             className="btn-outline w-full gap-2 text-red-500 border-red-200 hover:bg-red-50 hover:text-red-600"
           >
             <LogOut size={16} />
-            Log out
+            {t('profile.logOut')}
           </button>
         </div>
       </div>

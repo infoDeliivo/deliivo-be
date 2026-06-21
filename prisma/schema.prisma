@@ -25,6 +25,14 @@ enum Salutation {
   OTHER
 }
 
+enum Gender {
+  MALE
+  FEMALE
+  NON_BINARY
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
 enum Chattiness {
   chatterbox
   chatty_when_comfortable
@@ -70,6 +78,7 @@ model User {
   name       String?     @db.VarChar(255)
   nickName   String?     @db.VarChar(255)
   salutation Salutation?
+  gender     Gender?
   dob        DateTime?
 
   email         String?  @unique
@@ -78,6 +87,7 @@ model User {
   phoneVerified Boolean  @default(false)
 
   avatarUrl String?
+  avatarKey String?
 
   role             UserRole         @default(USER)
   isBanned         Boolean          @default(false)
@@ -111,6 +121,7 @@ model User {
   sentMessages     Message[]      @relation("MessageSender")
   receivedMessages Message[]      @relation("MessageReceiver")
   deviceTokens     DeviceToken[]
+  emergencyAlerts  EmergencyAlert[]
 
   // Notification relations
   notifications Notification[]
@@ -290,6 +301,9 @@ model Ride {
   maxLuggagePerPerson Int     @default(2)
   backSeatOnly        Boolean @default(false)
   femaleOnly          Boolean @default(false)
+  noSmoking           Boolean @default(false)
+  noBicycles          Boolean @default(false)
+  childSeatAvailable  Boolean @default(false)
 
   // Additional info
   notes String?
@@ -310,6 +324,7 @@ model Ride {
   rideEvents       RideEvent[]
   pricingSnapshot  RidePricingSnapshot?
   disputes         Dispute[]
+  emergencyAlerts  EmergencyAlert[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -439,6 +454,7 @@ model RideBooking {
   payment Payment?
   disputes      Dispute[]
   trackingLinks TrackingLink[]
+  emergencyAlerts EmergencyAlert[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -749,6 +765,35 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([userId, isRead])
+}
+
+model EmergencyAlert {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  rideId String?
+  ride   Ride?  @relation(fields: [rideId], references: [id], onDelete: SetNull)
+
+  bookingId String?
+  booking   RideBooking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  role    String
+  status  String @default("OPEN") // OPEN, ACKNOWLEDGED, RESOLVED, FALSE_ALARM
+  message String?
+  lat     Float?
+  lng     Float?
+
+  createdAt      DateTime  @default(now())
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
+  resolvedBy     String?
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@index([rideId, createdAt])
+  @@index([bookingId, createdAt])
 }
 
 // ============ REPORT / BLOCK MODELS ============

@@ -196,6 +196,7 @@ export const completeOnBoardingStep1 = async (req: AuthRequest, res: Response) =
         id: user!.id,
         name: user!.name,
         email: user!.email,
+        gender: user!.gender,
         role: user!.role,
       },
     });
@@ -260,6 +261,7 @@ export const uploadAvatar = async (req: AuthRequest, res: Response) => {
     const uploadResult = await uploadToS3({
       folder: 'avatar',
       file: req.file,
+      ownerId: req.user.id,
     });
 
     if (!uploadResult.success) {
@@ -271,7 +273,7 @@ export const uploadAvatar = async (req: AuthRequest, res: Response) => {
 
     // Update user avatar URL in database
     const userId = req.user.id;
-    const { success, user, reason } = await updateAvatarService(userId, uploadResult.url!);
+    const { success, user, reason } = await updateAvatarService(userId, uploadResult.url!, uploadResult.key);
 
     if (!success) {
       return sendError(res, {

@@ -31,7 +31,6 @@ import {
 } from './polyline.utils.js';
 
 /* ================= CONSTANTS (Spec §4.1, §8) ================= */
-const FEMALE_SALUTATIONS = ['MS', 'MRS', 'MX'];
 const RADIUS_KM = 10;
 const BASE_SCORE = 1000;
 const DISTANCE_PENALTY_FACTOR = 50;
@@ -372,10 +371,10 @@ export const searchRides = async (
   }
 
   // Female-only visibility: only female riders see femaleOnly rides
-  const viewerSalutation = excludeDriverId
-    ? (await prisma.user.findUnique({ where: { id: excludeDriverId }, select: { salutation: true } }))?.salutation
+  const viewerGender = excludeDriverId
+    ? (await prisma.user.findUnique({ where: { id: excludeDriverId }, select: { gender: true } }))?.gender
     : null;
-  const isViewerFemale = viewerSalutation && FEMALE_SALUTATIONS.includes(viewerSalutation);
+  const isViewerFemale = viewerGender === 'FEMALE';
 
   if (isViewerFemale && femaleOnly) {
     // Female rider filtering for female-only rides specifically
@@ -523,6 +522,9 @@ export const searchRides = async (
         currency: ride.currency,
         status: ride.status,
         femaleOnly: ride.femaleOnly,
+        noSmoking: ride.noSmoking,
+        noBicycles: ride.noBicycles,
+        childSeatAvailable: ride.childSeatAvailable,
         distanceFromOrigin,
         distanceFromDestination,
         hasActiveBooking,
@@ -662,6 +664,9 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
     status: ride.status,
     notes: ride.notes,
     femaleOnly: ride.femaleOnly,
+    noSmoking: ride.noSmoking,
+    noBicycles: ride.noBicycles,
+    childSeatAvailable: ride.childSeatAvailable,
     waypoints,
     isSegmentView: false,
     fullRide,
@@ -938,10 +943,10 @@ export const searchRidesAdvanced = async (
   }
 
   // Female-only visibility: only female riders see femaleOnly rides
-  const advViewerSalutation = excludeDriverId
-    ? (await prisma.user.findUnique({ where: { id: excludeDriverId }, select: { salutation: true } }))?.salutation
+  const advViewerGender = excludeDriverId
+    ? (await prisma.user.findUnique({ where: { id: excludeDriverId }, select: { gender: true } }))?.gender
     : null;
-  const isAdvViewerFemale = advViewerSalutation && FEMALE_SALUTATIONS.includes(advViewerSalutation);
+  const isAdvViewerFemale = advViewerGender === 'FEMALE';
 
   if (!isAdvViewerFemale) {
     whereClause.femaleOnly = false;
@@ -1207,6 +1212,9 @@ export const searchRidesAdvanced = async (
       currency: ride.currency,
       status: ride.status,
       femaleOnly: ride.femaleOnly,
+      noSmoking: ride.noSmoking,
+      noBicycles: ride.noBicycles,
+      childSeatAvailable: ride.childSeatAvailable,
       distanceFromOrigin: haversine(riderOrigin, { lat: ride.originLat, lng: ride.originLng }),
       distanceFromDestination: haversine(riderDest, {
         lat: ride.destinationLat,

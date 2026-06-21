@@ -22,6 +22,8 @@ import { adminPayoutRouter, driverPayoutRouter } from './payout/payout.routes.js
 import { disputeRouter, adminDisputeRouter } from './dispute/dispute.routes.js';
 import { trackingRouter, publicTrackingRouter } from './tracking/tracking.routes.js';
 import { reconciliationRouter } from './reconciliation/reconciliation.routes.js';
+import safetyRouter from './safety/safety.routes.js';
+import { contentRouter, adminContentRouter } from './content/content.routes.js';
 
 export {
     authRouter,
@@ -52,4 +54,7 @@ export {
     trackingRouter,
     publicTrackingRouter,
     reconciliationRouter,
+    safetyRouter,
+    contentRouter,
+    adminContentRouter,
 };

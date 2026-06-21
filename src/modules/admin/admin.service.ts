@@ -4,6 +4,43 @@ import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { markBookingPaymentRefunded } from '../payments/payment.service.js';
 import redis from '../../cache/redis.js';
+import { getContentSummary } from '../content/content.service.js';
+
+const emergencyAlertSelect = {
+    id: true,
+    userId: true,
+    rideId: true,
+    bookingId: true,
+    role: true,
+    status: true,
+    message: true,
+    lat: true,
+    lng: true,
+    createdAt: true,
+    acknowledgedAt: true,
+    resolvedAt: true,
+    resolvedBy: true,
+    user: { select: { id: true, name: true, email: true, phone: true, avatarUrl: true } },
+    ride: {
+        select: {
+            id: true,
+            originAddress: true,
+            destinationAddress: true,
+            departureDate: true,
+            departureTime: true,
+            status: true,
+        },
+    },
+    booking: {
+        select: {
+            id: true,
+            passengerId: true,
+            status: true,
+            seatsBooked: true,
+            totalPrice: true,
+        },
+    },
+} satisfies Prisma.EmergencyAlertSelect;
 
 /* ================= LIST USERS ================= */
 export const listUsers = async (query: {
@@ -180,6 +217,51 @@ export const adminRefundBooking = async (bookingId: string) => {
     return { bookingId, refunded: true };
 };
 
+export const getOperationsSummary = async () => {
+    const checks = { database: false, redis: false };
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+        checks.database = true;
+    } catch {}
+    try {
+        await redis.ping();
+        checks.redis = true;
+    } catch {}
+
+    const firebaseConfigured = Boolean(
+        process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+        || process.env.FIREBASE_SERVICE_ACCOUNT_BASE64
+        || process.env.FIREBASE_SERVICE_ACCOUNT
+        || process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+        || process.env.GOOGLE_APPLICATION_CREDENTIALS
+    );
+
+    const [openReconciliationIssues, payoutEligiblePayments, pendingPaymentRecords, webhookEvents24h, content] = await Promise.all([
+        prisma.reconciliationIssue.count({ where: { resolvedAt: null } }),
+        prisma.payment.count({ where: { status: 'PAYOUT_ELIGIBLE' } }),
+        prisma.payment.count({ where: { status: { in: ['CREATED', 'PAYMENT_PENDING', 'REFUND_PENDING'] } } }),
+        prisma.stripeWebhookEvent.count({ where: { processedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } } }),
+        getContentSummary(),
+    ]);
+
+    return {
+        uptimeSeconds: Math.floor(process.uptime()),
+        checks,
+        configuration: {
+            stripeSecretConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
+            stripeWebhookConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
+            firebaseConfigured,
+        },
+        operations: {
+            openReconciliationIssues,
+            payoutEligiblePayments,
+            pendingPaymentRecords,
+            webhookEvents24h,
+        },
+        content,
+    };
+};
+
 /* ================= RIDE HISTORY ================= */
 export const listRides = async (query: {
     page?: number;
@@ -222,6 +304,12 @@ export const listRides = async (query: {
                 break;
             case 'bookingId':
                 conditions.push({ bookings: { some: { id: { contains: search, mode: 'insensitive' } } } });
+                break;
+            case 'route':
+                conditions.push(
+                    { originAddress: { contains: search, mode: 'insensitive' } },
+                    { destinationAddress: { contains: search, mode: 'insensitive' } },
+                );
                 break;
             case 'driverId':
                 conditions.push({ driverId: { contains: search, mode: 'insensitive' } });
@@ -360,4 +448,69 @@ export const getRevenueLedger = async (query: {
             totalPages: Math.ceil(total / limit),
         },
     };
+};
+
+/* ================= EMERGENCY SOS ================= */
+export const listEmergencyAlerts = async (query: {
+    page?: number;
+    limit?: number;
+    status?: string;
+}) => {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const skip = (page - 1) * limit;
+    const where: Prisma.EmergencyAlertWhereInput = {};
+
+    if (query.status && query.status !== 'ALL') {
+        where.status = query.status;
+    }
+
+    const [alerts, total, openCount] = await Promise.all([
+        prisma.emergencyAlert.findMany({
+            where,
+            skip,
+            take: limit,
+            orderBy: { createdAt: 'desc' },
+            select: emergencyAlertSelect,
+        }),
+        prisma.emergencyAlert.count({ where }),
+        prisma.emergencyAlert.count({ where: { status: 'OPEN' } }),
+    ]);
+
+    return {
+        alerts,
+        openCount,
+        pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        },
+    };
+};
+
+export const updateEmergencyAlertStatus = async (
+    alertId: string,
+    adminId: string,
+    status: 'ACKNOWLEDGED' | 'RESOLVED' | 'FALSE_ALARM',
+) => {
+    const existing = await prisma.emergencyAlert.findUnique({ where: { id: alertId } });
+    if (!existing) throw new Error('ALERT_NOT_FOUND');
+
+    const now = new Date();
+    const data: Prisma.EmergencyAlertUpdateInput = { status };
+    if (status === 'ACKNOWLEDGED' && !existing.acknowledgedAt) {
+        data.acknowledgedAt = now;
+    }
+    if (status === 'RESOLVED' || status === 'FALSE_ALARM') {
+        data.resolvedAt = now;
+        data.resolvedBy = adminId;
+        if (!existing.acknowledgedAt) data.acknowledgedAt = now;
+    }
+
+    return prisma.emergencyAlert.update({
+        where: { id: alertId },
+        data,
+        select: emergencyAlertSelect,
+    });
 };

@@ -159,7 +159,7 @@ Final decisions:
 Open questions:
 
 - Which events require SMS or email versus in-app only?
-- Should web use browser push in production, or only in-app toasts and panel updates?
+- Web uses persisted in-app notifications and socket toasts by default. Browser push is allowed in production when Firebase web push configuration is present, but it is not the sole notification channel.
 - What notification retention and read/unread policy is required?
 
 Bottlenecks and risks:
@@ -180,7 +180,7 @@ Open questions:
 
 - Which admin actions require dual control or explicit audit approval?
 - Should pricing config management be added to admin?
-- What operational dashboards are required for launch readiness?
+- Initial operational dashboards are defined in `11-kpis-slas-monitoring.md`; implementation is still pending.
 
 Bottlenecks and risks:
 
@@ -196,15 +196,22 @@ Final decisions:
 - Interactive workflows use client components.
 - API utilities, auth context, socket utilities, Stripe provider, and map components are shared infrastructure.
 - Screens refetch canonical state after important actions.
+- English, Estonian, and Russian are the supported launch languages for preference selection.
+- Public guide/blog content can launch as static curated content while backend-managed CMS support is designed.
 
 Open questions:
 
 - Which state refresh intervals should be used for ride-day screens?
 - Should notification toasts be global across all authenticated pages?
 - Which mobile web workflows are launch-critical versus app-only?
+- What translation management workflow should own production copy: code-based catalogs, a headless CMS, or a dedicated translation platform?
+- What admin roles can create, approve, localize, and publish guide/blog content?
 
 Bottlenecks and risks:
 
 - UI state can look stale if action responses do not update local state and trigger refetch.
 - Map-heavy pages can duplicate components or render stale locations if shared state is not centralized.
 - Build-time public env vars require web rebuilds after changes.
+- Ride detail pages intentionally avoid embedded maps so live tracking can be consumed through compact status panels, notifications, email, SMS, and dedicated tracking links instead of duplicated map widgets.
+- Language preference without full translated message catalogs can create a false sense of localization completeness.
+- Static content cannot satisfy admin publishing, localized copy approval, or audit requirements.

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import { useTranslation } from "@/lib/i18n-context";
 import {
   MapPin,
   Calendar,
@@ -21,6 +22,9 @@ import {
   AlertCircle,
   Wallet,
   ExternalLink,
+  CigaretteOff,
+  Bike,
+  Baby,
 } from "lucide-react";
 import StepIndicator from "@/components/StepIndicator";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -67,6 +71,9 @@ interface WizardState {
   maxLuggage: number;
   backSeatOnly: boolean;
   femaleOnly: boolean;
+  noSmoking: boolean;
+  noBicycles: boolean;
+  childSeatAvailable: boolean;
   vehicleId: string;
   // Step 4 — Price
   basePricePerSeat: number;
@@ -77,15 +84,8 @@ interface WizardState {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const STEP_LABELS = ["Route", "Stops", "Date", "Seats", "Price", "Confirm"];
 const TOTAL_STEPS = 6;
-
-const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-
-const DAYS_OF_WEEK = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const LOCAL_DRAFT_KEY = 'deliivo_publish_wizard_snapshot_v1';
 
 // ─── Helper: calendar grid ────────────────────────────────────────────────────
 
@@ -211,15 +211,12 @@ function StepRoute({
   onChange: (patch: Partial<WizardState>) => void;
   error: string;
 }) {
+  const { t, locale } = useTranslation();
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-deliivo-dark">
-          What&apos;s your route?
-        </h2>
-        <p className="mt-1 text-sm text-deliivo-gray">
-          Search for your departure and destination locations.
-        </p>
+        <h2 className="text-xl font-bold text-deliivo-dark">{t('publish.whatsYourRoute')}</h2>
+        <p className="mt-1 text-sm text-deliivo-gray">{t('publish.searchDepartureDestination')}</p>
       </div>
 
       {/* Map visualization */}
@@ -237,7 +234,7 @@ function StepRoute({
         <div className="relative h-44 w-full overflow-hidden rounded-2xl bg-gradient-to-br from-primary-50 to-deliivo-orange-light flex items-center justify-center border border-primary-100">
           <div className="flex flex-col items-center gap-2 text-primary-400">
             <MapPin className="h-8 w-8 opacity-60" />
-            <span className="text-xs font-medium">Map preview</span>
+            <span className="text-xs font-medium">{t('publish.mapPreview')}</span>
           </div>
         </div>
       )}
@@ -247,7 +244,7 @@ function StepRoute({
         <PlaceInput
           value={state.origin}
           onChange={(place) => onChange({ origin: place })}
-          placeholder="Leaving from..."
+          placeholder={t('publish.leavingFrom')}
           icon={<div className="h-2.5 w-2.5 rounded-full bg-deliivo-orange" />}
         />
 
@@ -258,7 +255,7 @@ function StepRoute({
         <PlaceInput
           value={state.destination}
           onChange={(place) => onChange({ destination: place })}
-          placeholder="Going to..."
+          placeholder={t('publish.goingTo')}
           icon={<MapPin className="h-4 w-4 text-deliivo-orange-dark" />}
         />
       </div>
@@ -267,7 +264,7 @@ function StepRoute({
       {state.routes.length > 0 && (
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-deliivo-gray">
-            Select a route
+            {t('publish.selectRoute')}
           </p>
           {state.routes.map((route) => (
             <button
@@ -282,7 +279,7 @@ function StepRoute({
             >
               <div>
                 <p className="text-sm font-semibold text-deliivo-dark">
-                  Route {route.index + 1}
+                  {t('publish.routeNumber', { index: route.index + 1 })}
                 </p>
                 <p className="text-xs text-deliivo-gray">
                   {route.distanceText} &middot; {route.durationText}
@@ -315,6 +312,7 @@ function StepStopovers({
   state: WizardState;
   onChange: (patch: Partial<WizardState>) => void;
 }) {
+  const { t, locale } = useTranslation();
   const [suggestions, setSuggestions] = useState<StopoverSuggestion[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -343,10 +341,8 @@ function StepStopovers({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-deliivo-dark">Add stopovers</h2>
-        <p className="mt-1 text-sm text-deliivo-gray">
-          Optional: pick up or drop off passengers along the way.
-        </p>
+        <h2 className="text-xl font-bold text-deliivo-dark">{t('publish.addStopovers')}</h2>
+        <p className="mt-1 text-sm text-deliivo-gray">{t('publish.stopoversCopy')}</p>
       </div>
 
       {/* Map with route + stopovers */}
@@ -365,18 +361,18 @@ function StepStopovers({
       {loadingSuggestions ? (
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-6 w-6 animate-spin text-deliivo-orange" />
-          <span className="ml-2 text-sm text-deliivo-gray">Finding places along your route...</span>
+          <span className="ml-2 text-sm text-deliivo-gray">{t('publish.findingPlaces')}</span>
         </div>
       ) : suggestions.length === 0 ? (
         <div className="rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-sm">
           <MapPin className="h-8 w-8 text-gray-200 mx-auto mb-2" />
-          <p className="text-sm text-deliivo-gray">No stopover suggestions found for this route.</p>
-          <p className="text-xs text-deliivo-gray mt-1">You can skip this step.</p>
+          <p className="text-sm text-deliivo-gray">{t('publish.noStopovers')}</p>
+          <p className="text-xs text-deliivo-gray mt-1">{t('publish.skipStep')}</p>
         </div>
       ) : (
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-deliivo-gray">
-            Suggested stops ({suggestions.length})
+            {t('publish.suggestedStops', { count: suggestions.length })}
           </p>
           {suggestions.map(s => {
             const selected = state.stopovers.some(st => st.placeId === s.placeId);
@@ -406,7 +402,7 @@ function StepStopovers({
 
       {state.stopovers.length > 0 && (
         <div className="rounded-2xl border border-primary-100 bg-primary-50 p-4">
-          <p className="text-xs font-semibold text-deliivo-dark mb-2">Selected stopovers ({state.stopovers.length})</p>
+          <p className="text-xs font-semibold text-deliivo-dark mb-2">{t('publish.selectedStopovers', { count: state.stopovers.length })}</p>
           {state.stopovers.map((s, i) => (
             <div key={s.placeId} className="flex items-center gap-2 text-sm text-deliivo-dark">
               <span className="text-xs font-bold text-deliivo-orange">{i + 1}.</span>
@@ -428,6 +424,7 @@ function StepDateTime({
   state: WizardState;
   onChange: (patch: Partial<WizardState>) => void;
 }) {
+  const { t, locale } = useTranslation();
   const today = new Date();
   const [viewYear, setViewYear] = useState(
     state.date ? parseInt(state.date.split("-")[0]) : today.getFullYear()
@@ -464,12 +461,18 @@ function StepDateTime({
 
   const hours = Array.from({ length: 24 }, (_, i) => i);
   const minutes = [0, 15, 30, 45];
+  const monthLabel = new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(viewYear, viewMonth, 1));
+  const dayFormatter = new Intl.DateTimeFormat(locale, { weekday: 'short' });
+  const dayLabels = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(2024, 0, 7 + index);
+    return dayFormatter.format(date);
+  });
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-deliivo-dark">Select travel date</h2>
-        <p className="mt-1 text-sm text-deliivo-gray">Pick the date and time for your departure.</p>
+        <h2 className="text-xl font-bold text-deliivo-dark">{t('publish.selectTravelDate')}</h2>
+        <p className="mt-1 text-sm text-deliivo-gray">{t('publish.pickDateTime')}</p>
       </div>
 
       {/* Calendar */}
@@ -478,14 +481,14 @@ function StepDateTime({
           <button type="button" onClick={prevMonth} className="flex h-8 w-8 items-center justify-center rounded-full text-deliivo-gray hover:bg-primary-50 hover:text-deliivo-orange transition-colors">
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <span className="text-sm font-semibold text-deliivo-dark">{MONTHS[viewMonth]} {viewYear}</span>
+          <span className="text-sm font-semibold text-deliivo-dark">{monthLabel} {viewYear}</span>
           <button type="button" onClick={nextMonth} className="flex h-8 w-8 items-center justify-center rounded-full text-deliivo-gray hover:bg-primary-50 hover:text-deliivo-orange transition-colors">
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
 
         <div className="mb-1 grid grid-cols-7 text-center">
-          {DAYS_OF_WEEK.map((d) => (
+          {dayLabels.map((d) => (
             <div key={d} className="py-1 text-[11px] font-semibold uppercase tracking-wide text-deliivo-gray">{d}</div>
           ))}
         </div>
@@ -522,18 +525,18 @@ function StepDateTime({
       <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-deliivo-dark">
           <Clock className="h-4 w-4 text-deliivo-orange" />
-          Departure time
+          {t('publish.departureTime')}
         </div>
         <div className="flex items-center gap-3">
           <div className="flex-1">
-            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Hour</label>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('publish.hour')}</label>
             <select value={state.hour} onChange={(e) => onChange({ hour: parseInt(e.target.value) })} className="input-field pr-8">
               {hours.map((h) => (<option key={h} value={h}>{String(h).padStart(2, "0")}</option>))}
             </select>
           </div>
           <span className="mt-5 text-xl font-bold text-deliivo-dark">:</span>
           <div className="flex-1">
-            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">Minute</label>
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-deliivo-gray">{t('publish.minute')}</label>
             <select value={state.minute} onChange={(e) => onChange({ minute: parseInt(e.target.value) })} className="input-field pr-8">
               {minutes.map((m) => (<option key={m} value={m}>{String(m).padStart(2, "0")}</option>))}
             </select>
@@ -553,6 +556,7 @@ function StepSeats({
   state: WizardState;
   onChange: (patch: Partial<WizardState>) => void;
 }) {
+  const { t, locale } = useTranslation();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [vehiclesLoading, setVehiclesLoading] = useState(true);
 
@@ -596,45 +600,52 @@ function StepSeats({
     );
   }
 
-  const LUGGAGE_LABELS = ["None", "Small bag", "Medium bag", "Large bag"];
+  const luggageLabels = [
+    t('publish.luggageNone'),
+    t('publish.luggageSmall'),
+    t('publish.luggageMedium'),
+    t('publish.luggageLarge'),
+  ];
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-deliivo-dark">Offer your seats</h2>
-        <p className="mt-1 text-sm text-deliivo-gray">Configure how many passengers you can take and any preferences.</p>
+        <h2 className="text-xl font-bold text-deliivo-dark">{t('publish.offerSeats')}</h2>
+        <p className="mt-1 text-sm text-deliivo-gray">{t('publish.configureSeats')}</p>
       </div>
 
       <div className="space-y-3">
-        {counter("Passengers", state.seats, 1, 8, () => onChange({ seats: state.seats + 1 }), () => onChange({ seats: state.seats - 1 }), "Seats available for riders")}
-        {counter("Max luggage", state.maxLuggage, 0, 3, () => onChange({ maxLuggage: state.maxLuggage + 1 }), () => onChange({ maxLuggage: state.maxLuggage - 1 }), LUGGAGE_LABELS[state.maxLuggage])}
+        {counter(t('publish.passengers'), state.seats, 1, 8, () => onChange({ seats: state.seats + 1 }), () => onChange({ seats: state.seats - 1 }), t('publish.seatsAvailableForRiders'))}
+        {counter(t('publish.maxLuggage'), state.maxLuggage, 0, 3, () => onChange({ maxLuggage: state.maxLuggage + 1 }), () => onChange({ maxLuggage: state.maxLuggage - 1 }), luggageLabels[state.maxLuggage])}
       </div>
 
       {/* Vehicle display */}
       {vehiclesLoading ? (
-        <div className="flex items-center gap-2 text-sm text-deliivo-gray"><Loader2 className="h-4 w-4 animate-spin" /> Loading vehicles...</div>
+        <div className="flex items-center gap-2 text-sm text-deliivo-gray"><Loader2 className="h-4 w-4 animate-spin" /> {t('publish.loadingVehicles')}</div>
       ) : vehicles.length > 0 ? (
         <div>
-          <p className="text-sm font-semibold text-deliivo-dark mb-2">Your vehicle</p>
+          <p className="text-sm font-semibold text-deliivo-dark mb-2">{t('publish.yourVehicle')}</p>
           <div className="flex items-center gap-3 rounded-2xl border border-deliivo-orange bg-deliivo-orange-light px-4 py-3">
             <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center shrink-0">
               {vehicles[0].imageUrl ? <img src={vehicles[0].imageUrl} alt="" className="w-10 h-10 rounded-xl object-cover" /> : <Luggage className="w-5 h-5 text-gray-400" />}
             </div>
             <div>
-              <p className="text-sm font-medium text-deliivo-dark">{[vehicles[0].brand, vehicles[0].model_name].filter(Boolean).join(' ') || 'Vehicle'}</p>
+              <p className="text-sm font-medium text-deliivo-dark">{[vehicles[0].brand, vehicles[0].model_name].filter(Boolean).join(' ') || t('publish.vehicleFallback')}</p>
               <p className="text-xs text-deliivo-gray">{[vehicles[0].color, vehicles[0].year].filter(Boolean).join(' · ')}</p>
             </div>
           </div>
         </div>
       ) : (
         <div className="rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-3">
-          <p className="text-xs text-yellow-700">No vehicle found. <a href="/profile/vehicle" className="font-semibold underline">Add one</a> for better ride visibility.</p>
+          <p className="text-xs text-yellow-700">{t('publish.noVehicleFound')} <a href="/profile/vehicle" className="font-semibold underline">{t('publish.addOne')}</a> {t('publish.forBetterVisibility')}</p>
         </div>
       )}
 
       <div className="space-y-3">
-        {toggle("Women only", state.femaleOnly, () => onChange({ femaleOnly: !state.femaleOnly }), "Only accept female passengers")}
-        {toggle("Back seat only", state.backSeatOnly, () => onChange({ backSeatOnly: !state.backSeatOnly }), "Passengers sit in back seats only")}
+        {toggle(t('publish.womenOnly'), state.femaleOnly, () => onChange({ femaleOnly: !state.femaleOnly }), t('publish.womenOnlyCopy'))}
+        {toggle(t('publish.noSmoking'), state.noSmoking, () => onChange({ noSmoking: !state.noSmoking }), t('publish.noSmokingCopy'))}
+        {toggle(t('publish.noBicycles'), state.noBicycles, () => onChange({ noBicycles: !state.noBicycles }), t('publish.noBicyclesCopy'))}
+        {toggle(t('publish.childSeatAvailable'), state.childSeatAvailable, () => onChange({ childSeatAvailable: !state.childSeatAvailable }), t('publish.childSeatAvailableCopy'))}
       </div>
     </div>
   );
@@ -651,35 +662,36 @@ function StepPrice({
   onChange: (patch: Partial<WizardState>) => void;
   loading: boolean;
 }) {
+  const { t, locale } = useTranslation();
   const rec = state.recommendation;
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-deliivo-dark">Set your price per seat</h2>
-        <p className="mt-1 text-sm text-deliivo-gray">Set a fair price for the full journey.</p>
+        <h2 className="text-xl font-bold text-deliivo-dark">{t('publish.setPricePerSeat')}</h2>
+        <p className="mt-1 text-sm text-deliivo-gray">{t('publish.fairPrice')}</p>
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-6 w-6 animate-spin text-deliivo-orange" />
-          <span className="ml-2 text-sm text-deliivo-gray">Calculating recommended price...</span>
+          <span className="ml-2 text-sm text-deliivo-gray">{t('publish.calculatingRecommendedPrice')}</span>
         </div>
       ) : rec ? (
         <div className="rounded-2xl bg-primary-50 border border-primary-100 p-4 space-y-2">
           <div className="flex items-center gap-2">
             <DollarSign className="h-5 w-5 text-deliivo-orange" />
-            <span className="text-sm font-semibold text-deliivo-dark">Recommended: {rec.currency} {rec.recommendedPrice.toFixed(2)}</span>
+            <span className="text-sm font-semibold text-deliivo-dark">{t('publish.recommended', { currency: rec.currency, price: rec.recommendedPrice.toFixed(2) })}</span>
           </div>
           <p className="text-xs text-deliivo-gray">
-            Based on {rec.breakdown.distanceKm.toFixed(1)} km distance. Range: {rec.currency} {rec.minPrice.toFixed(2)} – {rec.maxPrice.toFixed(2)}
+            {t('publish.basedOnDistance', { distance: rec.breakdown.distanceKm.toFixed(1), currency: rec.currency, minPrice: rec.minPrice.toFixed(2), maxPrice: rec.maxPrice.toFixed(2) })}
           </p>
         </div>
       ) : null}
 
       {/* Price input */}
       <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-        <label className="mb-2 block text-sm font-semibold text-deliivo-dark">Price per seat ({rec?.currency || 'EUR'})</label>
+        <label className="mb-2 block text-sm font-semibold text-deliivo-dark">{t('publish.pricePerSeat', { currency: rec?.currency || 'EUR' })}</label>
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -708,11 +720,11 @@ function StepPrice({
 
       {/* Notes */}
       <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
-        <label className="mb-2 block text-sm font-semibold text-deliivo-dark">Notes (optional)</label>
+        <label className="mb-2 block text-sm font-semibold text-deliivo-dark">{t('publish.notesOptional')}</label>
         <textarea
           value={state.notes}
           onChange={(e) => onChange({ notes: e.target.value })}
-          placeholder="Any special instructions for riders..."
+          placeholder={t('publish.anySpecialInstructions')}
           maxLength={150}
           rows={3}
           className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-deliivo-dark placeholder:text-deliivo-gray focus:border-deliivo-orange focus:outline-none focus:ring-2 focus:ring-deliivo-orange/20 resize-none"
@@ -744,39 +756,40 @@ function StepConfirm({
   onStartPayoutSetup: () => void;
   payoutSetupLoading: boolean;
 }) {
+  const { t, locale } = useTranslation();
   const [tosChecked, setTosChecked] = useState(false);
   const payoutsReady = Boolean(payoutStatus?.onboardingComplete && payoutStatus?.payoutsEnabled);
   const dateLabel = state.date
-    ? new Date(state.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-    : "Not set";
+    ? new Date(state.date + "T00:00:00").toLocaleDateString(locale, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+    : t('publish.notSet');
   const timeLabel = `${String(state.hour).padStart(2, "0")}:${String(state.minute).padStart(2, "0")}`;
   const routeInfo = state.selectedRouteIndex !== null && state.routes[state.selectedRouteIndex]
     ? `${state.routes[state.selectedRouteIndex].distanceText} · ${state.routes[state.selectedRouteIndex].durationText}`
     : '';
 
   const rows: { icon: React.ReactNode; label: string; value: string }[] = [
-    { icon: <MapPin className="h-4 w-4 text-deliivo-orange" />, label: "From", value: state.origin?.address || "—" },
-    { icon: <MapPin className="h-4 w-4 text-deliivo-orange-dark" />, label: "To", value: state.destination?.address || "—" },
-    { icon: <Route className="h-4 w-4 text-deliivo-orange" />, label: "Route", value: routeInfo || "—" },
-    { icon: <Calendar className="h-4 w-4 text-deliivo-orange" />, label: "Date", value: dateLabel },
-    { icon: <Clock className="h-4 w-4 text-deliivo-orange" />, label: "Time", value: timeLabel },
-    { icon: <Users className="h-4 w-4 text-deliivo-orange" />, label: "Seats", value: `${state.seats} passenger${state.seats !== 1 ? "s" : ""}` },
-    { icon: <Luggage className="h-4 w-4 text-deliivo-orange" />, label: "Luggage", value: `Max ${state.maxLuggage} per person` },
-    { icon: <DollarSign className="h-4 w-4 text-deliivo-orange" />, label: "Price/seat", value: state.basePricePerSeat > 0 ? `${state.recommendation?.currency || 'EUR'} ${state.basePricePerSeat.toFixed(2)}` : "Free" },
+    { icon: <MapPin className="h-4 w-4 text-deliivo-orange" />, label: t('publish.from'), value: state.origin?.address || "—" },
+    { icon: <MapPin className="h-4 w-4 text-deliivo-orange-dark" />, label: t('publish.to'), value: state.destination?.address || "—" },
+    { icon: <Route className="h-4 w-4 text-deliivo-orange" />, label: t('publish.route'), value: routeInfo || "—" },
+    { icon: <Calendar className="h-4 w-4 text-deliivo-orange" />, label: t('publish.date'), value: dateLabel },
+    { icon: <Clock className="h-4 w-4 text-deliivo-orange" />, label: t('publish.time'), value: timeLabel },
+    { icon: <Users className="h-4 w-4 text-deliivo-orange" />, label: t('publish.seats'), value: `${state.seats} ${t('publish.passengerWord', { count: state.seats })}` },
+    { icon: <Luggage className="h-4 w-4 text-deliivo-orange" />, label: t('publish.luggage'), value: t('publish.maxLuggageValue', { max: state.maxLuggage }) },
+    { icon: <DollarSign className="h-4 w-4 text-deliivo-orange" />, label: t('publish.pricePerSeatLabel'), value: state.basePricePerSeat > 0 ? `${state.recommendation?.currency || 'EUR'} ${state.basePricePerSeat.toFixed(2)}` : t('publish.free') },
   ];
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-deliivo-dark">Review your ride</h2>
-        <p className="mt-1 text-sm text-deliivo-gray">Everything look good? Hit publish to go live.</p>
+        <h2 className="text-xl font-bold text-deliivo-dark">{t('publish.reviewYourRide')}</h2>
+        <p className="mt-1 text-sm text-deliivo-gray">{t('publish.allGoodPublish')}</p>
       </div>
 
       <div className="rounded-2xl border border-gray-100 bg-white shadow-sm overflow-hidden">
         <div className="bg-gradient-to-r from-deliivo-orange to-primary-600 px-5 py-4">
-          <p className="text-sm font-semibold text-white/80">Your ride summary</p>
+          <p className="text-sm font-semibold text-white/80">{t('publish.yourRideSummary')}</p>
           <p className="text-lg font-bold text-white mt-0.5">
-            {state.origin?.address?.split(',')[0] || "Origin"} → {state.destination?.address?.split(',')[0] || "Destination"}
+            {state.origin?.address?.split(',')[0] || t('publish.origin')} → {state.destination?.address?.split(',')[0] || t('publish.destination')}
           </p>
         </div>
 
@@ -790,16 +803,26 @@ function StepConfirm({
           ))}
         </ul>
 
-        {(state.femaleOnly || state.backSeatOnly) && (
+        {(state.femaleOnly || state.noSmoking || state.noBicycles || state.childSeatAvailable) && (
           <div className="flex flex-wrap gap-2 px-5 py-3 border-t border-gray-50">
             {state.femaleOnly && (
               <span className="inline-flex items-center gap-1 rounded-full bg-pink-50 px-3 py-1 text-xs font-semibold text-pink-600">
-                <CheckCircle className="h-3 w-3" /> Women only
+                <CheckCircle className="h-3 w-3" /> {t('publish.womenOnly')}
               </span>
             )}
-            {state.backSeatOnly && (
+            {state.noSmoking && (
               <span className="inline-flex items-center gap-1 rounded-full bg-primary-50 px-3 py-1 text-xs font-semibold text-deliivo-orange">
-                <CheckCircle className="h-3 w-3" /> Back seat only
+                <CigaretteOff className="h-3 w-3" /> {t('publish.noSmoking')}
+              </span>
+            )}
+            {state.noBicycles && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary-50 px-3 py-1 text-xs font-semibold text-deliivo-orange">
+                <Bike className="h-3 w-3" /> {t('publish.noBicycles')}
+              </span>
+            )}
+            {state.childSeatAvailable && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
+                <Baby className="h-3 w-3" /> {t('publish.childSeat')}
               </span>
             )}
           </div>
@@ -807,7 +830,7 @@ function StepConfirm({
 
         {state.notes && (
           <div className="px-5 py-3 border-t border-gray-50">
-            <p className="text-xs font-semibold uppercase tracking-wide text-deliivo-gray mb-1">Notes</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-deliivo-gray mb-1">{t('publish.notes')}</p>
             <p className="text-sm text-deliivo-dark">{state.notes}</p>
           </div>
         )}
@@ -822,13 +845,13 @@ function StepConfirm({
           className="mt-0.5 h-4 w-4 rounded border-gray-300 text-deliivo-orange focus:ring-deliivo-orange"
         />
         <span className="text-sm text-deliivo-dark">
-          I agree to the{' '}
+          {t('publish.agreeTermsPrefix')}{' '}
           <a href="/terms" target="_blank" className="font-semibold text-deliivo-orange underline hover:text-deliivo-orange-dark">
-            Terms of Service
+            {t('publish.termsOfService')}
           </a>{' '}
-          and{' '}
+          {t('publish.and')}{' '}
           <a href="/privacy" target="_blank" className="font-semibold text-deliivo-orange underline hover:text-deliivo-orange-dark">
-            Privacy Policy
+            {t('publish.privacyPolicy')}
           </a>
         </span>
       </label>
@@ -844,12 +867,10 @@ function StepConfirm({
           </div>
           <div className="flex-1">
             <p className={`text-sm font-semibold ${payoutsReady ? 'text-green-900' : 'text-amber-900'}`}>
-              {payoutsReady ? 'Payout details ready' : 'Payout details required'}
+              {payoutsReady ? t('publish.payoutDetailsReady') : t('publish.payoutDetailsRequired')}
             </p>
             <p className={`mt-1 text-xs ${payoutsReady ? 'text-green-800' : 'text-amber-800'}`}>
-              {payoutsReady
-                ? 'Your Stripe payout account is ready to receive driver earnings.'
-                : 'Set up Stripe payouts before publishing so rider payments can be routed correctly.'}
+              {payoutsReady ? t('publish.stripePayoutReadyCopy') : t('publish.payoutRequiredCopy')}
             </p>
             {!payoutsReady && (
               <button
@@ -859,7 +880,7 @@ function StepConfirm({
                 className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-deliivo-orange px-4 py-2 text-sm font-semibold text-white hover:bg-deliivo-orange-dark disabled:opacity-50"
               >
                 {payoutSetupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-                {payoutSetupLoading ? 'Redirecting...' : 'Set up payouts'}
+                {payoutSetupLoading ? t('publish.redirecting') : t('publish.setUpPayouts')}
               </button>
             )}
           </div>
@@ -880,11 +901,11 @@ function StepConfirm({
         className="btn-primary w-full gap-2 py-4 text-base disabled:opacity-60"
       >
         {publishing ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle className="h-5 w-5" />}
-        {publishing ? 'Publishing...' : 'Publish ride'}
+        {publishing ? t('publish.publishing') : t('publish.publishRide')}
       </button>
 
       <p className="text-center text-xs text-deliivo-gray leading-relaxed">
-        Once published, riders can discover and book your ride. You can cancel up to 1 hour before departure.
+        {t('publish.oncePublished')}
       </p>
     </div>
   );
@@ -905,6 +926,9 @@ const INITIAL_STATE: WizardState = {
   maxLuggage: 2,
   backSeatOnly: false,
   femaleOnly: false,
+  noSmoking: true,
+  noBicycles: false,
+  childSeatAvailable: false,
   vehicleId: '',
   basePricePerSeat: 0,
   recommendation: null,
@@ -912,9 +936,11 @@ const INITIAL_STATE: WizardState = {
 };
 
 function PublishRideWizard() {
+  const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [state, setState] = useState<WizardState>(INITIAL_STATE);
   const [published, setPublished] = useState(false);
+  const [recoveredDraft, setRecoveredDraft] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [payoutStatus, setPayoutStatus] = useState<ConnectStatus | null>(null);
@@ -929,6 +955,39 @@ function PublishRideWizard() {
   useEffect(() => {
     loadPayoutStatus();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(LOCAL_DRAFT_KEY);
+      if (!raw) return;
+      const snapshot = JSON.parse(raw) as { step?: number; state?: WizardState };
+      if (snapshot.state) {
+        setState({
+          ...INITIAL_STATE,
+          ...snapshot.state,
+          routes: snapshot.state.routes || [],
+          stopovers: snapshot.state.stopovers || [],
+        });
+      }
+      if (snapshot.step && snapshot.step >= 1 && snapshot.step <= TOTAL_STEPS) {
+        setStep(snapshot.step);
+      }
+      setRecoveredDraft(true);
+    } catch {
+      window.localStorage.removeItem(LOCAL_DRAFT_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || published) return;
+    window.localStorage.setItem(LOCAL_DRAFT_KEY, JSON.stringify({ step, state }));
+  }, [step, state, published]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !published) return;
+    window.localStorage.removeItem(LOCAL_DRAFT_KEY);
+  }, [published]);
 
   async function loadPayoutStatus() {
     setPayoutStatusLoading(true);
@@ -1033,7 +1092,11 @@ function PublishRideWizard() {
         await publishRideApi.updateSchedule(state.date, departureTime);
       } else if (step === 4) {
         // Save capacity to backend
-        await publishRideApi.updateCapacity(state.seats, state.maxLuggage, state.backSeatOnly);
+        await publishRideApi.updateCapacity(state.seats, state.maxLuggage, false, {
+          noSmoking: state.noSmoking,
+          noBicycles: state.noBicycles,
+          childSeatAvailable: state.childSeatAvailable,
+        });
         // Fetch recommended price
         try {
           const priceRes = await publishRideApi.getRecommendedPrice();
@@ -1087,6 +1150,9 @@ function PublishRideWizard() {
 
       // Publish
       await publishRideApi.publish();
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(LOCAL_DRAFT_KEY);
+      }
       setPublished(true);
     } catch (err: unknown) {
       let message = err instanceof Error ? err.message : 'Failed to publish ride';
@@ -1107,16 +1173,16 @@ function PublishRideWizard() {
           <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-deliivo-orange shadow-xl shadow-deliivo-orange/30">
             <CheckCircle className="h-10 w-10 text-white" />
           </div>
-          <h1 className="mb-2 text-2xl font-bold text-deliivo-dark">Your ride is published!</h1>
-          <p className="mb-8 text-deliivo-gray">People can now book and travel with you.</p>
+          <h1 className="mb-2 text-2xl font-bold text-deliivo-dark">{t('publish.publishedTitle')}</h1>
+          <p className="mb-8 text-deliivo-gray">{t('publish.publishedCopy')}</p>
           <div className="flex flex-col gap-3">
-            <Link href="/rides" className="btn-primary w-full py-3 text-base">View my rides</Link>
+            <Link href="/rides" className="btn-primary w-full py-3 text-base">{t('publish.viewMyRides')}</Link>
             <button
               type="button"
-              onClick={() => { setState(INITIAL_STATE); setStep(1); setPublished(false); setError(''); }}
+              onClick={() => { setState(INITIAL_STATE); setStep(1); setPublished(false); setRecoveredDraft(false); setError(''); }}
               className="btn-outline w-full py-3 text-base"
             >
-              Publish another ride
+              {t('publish.publishAnotherRide')}
             </button>
           </div>
         </div>
@@ -1131,14 +1197,14 @@ function PublishRideWizard() {
         <div className="mx-auto flex h-14 max-w-lg items-center justify-between px-4">
           {step === 1 ? (
             <Link href="/" className="flex items-center gap-1.5 text-sm font-medium text-deliivo-gray hover:text-deliivo-dark transition-colors">
-              <ArrowLeft className="h-4 w-4" /> Back
+              <ArrowLeft className="h-4 w-4" /> {t('publish.back')}
             </Link>
           ) : (
             <button type="button" onClick={handleBack} className="flex items-center gap-1.5 text-sm font-medium text-deliivo-gray hover:text-deliivo-dark transition-colors">
-              <ArrowLeft className="h-4 w-4" /> Back
+              <ArrowLeft className="h-4 w-4" /> {t('publish.back')}
             </button>
           )}
-          <span className="text-sm font-semibold text-deliivo-dark">Publish a ride</span>
+          <span className="text-sm font-semibold text-deliivo-dark">{t('publish.title')}</span>
           <div className="w-16" />
         </div>
       </div>
@@ -1146,7 +1212,7 @@ function PublishRideWizard() {
       {/* Step indicator */}
       <div className="bg-white border-b border-gray-100 px-4 py-4">
         <div className="mx-auto max-w-lg">
-          <StepIndicator steps={TOTAL_STEPS} current={step} labels={STEP_LABELS} />
+          <StepIndicator steps={TOTAL_STEPS} current={step} labels={[t('publish.route'), t('publish.stops'), t('publish.date'), t('publish.seats'), t('publish.price'), t('publish.confirm')]} />
         </div>
       </div>
 
@@ -1154,12 +1220,12 @@ function PublishRideWizard() {
       <div className="bg-white border-b border-gray-100 px-4 pb-3">
         <div className="mx-auto flex max-w-lg justify-center gap-6">
           {[
-            { icon: <MapPin className="h-4 w-4" />, label: "Route" },
-            { icon: <Route className="h-4 w-4" />, label: "Stops" },
-            { icon: <Calendar className="h-4 w-4" />, label: "Date" },
-            { icon: <Users className="h-4 w-4" />, label: "Seats" },
-            { icon: <DollarSign className="h-4 w-4" />, label: "Price" },
-            { icon: <CheckCircle className="h-4 w-4" />, label: "Done" },
+            { icon: <MapPin className="h-4 w-4" />, label: t('publish.route') },
+            { icon: <Route className="h-4 w-4" />, label: t('publish.stops') },
+            { icon: <Calendar className="h-4 w-4" />, label: t('publish.date') },
+            { icon: <Users className="h-4 w-4" />, label: t('publish.seats') },
+            { icon: <DollarSign className="h-4 w-4" />, label: t('publish.price') },
+            { icon: <CheckCircle className="h-4 w-4" />, label: t('publish.done') },
           ].map(({ icon, label }, i) => {
             const n = i + 1;
             const active = n === step;
@@ -1177,6 +1243,11 @@ function PublishRideWizard() {
       {/* Main content */}
       <main className="flex-1 px-4 py-6">
         <div className="mx-auto max-w-lg">
+          {recoveredDraft && !published && (
+            <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900 shadow-sm">
+              Draft restored from this browser. You can continue from where you left off.
+            </div>
+          )}
           {step === 1 && <StepRoute state={state} onChange={patch} error={error} />}
           {step === 2 && <StepStopovers state={state} onChange={patch} />}
           {step === 3 && <StepDateTime state={state} onChange={patch} />}
@@ -1208,9 +1279,9 @@ function PublishRideWizard() {
               className="btn-primary w-full py-3.5 text-base gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {loading ? (
-                <><Loader2 className="h-4 w-4 animate-spin" /> Processing...</>
+                <><Loader2 className="h-4 w-4 animate-spin" /> {t('publish.processing')}</>
               ) : (
-                <>{step === 5 ? "Review ride" : "Continue"}<ChevronRight className="h-4 w-4" /></>
+                <>{step === 5 ? t('publish.reviewRide') : t('publish.continue')}<ChevronRight className="h-4 w-4" /></>
               )}
             </button>
           </div>

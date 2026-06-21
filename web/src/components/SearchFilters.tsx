@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { SlidersHorizontal, X } from 'lucide-react';
+import { useTranslation } from '@/lib/i18n-context';
 
 export interface Filters {
   maxPrice: number;
@@ -31,6 +32,7 @@ export default function SearchFilters({
   desktopOnly = false,
   mobileOnly = false,
 }: SearchFiltersProps) {
+  const { t } = useTranslation();
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [mobileOpen, setMobileOpen] = useState(false);
   const router = useRouter();
@@ -68,13 +70,13 @@ export default function SearchFilters({
       <div className="flex items-center justify-between">
         <h2 className="font-bold text-deliivo-dark flex items-center gap-2">
           <SlidersHorizontal size={16} className="text-primary-500" />
-          Filters
+          {t('common.filters')}
         </h2>
         <button
           onClick={reset}
           className="text-xs text-primary-500 hover:text-primary-600 font-medium"
         >
-          Reset all
+          {t('common.resetAll')}
         </button>
       </div>
 
@@ -82,7 +84,7 @@ export default function SearchFilters({
       <div>
         <div className="flex justify-between mb-2">
           <label className="text-sm font-medium text-deliivo-dark">
-            Max price / seat
+            {t('search.maxPriceSeat')}
           </label>
           <span className="text-sm font-bold text-primary-500">
             EUR {filters.maxPrice === 200 ? '200+' : filters.maxPrice}
@@ -108,7 +110,7 @@ export default function SearchFilters({
       {/* Time of day */}
       <div>
         <label className="block text-sm font-medium text-deliivo-dark mb-2">
-          Departure time
+          {t('search.departureTime')}
         </label>
         <div className="flex flex-col gap-1.5">
           {timeOptions.map((opt) => (
@@ -126,7 +128,9 @@ export default function SearchFilters({
                 }
                 className="accent-primary-500"
               />
-              <span className="text-sm text-deliivo-dark">{opt.label}</span>
+              <span className="text-sm text-deliivo-dark">
+                {t(opt.value === '' ? 'common.anyTime' : opt.value === 'morning' ? 'common.morning' : opt.value === 'afternoon' ? 'common.afternoon' : 'common.evening')}
+              </span>
             </label>
           ))}
         </div>
@@ -138,7 +142,7 @@ export default function SearchFilters({
           htmlFor="filter-female"
           className="text-sm font-medium text-deliivo-dark cursor-pointer"
         >
-          Women only
+          {t('search.womenOnly')}
         </label>
         <button
           id="filter-female"
@@ -163,7 +167,7 @@ export default function SearchFilters({
       {/* Min rating */}
       <div>
         <label className="block text-sm font-medium text-deliivo-dark mb-2">
-          Minimum driver rating
+          {t('search.minDriverRating')}
         </label>
         <div className="flex gap-2">
           {([0, 3, 4, 4.5] as const).map((r) => (
@@ -176,7 +180,7 @@ export default function SearchFilters({
                   : 'border-gray-200 bg-white text-deliivo-gray hover:border-primary-300'
               }`}
             >
-              {r === 0 ? 'Any' : `${r}+`}
+              {r === 0 ? t('common.any') : `${r}+`}
             </button>
           ))}
         </div>
@@ -204,7 +208,7 @@ export default function SearchFilters({
           className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-deliivo-dark shadow-sm hover:border-primary-300 transition-colors"
         >
           <SlidersHorizontal size={14} className="text-primary-500" />
-          Filters
+          {t('common.filters')}
         </button>
 
         {mobileOpen && (
@@ -217,7 +221,7 @@ export default function SearchFilters({
               <button
                 onClick={() => setMobileOpen(false)}
                 className="absolute right-4 top-4 text-deliivo-gray hover:text-deliivo-dark"
-                aria-label="Close filters"
+                aria-label={t('common.filters')}
               >
                 <X size={20} />
               </button>
@@ -239,7 +243,7 @@ export default function SearchFilters({
           className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-deliivo-dark shadow-sm hover:border-primary-300 transition-colors"
         >
           <SlidersHorizontal size={14} className="text-primary-500" />
-          Filters
+          {t('common.filters')}
         </button>
 
         {mobileOpen && (
@@ -252,7 +256,7 @@ export default function SearchFilters({
               <button
                 onClick={() => setMobileOpen(false)}
                 className="absolute right-4 top-4 text-deliivo-gray hover:text-deliivo-dark"
-                aria-label="Close filters"
+                aria-label={t('common.filters')}
               >
                 <X size={20} />
               </button>

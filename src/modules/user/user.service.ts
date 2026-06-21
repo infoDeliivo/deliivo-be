@@ -24,6 +24,7 @@ export const getMeService = async (userId: string) => {
           name: true,
           nickName: true,
           salutation: true,
+          gender: true,
           dob: true,
           tosAcceptedAt: true,
           privacyAcceptedAt: true,
@@ -96,6 +97,7 @@ export const getFullProfileService = async (
       name: userWithRelations.name,
       nickName: userWithRelations.nickName,
       salutation: userWithRelations.salutation,
+      gender: userWithRelations.gender,
       dob: userWithRelations.dob,
       tosAcceptedAt: userWithRelations.tosAcceptedAt,
       privacyAcceptedAt: userWithRelations.privacyAcceptedAt,
@@ -207,6 +209,7 @@ export const updateFullProfileService = async (
       if (basicData.name !== undefined) userUpdateData.name = basicData.name;
       if (basicData.nickName !== undefined) userUpdateData.nickName = basicData.nickName;
       if (basicData.salutation !== undefined) userUpdateData.salutation = basicData.salutation;
+      if (basicData.gender !== undefined) userUpdateData.gender = basicData.gender;
       if (basicData.dob !== undefined) userUpdateData.dob = new Date(basicData.dob);
 
       // Update user if there are fields to update
@@ -257,7 +260,12 @@ export const updateFullProfileService = async (
 // ====================== ONBOARDING SERVICE ======================
 export const completeOnBoardingStep1Service = async (
   userId: string,
-  data: { name: string; salutation: 'MS' | 'MR' | 'MRS' | 'MX' | 'OTHER'; dob: string },
+  data: {
+    name: string;
+    salutation: 'MS' | 'MR' | 'MRS' | 'MX' | 'OTHER';
+    gender: 'MALE' | 'FEMALE' | 'NON_BINARY' | 'OTHER' | 'PREFER_NOT_TO_SAY';
+    dob: string;
+  },
 ) => {
   try {
     const existingUser = await prisma.user.findUnique({
@@ -277,6 +285,7 @@ export const completeOnBoardingStep1Service = async (
       data: {
         name: data.name,
         salutation: data.salutation,
+        gender: data.gender,
         dob: new Date(data.dob),
         onboardingStatus: 'COMPLETED',
       },
@@ -324,7 +333,7 @@ export const updateProfileService = async (userId: string, payload: Record<strin
 };
 
 // ====================== UPDATE AVATAR SERVICE ======================
-export const updateAvatarService = async (userId: string, avatarUrl: string) => {
+export const updateAvatarService = async (userId: string, avatarUrl: string, avatarKey?: string) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -336,12 +345,13 @@ export const updateAvatarService = async (userId: string, avatarUrl: string) => 
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: { avatarUrl },
+      data: { avatarUrl, avatarKey },
       select: {
         id: true,
         name: true,
         email: true,
         avatarUrl: true,
+        avatarKey: true,
       },
     });
 
