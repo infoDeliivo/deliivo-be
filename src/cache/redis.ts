@@ -10,6 +10,11 @@ const baseRedisOptions = {
   retryStrategy(times: number) {
     return Math.min(times * 50, 2000);
   },
+  maxRetriesPerRequest: 3,
+  enableReadyCheck: true,
+  connectTimeout: 10000, // 10 seconds
+  keepAlive: 30000, // Keep connection alive for 30 seconds
+  lazyConnect: false, // Connect immediately
 };
 
 // Create Redis client (supports Railway REDIS_URL and local host/port config)

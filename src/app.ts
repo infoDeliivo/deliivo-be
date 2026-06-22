@@ -132,6 +132,13 @@ app.get('/health/ready', async (req, res) => {
   });
 });
 
+// Disable compression and ETag for auth routes to prevent HTTP/2 stream resets
+app.use('/api/v1/auth', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.removeHeader('ETag');
+  next();
+});
+
 app.use(docsRouter);
 
 app.use('/api/v1/auth/otp/request', otpLimiter);
