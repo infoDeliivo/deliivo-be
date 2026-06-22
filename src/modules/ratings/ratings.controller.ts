@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { logWarn } from '../../utils/logger.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { cacheKeys, deleteCache } from '../../services/cache.service.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
@@ -16,7 +17,7 @@ const mapRatingError = (error: Error) => {
     case 'BOOKING_NOT_COMPLETED':
       return {
         status: HttpStatus.CONFLICT,
-        message: 'Rating is allowed only after trip completion',
+        message: 'Rating is allowed only after trip completion or a failed pickup outcome',
       };
     case 'RATING_ALREADY_SUBMITTED':
       return {
@@ -48,7 +49,7 @@ export const submitRating = async (req: AuthRequest, res: Response) => {
       await deleteCache(cacheKeys.userProfile(rating.rateeId));
       await deleteCache(cacheKeys.publicProfile(rating.rateeId));
     } catch (cacheError) {
-      console.error('Cache invalidation failed:', cacheError);
+      logWarn('Rating cache invalidation failed', cacheError instanceof Error ? { error: cacheError.message } : undefined);
       // Continue - rating was successfully saved
     }
 

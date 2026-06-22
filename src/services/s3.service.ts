@@ -1,6 +1,9 @@
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
+import { writeFile, mkdir } from "fs/promises";
+import { join } from "path";
 import s3 from "../config/s3.config.js";
+import { logError, logInfo } from '../utils/logger.js';
 
 export interface S3UploadResult {
     success: boolean;
@@ -12,36 +15,57 @@ export interface S3UploadResult {
 export interface S3UploadOptions {
     folder: string; // e.g., 'avatar', 'vehicles', 'documents'
     file: Express.Multer.File;
+    ownerId?: string;
 }
 
 /**
- * Uploads a file to S3 and returns the URL or error status
+ * Local file storage fallback for dev when S3 is not configured.
+ * Saves files to /app/uploads (or ./uploads) and returns a local URL.
+ */
+const uploadToLocal = async (options: S3UploadOptions): Promise<S3UploadResult> => {
+    const { folder, file } = options;
+    try {
+        const fileExtension = file.originalname.split(".").pop();
+        const key = `uploads/${folder}/${uuidv4()}.${fileExtension}`;
+        const dir = join(process.cwd(), 'uploads', folder);
+        await mkdir(dir, { recursive: true });
+        const filePath = join(process.cwd(), key);
+        await writeFile(filePath, file.buffer);
+
+        const port = process.env.PORT || '3000';
+        const url = `http://localhost:${port}/${key}`;
+
+        logInfo(`Local upload: ${key}`);
+        return { success: true, url, key };
+    } catch (error) {
+        logError('Local upload error', error);
+        const errorMessage = error instanceof Error ? error.message : "Unknown local upload error";
+        return { success: false, error: errorMessage };
+    }
+};
+
+/**
+ * Uploads a file to S3 and returns the URL or error status.
+ * Falls back to local storage when S3 is not configured.
  */
 export const uploadToS3 = async (options: S3UploadOptions): Promise<S3UploadResult> => {
     const { folder, file } = options;
 
+    const storageProvider = process.env.PROFILE_IMAGE_STORAGE_PROVIDER?.toLowerCase();
+    const isR2 = storageProvider === 'r2' || !!process.env.R2_ENDPOINT;
+    const bucketName = isR2 ? process.env.R2_BUCKET_NAME : process.env.AWS_S3_BUCKET_NAME;
+    const region = isR2 ? 'auto' : process.env.AWS_REGION;
+
+    // Fallback to local storage if S3 is not configured
+    if (!bucketName || !region) {
+        return uploadToLocal(options);
+    }
+
     try {
-        // Validate required environment variables
-        const bucketName = process.env.AWS_S3_BUCKET_NAME;
-        const region = process.env.AWS_REGION;
-
-        if (!bucketName) {
-            return {
-                success: false,
-                error: "AWS_S3_BUCKET_NAME is not configured",
-            };
-        }
-
-        if (!region) {
-            return {
-                success: false,
-                error: "AWS_REGION is not configured",
-            };
-        }
-
         // Generate unique key for the file
         const fileExtension = file.originalname.split(".").pop();
-        const key = `uploads/${folder}/${uuidv4()}.${fileExtension}`;
+        const ownerPrefix = options.ownerId ? `${options.ownerId}/` : '';
+        const key = `uploads/${folder}/${ownerPrefix}${uuidv4()}.${fileExtension}`;
 
         // Create and send the upload command
         const command = new PutObjectCommand({
@@ -54,7 +78,12 @@ export const uploadToS3 = async (options: S3UploadOptions): Promise<S3UploadResu
         await s3.send(command);
 
         // Construct the public URL
-        const url = `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
+        const configuredPublicBaseUrl = isR2 ? process.env.R2_PUBLIC_BASE_URL : process.env.AWS_S3_PUBLIC_BASE_URL;
+        const url = configuredPublicBaseUrl
+            ? `${configuredPublicBaseUrl.replace(/\/$/, '')}/${key}`
+            : isR2
+                ? `https://${bucketName}.${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`
+                : `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
 
         return {
             success: true,
@@ -62,7 +91,7 @@ export const uploadToS3 = async (options: S3UploadOptions): Promise<S3UploadResu
             key,
         };
     } catch (error) {
-        console.error("S3 upload error:", error);
+        logError('S3 upload error', error);
 
         const errorMessage = error instanceof Error ? error.message : "Unknown S3 upload error";
 

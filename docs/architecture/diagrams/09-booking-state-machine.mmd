@@ -1,0 +1,22 @@
+stateDiagram-v2
+    [*] --> PAYMENT_PENDING: Booking created Stripe mode
+    [*] --> DRIVER_PENDING: Booking created Bypass mode
+
+    PAYMENT_PENDING --> DRIVER_PENDING: Stripe webhook success
+    PAYMENT_PENDING --> PAYMENT_FAILED: Stripe webhook failure
+
+    DRIVER_PENDING --> CONFIRMED: Driver accepts
+    DRIVER_PENDING --> CANCELLED: Driver rejects
+    DRIVER_PENDING --> CANCELLED: Passenger cancels
+    DRIVER_PENDING --> CANCELLED: Deadline auto-cancel
+
+    CONFIRMED --> IN_PROGRESS: Pickup OTP verified
+    CONFIRMED --> CANCELLED: Passenger cancels with refund policy
+    CONFIRMED --> CANCELLED: Driver cancels full refund plus penalty
+
+    IN_PROGRESS --> COMPLETED: Drop OTP verified
+    IN_PROGRESS --> COMPLETED: Ride force-completed
+
+    PAYMENT_FAILED --> [*]
+    COMPLETED --> [*]
+    CANCELLED --> [*]

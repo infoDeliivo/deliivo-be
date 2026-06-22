@@ -1,0 +1,66 @@
+graph TB
+    subgraph Clients
+        MA[Mobile App]
+        WA[Web App]
+    end
+
+    subgraph API_Gateway[API Gateway]
+        EX[Express Server]
+        RL[Rate Limiter]
+        AUTH[JWT Auth Middleware]
+    end
+
+    subgraph Core_Services[Core Services]
+        AS[Auth Service]
+        US[User Service]
+        RS[Ride Service]
+        BS[Booking Service]
+        SS[Search Service]
+        PS[Payment Service]
+        CS[Chat Service]
+        NS[Notification Service]
+        AD[Admin Service]
+    end
+
+    subgraph Realtime[Real-Time Layer]
+        SIO[Socket.IO Server]
+        RA[Redis Adapter]
+    end
+
+    subgraph Jobs[Background Jobs]
+        DQ[Deadline Queue]
+        MQ[Maintenance Queue]
+        RQ[Route Queue]
+        MQL[Mail Queue]
+        SMQ[SMS Queue]
+    end
+
+    subgraph External[External Services]
+        STR[Stripe API]
+        GOO[Google Maps/Routes API]
+        VRF[Veriff Identity API]
+        FCM[FCM / APNs Push]
+    end
+
+    subgraph Data[Data Layer]
+        PG[(PostgreSQL)]
+        RD[(Redis)]
+    end
+
+    MA -->|HTTPS| EX
+    WA -->|HTTPS| EX
+    MA -->|WSS| SIO
+    WA -->|WSS| SIO
+    EX --> RL
+    RL --> AUTH
+    AUTH --> Core_Services
+    SIO --> RA
+    RA --> RD
+    Core_Services --> PG
+    Core_Services --> RD
+    Core_Services --> Jobs
+    Jobs --> RD
+    PS --> STR
+    RS --> GOO
+    NS --> FCM
+    AS --> VRF

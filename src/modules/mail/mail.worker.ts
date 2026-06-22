@@ -2,20 +2,21 @@ import { Worker } from 'bullmq';
 import transporter, { verifyMailer } from '../../config/mailer.js';
 import { bullRedis } from '../../queue/redisConnection.js';
 import { SendMailPayload } from './mail.types.js';
+import { logInfo, logError, logDebug } from '../../utils/logger.js';
 
-console.log('📨 Mail worker booting...');
+logInfo('Mail worker booting');
 
 (async () => {
   await verifyMailer();
 })();
 
 bullRedis.ping();
-console.log('🟢 Redis connected');
+logInfo('Mail worker Redis connected');
 
 const worker = new Worker(
   'mail-queue',
-  async (job) => {
-    console.log('📩 Job received:', job.id);
+  async (job: any) => {
+    logDebug('Mail job received', { jobId: job.id });
 
     const { to, subject, html, text } = job.data as SendMailPayload;
 
@@ -27,7 +28,7 @@ const worker = new Worker(
       text,
     });
 
-    console.log('✅ Mail sent:', result.messageId);
+    logInfo('Mail sent', { messageId: result.messageId });
   },
   {
     connection: bullRedis,
@@ -35,11 +36,11 @@ const worker = new Worker(
 );
 
 worker.on('ready', () => {
-  console.log('✅ Mail worker is ready');
+  logInfo('Mail worker ready');
 });
 
-worker.on('failed', (job, err) => {
-  console.error('❌ Job failed:', job?.id, err);
+worker.on('failed', (job: any, err: any) => {
+  logError('Mail job failed', err, { jobId: job?.id });
 });
 
 process.stdin.resume();

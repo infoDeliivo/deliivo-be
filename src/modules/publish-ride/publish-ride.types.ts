@@ -107,6 +107,9 @@ export interface UpdateCapacityInput {
     totalSeats: number;
     maxLuggagePerPerson?: number;
     backSeatOnly?: boolean;
+    noSmoking?: boolean;
+    noBicycles?: boolean;
+    childSeatAvailable?: boolean;
 }
 
 /* ================= VEHICLE INFO ================= */
@@ -174,7 +177,7 @@ export interface WaypointResponse {
 
 /* ================= LIST RIDES QUERY ================= */
 export interface ListRidesQuery {
-    status?: RideStatus;
+    status?: RideStatus | string;
     page?: number;
     limit?: number;
 }

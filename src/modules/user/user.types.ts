@@ -1,5 +1,5 @@
 import { Request } from 'express';
-import { Salutation, OnboardingStatus, Chattiness, PetsPreference, VehicleType } from '@prisma/client';
+import { Salutation, Gender, OnboardingStatus, Chattiness, PetsPreference, VehicleType } from '@prisma/client';
 
 // Auth request interface
 export interface AuthRequest extends Request {
@@ -20,10 +20,14 @@ export interface ContactInfo {
 // User basic info (core profile data)
 export interface UserBasicInfo {
   id: string;
+  role: string;
   name: string | null;
   nickName: string | null;
   salutation: Salutation | null;
+  gender: Gender | null;
   dob: Date | null;
+  tosAcceptedAt: Date | null;
+  privacyAcceptedAt: Date | null;
   email: ContactInfo;
   phone: ContactInfo;
   avatarUrl: string | null;
@@ -35,8 +39,8 @@ export interface UserBasicInfo {
 // Travel preference data
 export interface TravelPreferenceData {
   id: string;
-  chattiness: Chattiness;
-  pets: PetsPreference;
+  chattiness: Chattiness | null;
+  pets: PetsPreference | null;
 }
 
 // Vehicle summary for profile
@@ -54,6 +58,8 @@ export interface VehicleSummary {
 export interface UserStats {
   totalRides: number;       // Rides as driver
   totalBookings: number;    // Bookings as passenger
+  successfulPublishedRides: number;
+  successfulCompletedRides: number;
   memberSince: Date;
 }
 
@@ -76,6 +82,7 @@ export interface FullProfileResponse {
 // Public user info (for viewing other users' profiles)
 export interface PublicUserInfo {
   id: string;
+  role: string;
   name: string | null;
   nickName: string | null;
   avatarUrl: string | null;
@@ -105,6 +112,7 @@ export interface UpdateProfileInput {
   name?: string;
   nickName?: string;
   salutation?: Salutation;
+  gender?: Gender;
   dob?: string;
   travelPreference?: TravelPreferenceInput;
 }

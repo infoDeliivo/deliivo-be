@@ -1,6 +1,5 @@
 import { prisma } from '../../config/index.js';
-import { RideStatus, Prisma } from '@prisma/client';
-import type { BookingStatus } from '@prisma/client';
+import { RideStatus, Prisma, BookingStatus } from '@prisma/client';
 import {
   SearchRideQuery,
   SearchRideResult,
@@ -43,8 +42,21 @@ const activeBookingStatuses = [
   'PAYMENT_PENDING',
   'DRIVER_PENDING',
   'CONFIRMED',
+  'WAITING_FOR_PICKUP',
+  'DRIVER_ARRIVED',
+  'OTP_PENDING',
   'IN_PROGRESS',
+  'ONBOARD',
+  'DROP_PENDING',
+  'DRIVER_DROPPED',
   'COMPLETED',
+] as unknown as BookingStatus[];
+const rideDetailViewerBookingStatuses = [
+  ...activeBookingStatuses,
+  'CANCELLED',
+  'NO_SHOW',
+  'DRIVER_MISSED_PICKUP',
+  'DISPUTED',
 ] as unknown as BookingStatus[];
 
 interface AdvancedMatchResult extends MatchResult {
@@ -53,17 +65,20 @@ interface AdvancedMatchResult extends MatchResult {
 }
 
 type RideBookingWithRider = {
-  id: string;
-  rideId: string;
+  id?: string;
+  rideId?: string;
   passengerId: string;
   seatsBooked: number;
-  totalPrice: number;
+  totalPrice?: number;
   status: BookingStatus;
   pickupWaypointId: string | null;
   dropoffWaypointId: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-  passenger: {
+  pickupAddress?: string | null;
+  dropoffAddress?: string | null;
+  segmentFare?: number | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+  passenger?: {
     id: string;
     name: string | null;
     nickName: string | null;
@@ -90,8 +105,31 @@ type DriverVehicleDetails = RideVehicleDetails & {
 
 const bookingWithRiderInclude = {
   where: { status: { in: activeBookingStatuses } },
-  orderBy: { createdAt: 'desc' as const },
-  include: {
+  select: {
+    passengerId: true,
+    seatsBooked: true,
+    status: true,
+    pickupWaypointId: true,
+    dropoffWaypointId: true,
+  },
+};
+
+const rideDetailsBookingInclude = {
+  where: { status: { in: rideDetailViewerBookingStatuses } },
+  select: {
+    id: true,
+    rideId: true,
+    passengerId: true,
+    seatsBooked: true,
+    totalPrice: true,
+    status: true,
+    pickupWaypointId: true,
+    dropoffWaypointId: true,
+    pickupAddress: true,
+    dropoffAddress: true,
+    segmentFare: true,
+    createdAt: true,
+    updatedAt: true,
     passenger: {
       select: {
         id: true,
@@ -104,6 +142,53 @@ const bookingWithRiderInclude = {
   },
 };
 
+const loadDriverTrustStats = async (driverIds: string[]) => {
+  const uniqueDriverIds = Array.from(new Set(driverIds));
+  if (uniqueDriverIds.length === 0) {
+    return new Map<string, { rating?: number; ratingCount: number; successfulPublishedRides: number; successfulCompletedRides: number }>();
+  }
+
+  const [ratingStats, completedAsDriver, completedAsRider] = await Promise.all([
+    prisma.userRatingStats.findMany({
+      where: { userId: { in: uniqueDriverIds } },
+      select: { userId: true, averageRating: true, totalRatings: true },
+    }),
+    prisma.ride.groupBy({
+      by: ['driverId'],
+      where: { driverId: { in: uniqueDriverIds }, status: RideStatus.COMPLETED },
+      _count: { _all: true },
+    }),
+    prisma.rideBooking.groupBy({
+      by: ['passengerId'],
+      where: { passengerId: { in: uniqueDriverIds }, status: BookingStatus.COMPLETED },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const stats = new Map<string, { rating?: number; ratingCount: number; successfulPublishedRides: number; successfulCompletedRides: number }>();
+  uniqueDriverIds.forEach((id) => stats.set(id, {
+    ratingCount: 0,
+    successfulPublishedRides: 0,
+    successfulCompletedRides: 0,
+  }));
+  ratingStats.forEach((row) => {
+    const current = stats.get(row.userId);
+    if (current) {
+      current.rating = Number(row.averageRating.toFixed(2));
+      current.ratingCount = row.totalRatings;
+    }
+  });
+  completedAsDriver.forEach((row) => {
+    const current = stats.get(row.driverId);
+    if (current) current.successfulPublishedRides = row._count._all;
+  });
+  completedAsRider.forEach((row) => {
+    const current = stats.get(row.passengerId);
+    if (current) current.successfulCompletedRides = row._count._all;
+  });
+  return stats;
+};
+
 const mapRideBookings = (bookings: RideBookingWithRider[]) =>
   bookings.map((booking) => ({
     id: booking.id,
@@ -114,9 +199,12 @@ const mapRideBookings = (bookings: RideBookingWithRider[]) =>
     status: booking.status,
     pickupWaypointId: booking.pickupWaypointId,
     dropoffWaypointId: booking.dropoffWaypointId,
+    pickupAddress: booking.pickupAddress,
+    dropoffAddress: booking.dropoffAddress,
+    segmentFare: booking.segmentFare,
     createdAt: booking.createdAt,
     updatedAt: booking.updatedAt,
-    rider: booking.passenger,
+    passenger: booking.passenger,
   }));
 
 const mapRideVehicle = (vehicle: RideVehicleDetails | null) =>
@@ -203,6 +291,26 @@ const buildFullRideSnapshot = (ride: RideCoreLike, waypoints?: WaypointInfo[]): 
   waypoints,
 });
 
+const rideDetailsVisibilityWhere = (rideId: string, viewerId?: string): Prisma.RideWhereInput => ({
+  id: rideId,
+  OR: [
+    { status: RideStatus.PUBLISHED },
+    ...(viewerId
+      ? [
+          { driverId: viewerId },
+          {
+            bookings: {
+              some: {
+                passengerId: viewerId,
+                status: { in: rideDetailViewerBookingStatuses },
+              },
+            },
+          },
+        ]
+      : []),
+  ],
+});
+
 /* ================= BASIC SEARCH RIDES ================= */
 export const searchRides = async (
   query: SearchRideQuery,
@@ -262,8 +370,23 @@ export const searchRides = async (
     whereClause.basePricePerSeat = { lte: maxPrice };
   }
 
+  // Female-only visibility: only female riders see femaleOnly rides
+  const viewerGender = excludeDriverId
+    ? (await prisma.user.findUnique({ where: { id: excludeDriverId }, select: { gender: true } }))?.gender
+    : null;
+  const isViewerFemale = viewerGender === 'FEMALE';
+
+  if (isViewerFemale && femaleOnly) {
+    // Female rider filtering for female-only rides specifically
+    whereClause.femaleOnly = true;
+  } else if (!isViewerFemale) {
+    // Non-female riders never see female-only rides
+    whereClause.femaleOnly = false;
+  }
+  // else: female rider without filter → sees all rides (femaleOnly + normal)
+
   // Get rides with driver info
-  const [rides, total] = await Promise.all([
+  const [allRides, total] = await Promise.all([
     prisma.ride.findMany({
       where: whereClause,
       include: {
@@ -277,11 +400,12 @@ export const searchRides = async (
         bookings: bookingWithRiderInclude,
       },
       orderBy: getOrderBy(sortBy, sortOrder),
-      skip,
-      take: limit,
+      take: 200, // cap candidates for Haversine filter
     }),
     prisma.ride.count({ where: whereClause }),
   ]);
+
+  const rides = allRides;
 
   const vehicleIds = Array.from(
     new Set(
@@ -342,9 +466,12 @@ export const searchRides = async (
     }
   });
 
+  const driverTrustStats = await loadDriverTrustStats(rides.map((ride) => ride.driverId));
+
   // Calculate actual distances and filter by exact radius
   const ridesWithDistance: SearchRideResult[] = rides
     .map((ride) => {
+      const trustStats = driverTrustStats.get(ride.driverId);
       const distanceFromOrigin = haversine(
         { lat: originLat, lng: originLng },
         { lat: ride.originLat, lng: ride.originLng },
@@ -366,6 +493,10 @@ export const searchRides = async (
           id: ride.driver.id,
           name: ride.driver.name,
           avatarUrl: ride.driver.avatarUrl,
+          rating: trustStats?.rating,
+          ratingCount: trustStats?.ratingCount,
+          successfulPublishedRides: trustStats?.successfulPublishedRides,
+          successfulCompletedRides: trustStats?.successfulCompletedRides,
         },
         vehicle: mapRideVehicle(
           ride.vehicleId
@@ -390,6 +521,10 @@ export const searchRides = async (
         basePricePerSeat: ride.basePricePerSeat,
         currency: ride.currency,
         status: ride.status,
+        femaleOnly: ride.femaleOnly,
+        noSmoking: ride.noSmoking,
+        noBicycles: ride.noBicycles,
+        childSeatAvailable: ride.childSeatAvailable,
         distanceFromOrigin,
         distanceFromDestination,
         hasActiveBooking,
@@ -408,13 +543,17 @@ export const searchRides = async (
     });
   }
 
+  // Paginate after filtering
+  const filteredTotal = ridesWithDistance.length;
+  const paginatedRides = ridesWithDistance.slice(skip, skip + limit);
+
   return {
-    rides: ridesWithDistance,
+    rides: paginatedRides,
     pagination: {
       page,
       limit,
-      total: ridesWithDistance.length,
-      totalPages: Math.ceil(ridesWithDistance.length / limit),
+      total: filteredTotal,
+      totalPages: Math.ceil(filteredTotal / limit),
     },
   };
 };
@@ -431,12 +570,9 @@ const getOrderBy = (sortBy: string, sortOrder: string): Prisma.RideOrderByWithRe
 };
 
 /* ================= GET RIDE DETAILS ================= */
-export const getRideDetails = async (rideId: string): Promise<RideDetailsResponse | null> => {
+export const getRideDetails = async (rideId: string, viewerId?: string): Promise<RideDetailsResponse | null> => {
   const ride = await prisma.ride.findFirst({
-    where: {
-      id: rideId,
-      status: RideStatus.PUBLISHED,
-    },
+    where: rideDetailsVisibilityWhere(rideId, viewerId),
     include: {
       driver: {
         select: {
@@ -448,7 +584,7 @@ export const getRideDetails = async (rideId: string): Promise<RideDetailsRespons
       waypoints: {
         orderBy: { orderIndex: 'asc' },
       },
-      bookings: bookingWithRiderInclude,
+      bookings: rideDetailsBookingInclude,
     },
   });
 
@@ -527,6 +663,10 @@ export const getRideDetails = async (rideId: string): Promise<RideDetailsRespons
     currency: ride.currency,
     status: ride.status,
     notes: ride.notes,
+    femaleOnly: ride.femaleOnly,
+    noSmoking: ride.noSmoking,
+    noBicycles: ride.noBicycles,
+    childSeatAvailable: ride.childSeatAvailable,
     waypoints,
     isSegmentView: false,
     fullRide,
@@ -537,14 +677,12 @@ export const getRideDetails = async (rideId: string): Promise<RideDetailsRespons
 /* ================= GET RIDE VIEW DETAILS BY TOKEN ================= */
 export const getRideViewByToken = async (
   viewToken: string,
+  viewerId?: string,
 ): Promise<RideDetailsResponse | null> => {
   const payload = decodeViewToken(viewToken);
 
   const ride = await prisma.ride.findFirst({
-    where: {
-      id: payload.rideId,
-      status: RideStatus.PUBLISHED,
-    },
+    where: rideDetailsVisibilityWhere(payload.rideId, viewerId),
     include: {
       driver: {
         select: {
@@ -556,7 +694,7 @@ export const getRideViewByToken = async (
       waypoints: {
         orderBy: { orderIndex: 'asc' },
       },
-      bookings: bookingWithRiderInclude,
+      bookings: rideDetailsBookingInclude,
     },
   });
 
@@ -666,9 +804,10 @@ export const getRideViewByToken = async (
 
 export const getRideSegmentById = async (
   segmentId: string,
+  viewerId?: string,
 ): Promise<RideDetailsResponse | null> => {
   try {
-    return await getRideViewByToken(segmentId);
+    return await getRideViewByToken(segmentId, viewerId);
   } catch (error: any) {
     if (error?.message === 'INVALID_VIEW_TOKEN') {
       throw new Error('INVALID_SEGMENT_ID');
@@ -803,6 +942,16 @@ export const searchRidesAdvanced = async (
     };
   }
 
+  // Female-only visibility: only female riders see femaleOnly rides
+  const advViewerGender = excludeDriverId
+    ? (await prisma.user.findUnique({ where: { id: excludeDriverId }, select: { gender: true } }))?.gender
+    : null;
+  const isAdvViewerFemale = advViewerGender === 'FEMALE';
+
+  if (!isAdvViewerFemale) {
+    whereClause.femaleOnly = false;
+  }
+
   const candidateRides = await prisma.ride.findMany({
     where: whereClause,
     include: {
@@ -880,12 +1029,15 @@ export const searchRidesAdvanced = async (
     }
   });
 
+  const enhancedDriverTrustStats = await loadDriverTrustStats(candidateRides.map((ride) => ride.driverId));
+
   /* ------------------------------------------------------------------
        Phase 2: D_POINTS matching for each candidate ride (Spec §6-§7)
        ------------------------------------------------------------------ */
   const evaluatedRides: EnhancedSearchRideResult[] = [];
 
   for (const ride of candidateRides) {
+    const trustStats = enhancedDriverTrustStats.get(ride.driverId);
     // Step 2: Build ordered D_POINTS = [Origin, W1, W2, ..., Wn, Destination]
     const dPoints = buildDPoints(ride);
     const lastIdx = dPoints.length - 1;
@@ -1031,6 +1183,10 @@ export const searchRidesAdvanced = async (
         id: ride.driver.id,
         name: ride.driver.name,
         avatarUrl: ride.driver.avatarUrl,
+        rating: trustStats?.rating,
+        ratingCount: trustStats?.ratingCount,
+        successfulPublishedRides: trustStats?.successfulPublishedRides,
+        successfulCompletedRides: trustStats?.successfulCompletedRides,
       },
       vehicle: mapRideVehicle(
         ride.vehicleId
@@ -1055,6 +1211,10 @@ export const searchRidesAdvanced = async (
       basePricePerSeat: riderFacingPrice,
       currency: ride.currency,
       status: ride.status,
+      femaleOnly: ride.femaleOnly,
+      noSmoking: ride.noSmoking,
+      noBicycles: ride.noBicycles,
+      childSeatAvailable: ride.childSeatAvailable,
       distanceFromOrigin: haversine(riderOrigin, { lat: ride.originLat, lng: ride.originLng }),
       distanceFromDestination: haversine(riderDest, {
         lat: ride.destinationLat,

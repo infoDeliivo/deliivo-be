@@ -1,31 +1,27 @@
 import { Queue, Worker } from 'bullmq';
-import { Redis } from 'ioredis';
 import logger from '../utils/logger.js';
+import { bullRedis } from '../queue/redisConnection.js';
+import { sendPushToUser } from '../services/push.service.js';
 
-const connection = process.env.REDIS_URL
-    ? new Redis(process.env.REDIS_URL)
-    : {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
-    };
-
-export const notificationQueue = new Queue('notifications', { connection });
-
-const worker = new Worker(
-    'notifications',
-    async (job) => {
-        logger.info(`Processing job ${job.id}: ${job.name}`);
-        // Simulate sending notification
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        logger.info(`Job ${job.id} completed`);
+export const pushQueue = new Queue('push-notifications', {
+    connection: bullRedis,
+    defaultJobOptions: {
+        removeOnComplete: 1000,
+        removeOnFail: 5000,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
     },
-    { connection }
-);
-
-worker.on('completed', (job) => {
-    logger.info(`Job ${job.id} has completed!`);
 });
 
-worker.on('failed', (job, err) => {
-    logger.error(`Job ${job?.id} has failed with ${err.message}`);
+export const pushWorker = new Worker(
+    'push-notifications',
+    async (job: any) => {
+        const { userId, payload } = job.data;
+        await sendPushToUser(userId, payload);
+    },
+    { connection: bullRedis, concurrency: 10 }
+);
+
+pushWorker.on('failed', (job: any, err: any) => {
+    logger.error(`Push job ${job?.id} failed: ${err.message}`);
 });

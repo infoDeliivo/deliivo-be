@@ -6,7 +6,7 @@ import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
 import { getCache, setCache, deleteCache } from '../../services/cache.service.js';
 import { getCurrentFuelPrice, refreshFuelPrice as refreshFuelPriceSvc } from '../../services/fuel-price.service.js';
-
+import { logError } from '../../utils/logger.js';
 
 // Cache key helpers (for published rides only)
 const cacheKeys = {
@@ -309,22 +309,23 @@ export const updatePricing = async (req: AuthRequest, res: Response) => {
 /* ================= STEP 13: UPDATE NOTES ================= */
 export const updateNotes = async (req: AuthRequest, res: Response) => {
     try {
-        const draft = await DraftRideService.updateNotes(req.user.id, req.body.notes);
+        const draft = await DraftRideService.updateNotes(req.user.id, req.body.notes, req.body.femaleOnly);
 
         return sendSuccess(res, {
             message: 'Notes updated successfully',
             data: formatDraftResponse(draft),
         });
     } catch (error: any) {
-        const status = error.message === 'DRAFT_NOT_FOUND'
-            ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
-        return sendError(res, {
-            status,
-            message: error.message === 'DRAFT_NOT_FOUND'
-                ? 'Draft not found'
-                : 'Failed to update notes',
-        });
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to update notes';
+        if (error.message === 'DRAFT_NOT_FOUND') {
+            status = HttpStatus.NOT_FOUND;
+            message = 'Draft not found';
+        } else if (error.message === 'FEMALE_ONLY_NOT_ALLOWED') {
+            status = HttpStatus.FORBIDDEN;
+            message = 'Only female drivers can publish female-only rides';
+        }
+        return sendError(res, { status, message });
     }
 };
 
@@ -359,6 +360,12 @@ export const publishRide = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'CAPACITY_AND_PRICING_REQUIRED') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Seats and pricing are required before publishing';
+        } else if (error.message === 'TOS_NOT_ACCEPTED') {
+            status = HttpStatus.FORBIDDEN;
+            message = 'You must accept the Terms of Service before publishing a ride';
+        } else if (error.message === 'DRIVER_NOT_VERIFIED') {
+            status = HttpStatus.FORBIDDEN;
+            message = 'Your driving licence must be verified before publishing a ride';
         } else if (error.message === 'VEHICLE_REQUIRED') {
             status = HttpStatus.BAD_REQUEST;
             message = 'A vehicle is required before publishing a ride';
@@ -455,7 +462,7 @@ export const getUserRides = async (req: AuthRequest, res: Response) => {
             data: result,
         });
     } catch (error: any) {
-        console.log("error", error);
+        logError('Publish ride error', error);
 
         return sendError(res, {
             status: error.message === 'RIDE_NOT_FOUND'
@@ -472,21 +479,7 @@ export const getUserRides = async (req: AuthRequest, res: Response) => {
 export const getRideById = async (req: AuthRequest, res: Response) => {
     try {
         const rideId = req.params.id as string;
-        const cacheKey = cacheKeys.ride(rideId);
-
-        // Try cache first
-        const cachedRide = await getCache(cacheKey);
-        if (cachedRide) {
-            return sendSuccess(res, {
-                message: 'Ride fetched successfully',
-                data: cachedRide,
-            });
-        }
-
         const ride = await PublishRideService.getRideById(req.user.id, rideId);
-
-        // Cache the result
-        await setCache(cacheKey, ride);
 
         return sendSuccess(res, {
             message: 'Ride fetched successfully',
@@ -531,6 +524,52 @@ export const cancelRide = async (req: AuthRequest, res: Response) => {
     }
 };
 
+/* ================= START RIDE ================= */
+export const startRide = async (req: AuthRequest, res: Response) => {
+    try {
+        const rideId = req.params.id as string;
+        await PublishRideService.startRide(req.user.id, rideId);
+
+        await deleteCache(cacheKeys.ride(rideId));
+        await deleteCache(cacheKeys.userRides(req.user.id));
+
+        return sendSuccess(res, { message: 'Ride started successfully' });
+    } catch (error: any) {
+        const status = error.message === 'RIDE_NOT_FOUND_OR_CANNOT_START'
+            ? HttpStatus.NOT_FOUND
+            : HttpStatus.INTERNAL_ERROR;
+        return sendError(res, {
+            status,
+            message: error.message === 'RIDE_NOT_FOUND_OR_CANNOT_START'
+                ? 'Ride not found or cannot be started'
+                : 'Failed to start ride',
+        });
+    }
+};
+
+/* ================= COMPLETE RIDE ================= */
+export const completeRide = async (req: AuthRequest, res: Response) => {
+    try {
+        const rideId = req.params.id as string;
+        await PublishRideService.completeRide(req.user.id, rideId);
+
+        await deleteCache(cacheKeys.ride(rideId));
+        await deleteCache(cacheKeys.userRides(req.user.id));
+
+        return sendSuccess(res, { message: 'Ride completed successfully' });
+    } catch (error: any) {
+        const status = error.message === 'RIDE_NOT_FOUND_OR_CANNOT_COMPLETE'
+            ? HttpStatus.NOT_FOUND
+            : HttpStatus.INTERNAL_ERROR;
+        return sendError(res, {
+            status,
+            message: error.message === 'RIDE_NOT_FOUND_OR_CANNOT_COMPLETE'
+                ? 'Ride not found or cannot be completed'
+                : 'Failed to complete ride',
+        });
+    }
+};
+
 /* ============================================================
    FUEL PRICE — DEBUG & REFRESH
    ============================================================ */
@@ -538,7 +577,7 @@ export const cancelRide = async (req: AuthRequest, res: Response) => {
 /* ================= GET CURRENT FUEL PRICE ================= */
 export const getFuelPrice = async (req: AuthRequest, res: Response) => {
     try {
-        const currency = (req.query.currency as string) || 'GBP';
+        const currency = (req.query.currency as string) || 'EUR';
         const fuelPrice = await getCurrentFuelPrice(currency);
 
         return sendSuccess(res, {

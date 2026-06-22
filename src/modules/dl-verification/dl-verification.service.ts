@@ -1,6 +1,7 @@
 import axios from 'axios';
 import crypto from 'crypto';
 import { prisma } from '../../config/index.js';
+import { logError, logWarn, logDebug } from '../../utils/logger.js';
 
 const VERIFF_BASE_URL = process.env.VERIFF_BASE_URL || 'https://stationapi.veriff.com/v1';
 const VERIFF_API_KEY = process.env.VERIFF_API_KEY || '';
@@ -96,7 +97,6 @@ export const createVeriffSession = async (
       ...(tag && { tag }),
     },
   };
-  console.log("1jhhguffiu")
   try {
     const payloadString = JSON.stringify(payload);
     const signature = crypto
@@ -111,7 +111,6 @@ export const createVeriffSession = async (
         'Content-Type': 'application/json',
       },
     });
-   console.log(response,"jhhguffiu")
 
     const { id: sessionId, url: sessionUrl } = response.data.verification;
 
@@ -134,9 +133,7 @@ export const createVeriffSession = async (
       },
     };
   } catch (error: any) {
-    console.log(error,"jhg");
-    
-    console.error('Veriff createSession error:', error?.response?.data || error.message);
+    logError('Veriff createSession error', error, { detail: error?.response?.data });
     return {
       success: false,
       reason: 'VERIFF_API_ERROR',
@@ -190,7 +187,7 @@ export const handleWebhookDecision = async (body: any) => {
   });
 
   if (!record) {
-    console.warn(`Veriff webhook: no record found for session ${sessionId}`);
+    logWarn('Veriff webhook: no record found', { sessionId });
     return { success: false, reason: 'SESSION_NOT_FOUND' };
   }
 

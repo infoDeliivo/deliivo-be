@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../types/auth.js';
 import { HttpStatus, sendSuccess, sendError } from '../../utils/index.js';
+import { logError } from '../../utils/logger.js';
 import { uploadToS3 } from '../../services/s3.service.js';
 import { getCache, setCache, deleteCache, cacheKeys } from '../../services/cache.service.js';
 import type { FullProfileResponse, PublicProfileResponse } from './user.types.js';
@@ -14,6 +15,8 @@ import {
   updateProfileService,
   updateAvatarService,
 } from './user.service.js';
+import { reportUser, blockUser, unblockUser, listBlockedUsers } from './user-safety.service.js';
+import { exportUserData, deleteUserAccount } from './user-gdpr.service.js';
 
 // Cache TTL constants
 const PROFILE_CACHE_TTL = 300; // 5 minutes
@@ -54,7 +57,7 @@ export const getMe = async (req: AuthRequest, res: Response) => {
       data: user,
     });
   } catch (error) {
-    console.error('getMe controller error:', error);
+    logError('getMe controller error', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Server error',
@@ -112,7 +115,7 @@ export const getFullProfile = async (req: AuthRequest, res: Response) => {
       data,
     });
   } catch (error) {
-    console.error('getFullProfile controller error:', error);
+    logError('getFullProfile controller error', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Server error',
@@ -157,7 +160,7 @@ export const updateFullProfile = async (req: AuthRequest, res: Response) => {
       data,
     });
   } catch (error) {
-    console.error('updateFullProfile controller error:', error);
+    logError('updateFullProfile controller error', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Server error',
@@ -193,11 +196,12 @@ export const completeOnBoardingStep1 = async (req: AuthRequest, res: Response) =
         id: user!.id,
         name: user!.name,
         email: user!.email,
-        role: 'USER',
+        gender: user!.gender,
+        role: user!.role,
       },
     });
   } catch (error) {
-    console.error('completeOnBoardingStep1 controller error:', error);
+    logError('completeOnBoardingStep1 controller error', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Server error',
@@ -234,7 +238,7 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
       data: user,
     });
   } catch (error) {
-    console.error('updateProfile controller error:', error);
+    logError('updateProfile controller error', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Server error',
@@ -257,6 +261,7 @@ export const uploadAvatar = async (req: AuthRequest, res: Response) => {
     const uploadResult = await uploadToS3({
       folder: 'avatar',
       file: req.file,
+      ownerId: req.user.id,
     });
 
     if (!uploadResult.success) {
@@ -268,7 +273,7 @@ export const uploadAvatar = async (req: AuthRequest, res: Response) => {
 
     // Update user avatar URL in database
     const userId = req.user.id;
-    const { success, user, reason } = await updateAvatarService(userId, uploadResult.url!);
+    const { success, user, reason } = await updateAvatarService(userId, uploadResult.url!, uploadResult.key);
 
     if (!success) {
       return sendError(res, {
@@ -290,12 +295,64 @@ export const uploadAvatar = async (req: AuthRequest, res: Response) => {
       data: { avatarUrl: user?.avatarUrl },
     });
   } catch (error) {
-    console.error('uploadAvatar controller error:', error);
+    logError('uploadAvatar controller error', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Server error',
       error,
     });
+  }
+};
+
+// ====================== REPORT USER ======================
+export const reportUserHandler = async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await reportUser(req.user.id, req.params.userId as string, req.body.reason, req.body.details);
+    return sendSuccess(res, { message: 'Report submitted', data: result });
+  } catch (error: any) {
+    if (error.message === 'CANNOT_REPORT_SELF')
+      return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'You cannot report yourself' });
+    if (error.message === 'ALREADY_REPORTED')
+      return sendError(res, { status: HttpStatus.CONFLICT, message: 'You have already reported this user' });
+    if (error.message === 'USER_NOT_FOUND')
+      return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+    return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to submit report' });
+  }
+};
+
+// ====================== BLOCK USER ======================
+export const blockUserHandler = async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await blockUser(req.user.id, req.params.userId as string);
+    return sendSuccess(res, { message: 'User blocked', data: result });
+  } catch (error: any) {
+    if (error.message === 'CANNOT_BLOCK_SELF')
+      return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'You cannot block yourself' });
+    if (error.message === 'USER_NOT_FOUND')
+      return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+    return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to block user' });
+  }
+};
+
+// ====================== UNBLOCK USER ======================
+export const unblockUserHandler = async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await unblockUser(req.user.id, req.params.userId as string);
+    return sendSuccess(res, { message: 'User unblocked', data: result });
+  } catch (error: any) {
+    if (error.message === 'BLOCK_NOT_FOUND')
+      return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Block not found' });
+    return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to unblock user' });
+  }
+};
+
+// ====================== LIST BLOCKED USERS ======================
+export const listBlockedUsersHandler = async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await listBlockedUsers(req.user.id);
+    return sendSuccess(res, { message: 'Blocked users fetched', data: result });
+  } catch {
+    return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch blocked users' });
   }
 };
 
@@ -357,11 +414,37 @@ export const getPublicProfile = async (req: AuthRequest, res: Response) => {
       data,
     });
   } catch (error) {
-    console.error('getPublicProfile controller error:', error);
+    logError('getPublicProfile controller error', error);
     return sendError(res, {
       status: HttpStatus.INTERNAL_ERROR,
       message: 'Server error',
       error,
     });
+  }
+};
+
+// ====================== GDPR: DATA EXPORT ======================
+export const dataExport = async (req: AuthRequest, res: Response) => {
+  try {
+    const data = await exportUserData(req.user.id);
+    return sendSuccess(res, { message: 'Data export ready', data });
+  } catch {
+    return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to export data' });
+  }
+};
+
+// ====================== GDPR: DELETE ACCOUNT ======================
+export const deleteAccount = async (req: AuthRequest, res: Response) => {
+  try {
+    if (req.body?.confirm !== true) {
+      return sendError(res, {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Send { "confirm": true } to confirm account deletion',
+      });
+    }
+    const result = await deleteUserAccount(req.user.id);
+    return sendSuccess(res, { message: 'Account deleted. Your personal data has been removed.', data: result });
+  } catch {
+    return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to delete account' });
   }
 };

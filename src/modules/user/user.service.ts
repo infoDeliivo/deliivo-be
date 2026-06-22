@@ -1,5 +1,6 @@
 import { prisma } from '../../config/index.js';
 import * as enums from './user.constants.js';
+import { logError } from '../../utils/logger.js';
 import type {
   FullProfileResponse,
   UserBasicInfo,
@@ -17,17 +18,22 @@ export const getMeService = async (userId: string) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        nickName: true,
-        salutation: true,
-        dob: true,
-        email: true,
-        phone: true,
-        avatarUrl: true,
-        onboardingStatus: true,
+        select: {
+          id: true,
+          role: true,
+          name: true,
+          nickName: true,
+          salutation: true,
+          gender: true,
+          dob: true,
+          tosAcceptedAt: true,
+          privacyAcceptedAt: true,
+          email: true,
+          phone: true,
+          avatarUrl: true,
+          onboardingStatus: true,
         isVerified: true,
+        isBanned: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -36,9 +42,13 @@ export const getMeService = async (userId: string) => {
     if (!user) {
       return { success: false, user: null, reason: 'User not found' };
     }
+    // GDPR-deleted accounts are anonymized: isBanned=true and email=null
+    if (user.isBanned && !user.email) {
+      return { success: false, user: null, reason: 'Account has been deleted' };
+    }
     return { success: true, user };
   } catch (error) {
-    console.error('getMeService error:', error);
+    logError('getMeService error', error);
     return { success: false, user: null, reason: 'Internal server error' };
   }
 };
@@ -59,7 +69,7 @@ export const getFullProfileService = async (
   try {
     // Single query with includes - no N+1 problem
     // Plus parallel stats aggregation
-    const [userWithRelations, totalRides, totalBookings, ratingStats] = await Promise.all([
+    const [userWithRelations, totalRides, totalBookings, successfulPublishedRides, successfulCompletedRides, ratingStats] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
         include: {
@@ -71,6 +81,8 @@ export const getFullProfileService = async (
       }),
       prisma.ride.count({ where: { driverId: userId } }),
       prisma.rideBooking.count({ where: { passengerId: userId } }),
+      prisma.ride.count({ where: { driverId: userId, status: 'COMPLETED' } }),
+      prisma.rideBooking.count({ where: { passengerId: userId, status: 'COMPLETED' } }),
       prisma.userRatingStats.findUnique({ where: { userId } }),
     ]);
 
@@ -81,10 +93,14 @@ export const getFullProfileService = async (
     // Transform user to include email/phone as objects
     const userBasicInfo: UserBasicInfo = {
       id: userWithRelations.id,
+      role: userWithRelations.role,
       name: userWithRelations.name,
       nickName: userWithRelations.nickName,
       salutation: userWithRelations.salutation,
+      gender: userWithRelations.gender,
       dob: userWithRelations.dob,
+      tosAcceptedAt: userWithRelations.tosAcceptedAt,
+      privacyAcceptedAt: userWithRelations.privacyAcceptedAt,
       email: {
         value: userWithRelations.email,
         isVerified: userWithRelations.emailVerified,
@@ -127,6 +143,8 @@ export const getFullProfileService = async (
     const stats: UserStats = {
       totalRides,
       totalBookings,
+      successfulPublishedRides,
+      successfulCompletedRides,
       memberSince: userWithRelations.createdAt,
     };
 
@@ -153,7 +171,7 @@ export const getFullProfileService = async (
 
     return { success: true, data: profileData };
   } catch (error) {
-    console.error('getFullProfileService error:', error);
+    logError('getFullProfileService error', error);
     return { success: false, reason: 'INTERNAL_SERVER_ERROR' };
   }
 };
@@ -193,6 +211,7 @@ export const updateFullProfileService = async (
       if (basicData.name !== undefined) userUpdateData.name = basicData.name;
       if (basicData.nickName !== undefined) userUpdateData.nickName = basicData.nickName;
       if (basicData.salutation !== undefined) userUpdateData.salutation = basicData.salutation;
+      if (basicData.gender !== undefined) userUpdateData.gender = basicData.gender;
       if (basicData.dob !== undefined) userUpdateData.dob = new Date(basicData.dob);
 
       // Update user if there are fields to update
@@ -235,7 +254,7 @@ export const updateFullProfileService = async (
     // Return updated profile
     return getFullProfileService(userId);
   } catch (error) {
-    console.error('updateFullProfileService error:', error);
+    logError('updateFullProfileService error', error);
     return { success: false, reason: 'INTERNAL_SERVER_ERROR' };
   }
 };
@@ -243,7 +262,12 @@ export const updateFullProfileService = async (
 // ====================== ONBOARDING SERVICE ======================
 export const completeOnBoardingStep1Service = async (
   userId: string,
-  data: { name: string; salutation: 'MS' | 'MR' | 'MRS' | 'MX' | 'OTHER'; dob: string },
+  data: {
+    name: string;
+    salutation: 'MS' | 'MR' | 'MRS' | 'MX' | 'OTHER';
+    gender: 'MALE' | 'FEMALE' | 'NON_BINARY' | 'OTHER' | 'PREFER_NOT_TO_SAY';
+    dob: string;
+  },
 ) => {
   try {
     const existingUser = await prisma.user.findUnique({
@@ -263,6 +287,7 @@ export const completeOnBoardingStep1Service = async (
       data: {
         name: data.name,
         salutation: data.salutation,
+        gender: data.gender,
         dob: new Date(data.dob),
         onboardingStatus: 'COMPLETED',
       },
@@ -270,7 +295,7 @@ export const completeOnBoardingStep1Service = async (
 
     return { success: true, user };
   } catch (error) {
-    console.error('completeOnBoardingStep1Service error:', error);
+    logError('completeOnBoardingStep1Service error', error);
     return { success: false, user: null, reason: 'Internal server error' };
   }
 };
@@ -304,13 +329,13 @@ export const updateProfileService = async (userId: string, payload: Record<strin
 
     return { success: true, user: updatedUser };
   } catch (error) {
-    console.error('updateProfileService error:', error);
+    logError('updateProfileService error', error);
     return { success: false, reason: 'Internal server error' };
   }
 };
 
 // ====================== UPDATE AVATAR SERVICE ======================
-export const updateAvatarService = async (userId: string, avatarUrl: string) => {
+export const updateAvatarService = async (userId: string, avatarUrl: string, avatarKey?: string) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -322,18 +347,19 @@ export const updateAvatarService = async (userId: string, avatarUrl: string) => 
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: { avatarUrl },
+      data: { avatarUrl, avatarKey },
       select: {
         id: true,
         name: true,
         email: true,
         avatarUrl: true,
+        avatarKey: true,
       },
     });
 
     return { success: true, user: updatedUser };
   } catch (error) {
-    console.error('updateAvatarService error:', error);
+    logError('updateAvatarService error', error);
     return { success: false, reason: 'Internal server error' };
   }
 };
@@ -355,11 +381,12 @@ export const getPublicProfileService = async (
   try {
     // Single query with includes - no N+1 problem
     // Plus parallel stats aggregation
-    const [userWithRelations, totalRides, totalBookings, ratingStats] = await Promise.all([
+    const [userWithRelations, totalRides, totalBookings, successfulPublishedRides, successfulCompletedRides, ratingStats] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
         select: {
           id: true,
+          role: true,
           name: true,
           nickName: true,
           avatarUrl: true,
@@ -373,6 +400,8 @@ export const getPublicProfileService = async (
       }),
       prisma.ride.count({ where: { driverId: userId } }),
       prisma.rideBooking.count({ where: { passengerId: userId } }),
+      prisma.ride.count({ where: { driverId: userId, status: 'COMPLETED' } }),
+      prisma.rideBooking.count({ where: { passengerId: userId, status: 'COMPLETED' } }),
       prisma.userRatingStats.findUnique({ where: { userId } }),
     ]);
 
@@ -383,6 +412,7 @@ export const getPublicProfileService = async (
     // Transform user to public info (exclude sensitive data)
     const publicUserInfo: PublicUserInfo = {
       id: userWithRelations.id,
+      role: userWithRelations.role,
       name: userWithRelations.name,
       nickName: userWithRelations.nickName,
       avatarUrl: userWithRelations.avatarUrl,
@@ -418,6 +448,8 @@ export const getPublicProfileService = async (
     const stats: UserStats = {
       totalRides,
       totalBookings,
+      successfulPublishedRides,
+      successfulCompletedRides,
       memberSince: userWithRelations.createdAt,
     };
 
@@ -444,7 +476,7 @@ export const getPublicProfileService = async (
 
     return { success: true, data: profileData };
   } catch (error) {
-    console.error('getPublicProfileService error:', error);
+    logError('getPublicProfileService error', error);
     return { success: false, reason: 'INTERNAL_SERVER_ERROR' };
   }
 };

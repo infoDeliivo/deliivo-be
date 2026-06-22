@@ -3,8 +3,9 @@ import { AuthRequest } from '../types/auth.js';
 import { verifyAccessToken } from '../modules/token/tokens.service.js';
 import { sendError } from '../utils/apiResponse.js';
 import { HttpStatus } from '../utils/httpStatus.js';
+import redis from '../cache/redis.js';
 
-export const protect: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
+export const protect: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
   const authReq = req as AuthRequest;
   let token;
 
@@ -21,7 +22,17 @@ export const protect: RequestHandler = (req: Request, res: Response, next: NextF
 
   try {
     const decoded = verifyAccessToken(token);
-    authReq.user = decoded; // safely assign to AuthRequest
+
+    // Check if user is banned (Redis key set on ban action)
+    const isBanned = await redis.get(`banned:${decoded.id}`);
+    if (isBanned === '1') {
+      return sendError(res, {
+        message: 'Account suspended',
+        status: HttpStatus.FORBIDDEN,
+      });
+    }
+
+    authReq.user = decoded;
     next();
   } catch (error) {
     return sendError(res, {

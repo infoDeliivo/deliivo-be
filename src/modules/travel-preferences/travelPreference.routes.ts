@@ -7,6 +7,7 @@ import { AuthRequest } from '../../types/auth.js';
 
 const router = Router();
 
+router.post('/', validate({ body: travelPreferenceSchema }), saveTravelPreference as RequestHandler);
 router.put('/', validate({ body: travelPreferenceSchema }), saveTravelPreference as RequestHandler);
 
 router.get('/', asyncHandler<AuthRequest>(getTravelPreference));

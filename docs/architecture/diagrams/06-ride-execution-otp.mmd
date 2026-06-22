@@ -1,0 +1,34 @@
+sequenceDiagram
+    participant P as Passenger
+    participant D as Driver App
+    participant API as API Server
+    participant DB as PostgreSQL
+    participant WS as WebSocket
+
+    Note over P,DB: Ride day - Driver starts ride
+
+    D->>API: POST /publish-ride/:id/start
+    API->>DB: Ride status to IN_PROGRESS
+    API->>WS: Notify all passengers
+
+    Note over P,D: At pickup point
+
+    P->>D: Share 6-digit Pickup OTP verbally
+    D->>API: POST /driver/bookings/:id/pickup-otp/verify otp
+    API->>DB: Verify OTP hash then Booking to IN_PROGRESS
+    API->>WS: Notify passenger Pickup verified
+
+    Note over P,D: At drop-off point
+
+    P->>D: Share 6-digit Drop OTP verbally
+    D->>API: POST /driver/bookings/:id/drop-otp/verify otp
+    API->>DB: Verify OTP hash then Booking to COMPLETED
+    API->>WS: Notify passenger Trip completed
+
+    Note over P,D: Post-trip ratings
+
+    P->>API: POST /ratings/bookings/:id stars 5, text Great
+    API->>DB: Create rating, update driver averageRating
+
+    D->>API: POST /ratings/bookings/:id stars 4
+    API->>DB: Create rating, update passenger averageRating

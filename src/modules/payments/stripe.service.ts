@@ -1,6 +1,7 @@
+// @ts-ignore — stripe v21 types bundled via package exports; not resolved by "Node" moduleResolution
 import Stripe from 'stripe';
 import { STRIPE_CURRENCY_DEFAULT, STRIPE_METADATA_KEYS } from './stripe.constants.js';
-import { CreatePaymentIntentInput, CreatePaymentIntentResult } from './stripe.types.js';
+import { ConnectAccountStatus, CreatePaymentIntentInput, CreatePaymentIntentResult } from './stripe.types.js';
 
 let stripeClient: Stripe | null = null;
 
@@ -38,6 +39,46 @@ export const getStripeClient = (): Stripe => {
     return stripeClient;
 };
 
+export const createConnectOnboardingLink = async (
+    userId: string,
+    stripeAccountId: string | null,
+    returnUrl: string,
+    refreshUrl: string
+): Promise<{ accountId: string; onboardingUrl: string }> => {
+    const stripe = getStripeClient();
+
+    let accountId = stripeAccountId;
+    if (!accountId) {
+        const account = await stripe.accounts.create({
+            type: 'express',
+            metadata: { userId },
+        });
+        accountId = account.id;
+    }
+
+    const accountLink = await stripe.accountLinks.create({
+        account: accountId,
+        return_url: returnUrl,
+        refresh_url: refreshUrl,
+        type: 'account_onboarding',
+    });
+
+    return { accountId: accountId as string, onboardingUrl: accountLink.url ?? '' };
+};
+
+export const getConnectAccountStatus = async (
+    stripeAccountId: string
+): Promise<ConnectAccountStatus> => {
+    const stripe = getStripeClient();
+    const account = await stripe.accounts.retrieve(stripeAccountId);
+    return {
+        accountId: account.id,
+        chargesEnabled: account.charges_enabled,
+        payoutsEnabled: account.payouts_enabled,
+        detailsSubmitted: account.details_submitted,
+    };
+};
+
 export const createBookingPaymentIntent = async (
     input: CreatePaymentIntentInput
 ): Promise<CreatePaymentIntentResult> => {
@@ -47,6 +88,8 @@ export const createBookingPaymentIntent = async (
         {
             amount: toMinorUnits(input.amountMajor),
             currency: (input.currency || STRIPE_CURRENCY_DEFAULT).toLowerCase(),
+            capture_method: input.captureMethod ?? 'automatic',
+            ...(input.customerId ? { customer: input.customerId } : {}),
             metadata: {
                 [STRIPE_METADATA_KEYS.bookingId]: input.bookingId,
                 [STRIPE_METADATA_KEYS.rideId]: input.rideId,
@@ -77,6 +120,22 @@ export const refundPaymentIntent = async (
         payment_intent: paymentIntentId,
         ...(typeof amountMinor === 'number' ? { amount: amountMinor } : {}),
     });
+};
+
+export const capturePaymentIntent = async (
+    paymentIntentId: string,
+    amountMinor?: number
+) => {
+    const stripe = getStripeClient();
+    return stripe.paymentIntents.capture(
+        paymentIntentId,
+        amountMinor ? { amount_to_capture: amountMinor } : undefined
+    );
+};
+
+export const cancelPaymentIntent = async (paymentIntentId: string) => {
+    const stripe = getStripeClient();
+    return stripe.paymentIntents.cancel(paymentIntentId);
 };
 
 export const constructStripeEvent = (

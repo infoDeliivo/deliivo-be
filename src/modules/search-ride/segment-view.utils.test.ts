@@ -65,6 +65,77 @@ describe('resolveSegmentView', () => {
         expect(result?.bookingContext?.dropoffWaypointId).toBeNull();
     });
 
+    it('interpolates price when stopover has null pricePerSeat', () => {
+        const rideWithNullPrice = {
+            ...ride,
+            waypoints: [
+                {
+                    id: 'wp-b',
+                    placeId: 'place-b',
+                    address: 'B',
+                    lat: 2,
+                    lng: 2,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 50,
+                    pricePerSeat: null,  // No price set
+                },
+                {
+                    id: 'wp-c',
+                    placeId: 'place-c',
+                    address: 'C',
+                    lat: 3,
+                    lng: 3,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 51,
+                    pricePerSeat: null,  // No price set
+                },
+            ],
+        };
+
+        const points = buildSegmentPoints(rideWithNullPrice);
+        // With 2 stopovers and basePricePerSeat=30:
+        // B interpolated = 30 * (1/3) = 10
+        // C interpolated = 30 * (2/3) = 20
+        expect(points[1].cumulativePrice).toBe(10);
+        expect(points[2].cumulativePrice).toBe(20);
+
+        const result = resolveSegmentView(rideWithNullPrice, points, 'origin', 'waypoint:wp-b');
+        expect(result).not.toBeNull();
+        expect(result?.basePricePerSeat).toBe(10);
+    });
+
+    it('interpolates single stopover without price as midpoint', () => {
+        const rideWithOneMissingPrice = {
+            ...ride,
+            waypoints: [
+                {
+                    id: 'wp-mid',
+                    placeId: 'place-mid',
+                    address: 'Mid',
+                    lat: 2.5,
+                    lng: 2.5,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 50,
+                    pricePerSeat: null,
+                },
+            ],
+        };
+
+        const points = buildSegmentPoints(rideWithOneMissingPrice);
+        // Single stopover: ratio = 1/2, price = 30 * 0.5 = 15
+        expect(points[1].cumulativePrice).toBe(15);
+
+        const result = resolveSegmentView(rideWithOneMissingPrice, points, 'origin', 'destination');
+        expect(result?.basePricePerSeat).toBe(30);
+    });
+
+    it('uses explicit pricePerSeat when set, skips interpolation', () => {
+        const points = buildSegmentPoints(ride);
+        // wp-b has explicit price 10, wp-c has explicit price 20
+        expect(points[1].cumulativePrice).toBe(10);
+        expect(points[2].cumulativePrice).toBe(20);
+    });
+
     it('ignores non-stopover waypoints so origin -> first stopover remains valid', () => {
         const rideWithPickupAndDropoff = {
             ...ride,

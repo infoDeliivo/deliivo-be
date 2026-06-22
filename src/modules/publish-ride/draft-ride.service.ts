@@ -1,4 +1,5 @@
 import redis from '../../cache/redis.js';
+import { logWarn } from '../../utils/logger.js';
 import { prisma } from '../../config/index.js';
 import { RideStatus } from '@prisma/client';
 import {
@@ -22,6 +23,8 @@ import {
 } from './publish-ride.types.js';
 import { getFuelPriceForCurrency } from '../../services/fuel-price.service.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
+import { validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { createNotification } from '../notification/notification.service.js';
 
 // ============================================================
 //  CONSTANTS
@@ -107,9 +110,15 @@ interface DraftRide {
   vehicleId?: string | null;
   maxLuggagePerPerson?: number;
   backSeatOnly?: boolean;
+  noSmoking?: boolean;
+  noBicycles?: boolean;
+  childSeatAvailable?: boolean;
 
   // Notes (Step 13)
   notes?: string;
+
+    // Preferences
+    femaleOnly?: boolean;
 }
 
 /**
@@ -227,30 +236,87 @@ export const computeRouteOptions = async (
   const origin = { latitude: draft.originLat, longitude: draft.originLng };
   const destination = { latitude: draft.destinationLat, longitude: draft.destinationLng };
 
-  // Build intermediate waypoints from stopovers
+    let data: any;
+
+    if (process.env.GOOGLE_MAPS_MOCK_MODE === 'true') {
+        // Mock mode: generate 3 synthetic routes with slight variations
+        const distMeters = Math.round(
+            haversineDistance(
+                { lat: origin.latitude, lng: origin.longitude! },
+                { lat: destination.latitude, lng: destination.longitude! }
+            )
+        );
+
+        // Generate 3 routes with different characteristics
+        const midLat = (origin.latitude + destination.latitude) / 2;
+        const midLng = (origin.longitude! + destination.longitude!) / 2;
+
+        // Route 1: Direct (slight curve north)
+        const route1Points: [number, number][] = [
+            [origin.latitude, origin.longitude!],
+            [midLat + 0.15, midLng - 0.05],
+            [destination.latitude, destination.longitude!],
+        ];
+        // Route 2: Via south (longer, scenic)
+        const route2Points: [number, number][] = [
+            [origin.latitude, origin.longitude!],
+            [origin.latitude - 0.1, origin.longitude! + (destination.longitude! - origin.longitude!) * 0.3],
+            [midLat - 0.2, midLng],
+            [destination.latitude - 0.1, destination.longitude! - (destination.longitude! - origin.longitude!) * 0.2],
+            [destination.latitude, destination.longitude!],
+        ];
+        // Route 3: Highway (slight curve, fastest)
+        const route3Points: [number, number][] = [
+            [origin.latitude, origin.longitude!],
+            [midLat + 0.05, midLng + 0.1],
+            [destination.latitude, destination.longitude!],
+        ];
+
+        const routes = [
+            {
+                distanceMeters: Math.round(distMeters * 1.15), // ~15% longer than straight
+                duration: `${Math.round((distMeters * 1.15) / 25)}s`,
+                polyline: { encodedPolyline: mockEncodePolyline(route1Points) },
+            },
+            {
+                distanceMeters: Math.round(distMeters * 1.35), // ~35% longer (scenic)
+                duration: `${Math.round((distMeters * 1.35) / 22)}s`,
+                polyline: { encodedPolyline: mockEncodePolyline(route2Points) },
+            },
+            {
+                distanceMeters: Math.round(distMeters * 1.1), // ~10% longer (highway, fastest)
+                duration: `${Math.round((distMeters * 1.1) / 28)}s`,
+                polyline: { encodedPolyline: mockEncodePolyline(route3Points) },
+            },
+        ];
+
+        data = { routes };
+    } else {
+        // Build intermediate waypoints from stopovers
   const intermediateWaypoints = (draft.stopovers || []).map((wp) => ({
     latitude: wp.lat,
     longitude: wp.lng,
   }));
 
-  // Call Google Routes API
-  const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': process.env.GOOGLE_MAPS_API_KEY || '',
-      'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
-    },
-    body: JSON.stringify({
-      origin: { location: { latLng: origin } },
-      destination: { location: { latLng: destination } },
+        // Call Google Routes API
+        const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Goog-Api-Key': process.env.GOOGLE_MAPS_API_KEY || '',
+                'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+            },
+            body: JSON.stringify({
+                origin: { location: { latLng: origin } },
+                destination: { location: { latLng: destination } },
       intermediates: intermediateWaypoints.map((wp) => ({ location: { latLng: wp } })),
-      travelMode: 'DRIVE',
-      computeAlternativeRoutes: includeAlternatives,
-    }),
-  });
+                travelMode: 'DRIVE',
+                computeAlternativeRoutes: includeAlternatives,
+            }),
+        });
 
-  const data = await response.json();
+        data = await response.json();
+    }
 
   if (!data.routes || data.routes.length === 0) {
     throw new Error('NO_ROUTES_FOUND');
@@ -351,6 +417,45 @@ function decodePolyline(encoded: string): { lat: number; lng: number }[] {
   }
 
   return points;
+}
+
+/**
+ * Encode an array of [lat, lng] pairs into a Google-encoded polyline string.
+ * Used in mock mode to generate synthetic route polylines.
+ */
+function mockEncodePolyline(points: [number, number][]): string {
+    let encoded = '';
+    let prevLat = 0;
+    let prevLng = 0;
+
+    for (const [lat, lng] of points) {
+        const latE5 = Math.round(lat * 1e5);
+        const lngE5 = Math.round(lng * 1e5);
+
+        encoded += encodeSignedNumber(latE5 - prevLat);
+        encoded += encodeSignedNumber(lngE5 - prevLng);
+
+        prevLat = latE5;
+        prevLng = lngE5;
+    }
+
+    return encoded;
+}
+
+function encodeSignedNumber(num: number): string {
+    let sgn_num = num << 1;
+    if (num < 0) sgn_num = ~sgn_num;
+    return encodeUnsignedNumber(sgn_num);
+}
+
+function encodeUnsignedNumber(num: number): string {
+    let encoded = '';
+    while (num >= 0x20) {
+        encoded += String.fromCharCode((0x20 | (num & 0x1f)) + 63);
+        num >>= 5;
+    }
+    encoded += String.fromCharCode(num + 63);
+    return encoded;
 }
 
 /**
@@ -479,7 +584,7 @@ export const getStopoversAlongRoute = async (
       }
     } catch (err) {
       // Skip failed queries silently, continue with other points
-      console.error('Places API error for point:', point, err);
+            logWarn('Places API error for point', { point, error: err instanceof Error ? err.message : err });
     }
   }
 
@@ -572,6 +677,9 @@ export const updateCapacity = async (
   draft.vehicleId = vehicle?.id || null;
   draft.maxLuggagePerPerson = input.maxLuggagePerPerson ?? 2;
   draft.backSeatOnly = input.backSeatOnly ?? false;
+  draft.noSmoking = input.noSmoking ?? false;
+  draft.noBicycles = input.noBicycles ?? false;
+  draft.childSeatAvailable = input.childSeatAvailable ?? false;
   draft.step = Math.max(draft.step, 10);
 
   return saveDraft(draft);
@@ -601,7 +709,7 @@ export const getRecommendedPrice = async (
     throw new Error('ROUTE_REQUIRED_FOR_PRICING');
   }
 
-  const fuelContext = await getFuelPriceForCurrency(draft.currency || 'GBP');
+  const fuelContext = await getFuelPriceForCurrency(draft.currency || 'EUR');
   const fuelEfficiency =
     DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER > 0 ? DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER : 12;
   const pricePerKm = fuelContext.pricePerLiter / fuelEfficiency;
@@ -662,7 +770,7 @@ export const getRecommendedPrice = async (
     recommendedPrice,
     minPrice,
     maxPrice,
-    currency: draft.currency || 'GBP',
+    currency: draft.currency || 'EUR',
     breakdown: {
       fuelCost: Math.round(fuelCost * 100) / 100,
       distanceKm: Math.round(distanceKm * 10) / 10,
@@ -893,9 +1001,28 @@ export const updatePricing = async (
 //  STEP 13: UPDATE NOTES
 // ============================================================
 
-export const updateNotes = async (driverId: string, notes: string): Promise<DraftRide> => {
+export const updateNotes = async (
+    driverId: string,
+    notes: string,
+    femaleOnly?: boolean
+): Promise<DraftRide> => {
   const draft = await getDraft(driverId);
   draft.notes = notes;
+
+    if (femaleOnly === true) {
+        // Only female drivers can publish female-only rides
+        const driver = await prisma.user.findUnique({
+            where: { id: driverId },
+            select: { gender: true },
+        });
+        if (driver?.gender !== 'FEMALE') {
+            throw new Error('FEMALE_ONLY_NOT_ALLOWED');
+        }
+        draft.femaleOnly = true;
+    } else if (femaleOnly === false) {
+        draft.femaleOnly = false;
+    }
+
   draft.step = Math.max(draft.step, 13);
   return saveDraft(draft);
 };
@@ -920,6 +1047,21 @@ export const publishRide = async (driverId: string) => {
   if (!draft.totalSeats || !draft.basePricePerSeat) {
     throw new Error('CAPACITY_AND_PRICING_REQUIRED');
   }
+
+    // Validate driver has accepted ToS and has verified DL
+    const driver = await prisma.user.findUnique({
+        where: { id: driverId },
+        select: { dlVerified: true, tosAcceptedAt: true },
+    });
+
+    if (!driver?.tosAcceptedAt) {
+        throw new Error('TOS_NOT_ACCEPTED');
+    }
+
+    const skipDlCheck = process.env.SKIP_DL_VERIFICATION === 'true';
+    if (!driver?.dlVerified && !skipDlCheck) {
+        throw new Error('DRIVER_NOT_VERIFIED');
+    }
 
   // Validate user has a verified vehicle
   const vehicle = await prisma.vehicle.findFirst({
@@ -961,12 +1103,16 @@ export const publishRide = async (driverId: string) => {
         totalSeats: draft.totalSeats!,
         availableSeats: draft.totalSeats!,
         basePricePerSeat: draft.basePricePerSeat!,
-        currency: draft.currency || 'GBP',
+        currency: draft.currency || 'EUR',
 
         maxLuggagePerPerson: draft.maxLuggagePerPerson ?? 2,
         backSeatOnly: draft.backSeatOnly ?? false,
+        noSmoking: draft.noSmoking ?? false,
+        noBicycles: draft.noBicycles ?? false,
+        childSeatAvailable: draft.childSeatAvailable ?? false,
 
         notes: draft.notes || null,
+                femaleOnly: draft.femaleOnly ?? false,
         status: RideStatus.PUBLISHED,
       },
     });
@@ -1026,6 +1172,39 @@ export const publishRide = async (driverId: string) => {
       await tx.rideWaypoint.createMany({ data: allWaypoints });
     }
 
+        // Create segment capacity edges for per-segment seat tracking
+        const stopoverCount = stopovers.length;
+        const totalPositions = stopoverCount + 1; // edges = stopoverCount + 1 (origin→...→destination)
+        const segmentCapacityData = Array.from({ length: totalPositions }, (_, i) => ({
+            rideId: newRide.id,
+            fromPosition: i,
+            toPosition: i + 1,
+            occupiedSeats: 0,
+        }));
+        if (segmentCapacityData.length > 0) {
+            await tx.rideSegmentCapacity.createMany({ data: segmentCapacityData });
+        }
+
+        // Pricing validation: if PricingConfig exists, validate & create snapshot
+        if (newRide.routeDistanceMeters && newRide.routeDistanceMeters > 0) {
+            const distanceKm = newRide.routeDistanceMeters / 1000;
+            try {
+                const priceValidation = await validateAndSnapshotPricing({
+                    rideId: newRide.id,
+                    distanceKm,
+                    selectedPricePerSeat: newRide.basePricePerSeat,
+                });
+                if (!priceValidation.valid) {
+                    throw new Error(`PRICE_OUT_OF_RANGE: ${priceValidation.reason}`);
+                }
+            } catch (err: any) {
+                // If no pricing config exists for region, allow publish without validation
+                if (err.message !== 'PRICING_CONFIG_NOT_FOUND') {
+                    throw err;
+                }
+            }
+        }
+
     return tx.ride.findUnique({
       where: { id: newRide.id },
       include: { waypoints: { orderBy: { orderIndex: 'asc' } } },
@@ -1035,6 +1214,23 @@ export const publishRide = async (driverId: string) => {
   // ---- Cleanup: Remove draft + route cache from Redis ---- //
   await redis.del(draftKey(driverId));
   await redis.del(routesCacheKey(driverId));
+
+  if (ride) {
+    await createNotification({
+      userId: driverId,
+      type: 'ride.published',
+      title: 'Ride published',
+      body: `Your ride from ${ride.originAddress} to ${ride.destinationAddress} is live.`,
+      data: {
+        rideId: ride.id,
+        originAddress: ride.originAddress,
+        destinationAddress: ride.destinationAddress,
+        departureDate: ride.departureDate.toISOString(),
+        departureTime: ride.departureTime,
+        deepLink: `app://ride/${ride.id}/manage`,
+      },
+    });
+  }
 
   return ride;
 };

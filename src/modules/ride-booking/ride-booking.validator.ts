@@ -10,6 +10,14 @@ export const createBookingSchema = z.object({
     pickupWaypointId: z.string().uuid().optional(),
     dropoffWaypointId: z.string().uuid().optional(),
     notes: z.string().max(300, 'Notes must be 300 characters or less').optional(),
+    responseExpiryOption: z.enum([
+        'ONE_HOUR', 'THREE_HOURS', 'SIX_HOURS', 'TWELVE_HOURS', 'TWENTY_FOUR_HOURS', 'BEFORE_DEPARTURE',
+    ]).optional(),
+});
+
+/* ================= WITHDRAW REASON SCHEMA ================= */
+export const withdrawReasonSchema = z.object({
+    reason: z.string().max(300).optional(),
 });
 
 /* ================= PRICE PREVIEW SCHEMA ================= */
@@ -28,8 +36,13 @@ export const bookingIdParamSchema = z.object({
 });
 
 /* ================= LIST BOOKINGS QUERY SCHEMA ================= */
+const bookingStatusValues = Object.values(BookingStatus);
+
 export const listBookingsQuerySchema = z.object({
-    status: z.nativeEnum(BookingStatus).optional(),
+    status: z.string().optional().refine(
+        (value) => !value || value.split(',').every((status) => bookingStatusValues.includes(status as BookingStatus)),
+        'Invalid booking status'
+    ),
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(50).default(10),
 });

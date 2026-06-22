@@ -124,29 +124,31 @@ export const getConversations = async (
     const nextCursor = hasMore ? results[results.length - 1].id : null;
 
     // Build response with peer info and unread counts
-    const items = await Promise.all(
-        results.map(async (conv) => {
-            const peer = conv.userAId === userId ? conv.userB : conv.userA;
-            const lastMessage = conv.messages[0] || null;
+    // Batch fetch unread counts for all conversations at once
+    const conversationIds = results.map(conv => conv.id);
+    const unreadCounts = await prisma.message.groupBy({
+        by: ['conversationId'],
+        where: {
+            conversationId: { in: conversationIds },
+            receiverId: userId,
+            readAt: null,
+        },
+        _count: true,
+    });
+    const unreadMap = new Map(unreadCounts.map(c => [c.conversationId, c._count]));
 
-            // Count unread messages (sent to this user, not yet read)
-            const unreadCount = await prisma.message.count({
-                where: {
-                    conversationId: conv.id,
-                    receiverId: userId,
-                    readAt: null,
-                },
-            });
+    const items = results.map((conv) => {
+        const peer = conv.userAId === userId ? conv.userB : conv.userA;
+        const lastMessage = conv.messages[0] || null;
 
-            return {
-                id: conv.id,
-                peer,
-                lastMessage,
-                unreadCount,
-                updatedAt: conv.updatedAt,
-            };
-        }),
-    );
+        return {
+            id: conv.id,
+            peer,
+            lastMessage,
+            unreadCount: unreadMap.get(conv.id) || 0,
+            updatedAt: conv.updatedAt,
+        };
+    });
 
     return { items, nextCursor, hasMore };
 };

@@ -18,28 +18,14 @@ export const sendSuccess = (
   res: Response,
   { status = HttpStatus.OK, message = 'Success', data = null }: SuccessPayload,
 ) => {
-  // Fix HTTP/2 RST_STREAM CANCEL on mobile devices
-  res.set({
-    'Cache-Control': 'no-store, no-cache, must-revalidate',
-    'Content-Type': 'application/json; charset=utf-8',
-    'Connection': 'close', // Forces HTTP/1.1 fallback
-  });
-  
-  // Remove ETag to prevent caching issues
-  res.removeHeader('ETag');
-  
-  const responseBody = {
+  const requestId = (res.locals as { requestId?: string }).requestId;
+  return res.status(statusMap[status]).json({
     success: true,
     status,
     message,
     data,
-  };
-  
-  // Calculate exact Content-Length
-  const jsonString = JSON.stringify(responseBody);
-  res.set('Content-Length', Buffer.byteLength(jsonString, 'utf8').toString());
-  
-  return res.status(statusMap[status]).send(jsonString);
+    ...(requestId ? { requestId } : {}),
+  });
 };
 
 export const sendError = (
@@ -50,26 +36,12 @@ export const sendError = (
     error = undefined,
   }: ErrorPayload,
 ) => {
-  // Fix HTTP/2 RST_STREAM CANCEL on mobile devices
-  res.set({
-    'Cache-Control': 'no-store, no-cache, must-revalidate',
-    'Content-Type': 'application/json; charset=utf-8',
-    'Connection': 'close', // Forces HTTP/1.1 fallback
-  });
-  
-  // Remove ETag to prevent caching issues
-  res.removeHeader('ETag');
-  
-  const responseBody = {
+  const requestId = (res.locals as { requestId?: string }).requestId;
+  return res.status(statusMap[status]).json({
     success: false,
     status,
     message,
     error,
-  };
-  
-  // Calculate exact Content-Length
-  const jsonString = JSON.stringify(responseBody);
-  res.set('Content-Length', Buffer.byteLength(jsonString, 'utf8').toString());
-  
-  return res.status(statusMap[status]).send(jsonString);
+    ...(requestId ? { requestId } : {}),
+  });
 };

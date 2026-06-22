@@ -6,6 +6,7 @@ import * as DriverBookingService from './driver-booking.service.js';
 
 const cacheKeys = {
     booking: (id: string) => `booking:${id}`,
+    bookingPattern: (id: string) => `booking:${id}:*`,
     ride: (id: string) => `ride:${id}`,
     rideDetailsPattern: (id: string) => `ride:details:${id}:*`,
     userBookings: (userId: string) => `user:${userId}:bookings`,
@@ -13,6 +14,7 @@ const cacheKeys = {
 
 const invalidateBookingCaches = async (bookingId: string, rideId: string, passengerId: string) => {
     await deleteCache(cacheKeys.booking(bookingId));
+    await deleteCachePattern(cacheKeys.bookingPattern(bookingId));
     await deleteCache(cacheKeys.ride(rideId));
     await deleteCache(cacheKeys.userBookings(passengerId));
     await deleteCachePattern(cacheKeys.rideDetailsPattern(rideId));
@@ -24,6 +26,8 @@ const mapDriverActionError = (error: Error) => {
             return { status: HttpStatus.NOT_FOUND, message: 'Booking not found' };
         case 'FORBIDDEN_DRIVER':
             return { status: HttpStatus.FORBIDDEN, message: 'Only the assigned driver can perform this action' };
+        case 'DRIVER_NOT_VERIFIED':
+            return { status: HttpStatus.FORBIDDEN, message: 'Your driving licence must be verified before accepting bookings' };
         case 'BOOKING_NOT_DRIVER_PENDING':
             return { status: HttpStatus.CONFLICT, message: 'Booking is not waiting for driver decision' };
         case 'BOOKING_DECISION_DEADLINE_PASSED':

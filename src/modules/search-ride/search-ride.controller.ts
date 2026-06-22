@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { logError } from '../../utils/logger.js';
 import * as SearchRideService from './search-ride.service.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
@@ -8,9 +9,9 @@ import { SearchRideQuery, EnhancedSearchRideQuery } from './search-ride.types.js
 // Cache key helpers
 const cacheKeys = {
     searchResults: (query: SearchRideQuery, viewerId?: string) =>
-        `search:v2:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${viewerId || 'anon'}`,
-    rideDetails: (id: string, segmentId?: string) =>
-        `ride:details:${id}:${segmentId || 'full'}:v2`,
+        `search:v2:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${query.maxPrice || ''}:${query.femaleOnly || ''}:${viewerId || 'anon'}`,
+    rideDetails: (id: string, segmentId?: string, viewerId?: string) =>
+        `ride:details:${id}:${segmentId || 'full'}:${viewerId || 'anon'}:v3`,
 };
 
 // Cache TTL in seconds
@@ -57,25 +58,16 @@ export const searchRides = async (req: AuthRequest, res: Response) => {
 };
 
 /* ================= GET RIDE DETAILS ================= */
-export const getRideDetails = async (req: Request, res: Response) => {
+export const getRideDetails = async (req: AuthRequest, res: Response) => {
     try {
         const rideId = req.params.id as string;
         const query = req.query as { segmentId?: string };
         const segmentId = query.segmentId;
-        const cacheKey = cacheKeys.rideDetails(rideId, segmentId);
-
-        // Try cache first
-        const cachedRide = await getCache(cacheKey);
-        if (cachedRide) {
-            return sendSuccess(res, {
-                message: 'Ride details fetched successfully',
-                data: cachedRide,
-            });
-        }
+        const viewerId = req.user?.id;
 
         const ride = segmentId
-            ? await SearchRideService.getRideSegmentById(segmentId)
-            : await SearchRideService.getRideDetails(rideId);
+            ? await SearchRideService.getRideSegmentById(segmentId, viewerId)
+            : await SearchRideService.getRideDetails(rideId, viewerId);
 
         if (!ride) {
             return sendError(res, {
@@ -90,9 +82,6 @@ export const getRideDetails = async (req: Request, res: Response) => {
                 message: 'Invalid segment selection for ride',
             });
         }
-
-        // Cache the result
-        await setCache(cacheKey, ride);
 
         return sendSuccess(res, {
             message: 'Ride details fetched successfully',
@@ -255,7 +244,7 @@ export const searchRidesAdvanced = async (req: AuthRequest, res: Response) => {
             data: result,
         });
     } catch (error: any) {
-        console.error('Advanced search error:', error);
+        logError('Advanced search error', error);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: error.message || 'Failed to search rides',

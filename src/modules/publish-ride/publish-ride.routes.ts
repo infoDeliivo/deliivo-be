@@ -133,6 +133,20 @@ router.get(
     controller.getRideById
 );
 
+// Start ride (PUBLISHED -> IN_PROGRESS)
+router.post(
+    '/:id/start',
+    validate({ params: rideIdParamSchema }),
+    controller.startRide
+);
+
+// Complete ride (IN_PROGRESS -> COMPLETED)
+router.post(
+    '/:id/complete',
+    validate({ params: rideIdParamSchema }),
+    controller.completeRide
+);
+
 // Cancel ride
 router.delete(
     '/:id',

@@ -1,6 +1,7 @@
 import { prisma } from '../../config/index.js';
 import { generateTokens, verifyRefreshToken } from '../token/tokens.service.js';
 import { Role } from '../user/user.constants.js';
+import { logError } from '../../utils/logger.js';
 
 /** 
  * Signup Service
@@ -75,7 +76,7 @@ export const verifyOtpService = async (
 
     const tokens = await generateTokens({
       id: user.id,
-      role: Role.USER,
+      role: (user as any).role ?? Role.USER,
     });
 
     const nextStep = user.onboardingStatus === 'COMPLETED' ? 'home' : 'onboarding';
@@ -87,7 +88,7 @@ export const verifyOtpService = async (
       next: nextStep,
     };
   } catch (error: any) {
-    console.error('verifyOtpService error:', error);
+    logError('verifyOtpService error', error);
     return {
       success: false,
       reason: error?.message || 'UNKNOWN_ERROR',
@@ -134,12 +135,12 @@ export const refreshTokenService = async (refreshToken: string) => {
 
     const tokens = await generateTokens({
       id: user.id,
-      role: Role.USER,
+      role: (user as any).role ?? Role.USER,
     });
 
     return { success: true, tokens };
   } catch (error) {
-    console.error('refreshTokenService error:', error);
+    logError('refreshTokenService error', error);
     return {
       success: false,
       reason: 'INTERNAL_ERROR',
@@ -191,7 +192,7 @@ export const logoutService = async (refreshToken: string) => {
 
     return { success: true, message: 'Logged out successfully' };
   } catch (error) {
-    console.error('logoutService error:', error);
+    logError('logoutService error', error);
     return { success: false, reason: 'LOGOUT_FAILED' };
   }
 };

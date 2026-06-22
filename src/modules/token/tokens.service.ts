@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { randomUUID } from 'crypto';
 import { Tokens, DecodedToken } from './tokens.types.js';
 import { prisma } from '../../config/index.js';
 
@@ -13,11 +14,11 @@ import {
  * Generate JWT access and refresh tokens
  */
 export const generateTokens = async (payload: DecodedToken): Promise<Tokens> => {
-  const accessToken = jwt.sign(payload, ACCESS_TOKEN_SECRET, {
+  const accessToken = jwt.sign({ ...payload, jti: randomUUID() }, ACCESS_TOKEN_SECRET, {
     expiresIn: ACCESS_TOKEN_EXPIRES_IN,
   });
 
-  const refreshToken = jwt.sign(payload, REFRESH_TOKEN_SECRET, {
+  const refreshToken = jwt.sign({ ...payload, jti: randomUUID() }, REFRESH_TOKEN_SECRET, {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
   });
 

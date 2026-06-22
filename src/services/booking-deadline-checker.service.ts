@@ -1,5 +1,6 @@
 import { prisma } from '../config/index.js';
 import { BookingStatus } from '@prisma/client';
+import { logInfo, logError } from '../utils/logger.js';
 import { createNotification } from '../modules/notification/notification.service.js';
 import { refundPaymentIntent } from '../modules/payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../modules/ride-booking/booking-cancellation-policy.js';
@@ -99,7 +100,7 @@ const handleExpiredDeadline = async (booking: any) => {
         },
     });
 
-    console.log(`[Deadline Expired] Booking ${booking.id} - Notified rider ${booking.passengerId}`);
+    logInfo('Booking deadline expired', { bookingId: booking.id, passengerId: booking.passengerId });
 };
 
 const autoCancelBooking = async (booking: any) => {
@@ -118,7 +119,7 @@ const autoCancelBooking = async (booking: any) => {
             refundId = refund.id;
             refundInitiated = true;
         } catch (error) {
-            console.error(`[Auto-Cancel] Failed to refund booking ${booking.id}:`, error);
+            logError('Auto-cancel refund failed', error, { bookingId: booking.id });
         }
     }
     if (bypassPayment && fullRefundAmount > 0) {
@@ -165,5 +166,5 @@ const autoCancelBooking = async (booking: any) => {
         },
     });
 
-    console.log(`[Auto-Cancel] Booking ${booking.id} - Extended deadline expired`);
+    logInfo('Booking auto-cancelled (extended deadline expired)', { bookingId: booking.id });
 };

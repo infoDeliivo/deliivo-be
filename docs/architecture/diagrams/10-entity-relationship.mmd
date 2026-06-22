@@ -1,0 +1,85 @@
+erDiagram
+    User ||--o{ Ride : "drives"
+    User ||--o{ RideBooking : "books as passenger"
+    User ||--o{ Vehicle : "owns"
+    User ||--o| TravelPreference : "has"
+    User ||--o{ Notification : "receives"
+    User ||--o{ DeviceToken : "registered devices"
+    User ||--o{ RefreshToken : "sessions"
+    User ||--o{ DlVerification : "identity checks"
+    User ||--o{ UserRatingStats : "aggregated rating"
+    User ||--o{ UserReport : "reports filed"
+    User ||--o{ UserBlock : "blocks made"
+
+    Ride ||--o{ RideWaypoint : "has waypoints"
+    Ride ||--o{ RideBooking : "has bookings"
+    Ride }o--|| Vehicle : "uses"
+
+    RideBooking ||--o| RideRating : "passenger rates"
+    RideBooking }o--|| RideWaypoint : "pickup point"
+    RideBooking }o--|| RideWaypoint : "dropoff point"
+
+    Conversation ||--o{ Message : "contains"
+    User ||--o{ Conversation : "participates"
+
+    Vehicle ||--o{ VehicleDocument : "has documents"
+
+    User {
+        string id PK
+        string name
+        string email
+        string phone
+        enum role
+        boolean isBanned
+        boolean isVerified
+        boolean dlVerified
+        enum onboardingStatus
+        string stripeAccountId
+        datetime tosAcceptedAt
+    }
+
+    Ride {
+        string id PK
+        string driverId FK
+        string vehicleId FK
+        string originPlaceId
+        float originLat
+        float originLng
+        string destPlaceId
+        float destLat
+        float destLng
+        string routePolyline
+        date departureDate
+        string departureTime
+        int totalSeats
+        int availableSeats
+        float basePricePerSeat
+        enum status
+        boolean femaleOnly
+    }
+
+    RideBooking {
+        string id PK
+        string rideId FK
+        string passengerId FK
+        string pickupWaypointId FK
+        string dropoffWaypointId FK
+        int seatsBooked
+        float totalPrice
+        enum status
+        string stripePaymentIntentId
+        string pickupOtpHash
+        string dropOtpHash
+        datetime driverDecisionDeadlineAt
+    }
+
+    RideWaypoint {
+        string id PK
+        string rideId FK
+        string placeId
+        float lat
+        float lng
+        enum waypointType
+        int orderIndex
+        float pricePerSeat
+    }

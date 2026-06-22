@@ -10,6 +10,9 @@ const mockPrisma = {
     vehicle: {
         findFirst: jest.fn(),
     },
+    user: {
+        findUnique: jest.fn().mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date() }),
+    },
     $transaction: jest.fn(),
 };
 
@@ -128,7 +131,7 @@ describe('publishRide', () => {
         mockRedis.get.mockResolvedValue(JSON.stringify(draft));
         mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
 
-        const rideCreate = jest.fn().mockResolvedValue({ id: 'ride-1' });
+        const rideCreate = jest.fn().mockResolvedValue({ id: 'ride-1', departureTime: '09:30', routeDurationSeconds: 3600 });
         const rideWaypointCreateMany = jest.fn().mockResolvedValue(undefined);
         const rideFindUnique = jest.fn().mockResolvedValue({
             id: 'ride-1',
@@ -144,6 +147,9 @@ describe('publishRide', () => {
                 },
                 rideWaypoint: {
                     createMany: rideWaypointCreateMany,
+                },
+                rideSegmentCapacity: {
+                    createMany: jest.fn().mockResolvedValue(undefined),
                 },
             });
         });

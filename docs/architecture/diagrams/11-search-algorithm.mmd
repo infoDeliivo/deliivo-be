@@ -1,0 +1,20 @@
+flowchart TD
+    A[Passenger submits: origin, destination, date, seats] --> B[Query DB: rides on same date with available seats]
+    B --> C[For each ride build ordered points array]
+    C --> D["points = Origin, W1, W2...Wn, Destination"]
+    D --> E{Find pickup matches within radiusKm}
+    E --> F{Find dropoff matches within radiusKm}
+    F --> G{pickupIndex < dropoffIndex?}
+    G -->|No| H[Skip ride]
+    G -->|Yes| I[Classify condition]
+
+    I --> J[COND_1: Full ride - origin to destination]
+    I --> K[COND_2: Origin to midpoint stopover]
+    I --> L[COND_3: Stopover to stopover]
+    I --> M[COND_4: Midpoint stopover to destination]
+    I --> N[ALT_ROUTE: Polyline proximity fallback]
+
+    J & K & L & M & N --> O[Calculate score]
+    O --> P["score = 1000 - pickupDist x 50 - dropDist x 50 + bonuses"]
+    P --> Q[Sort by score descending]
+    Q --> R[Return ranked results with segment pricing]

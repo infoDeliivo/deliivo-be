@@ -146,6 +146,46 @@ describe('submitBookingRating', () => {
         ).rejects.toThrow('RATING_ALREADY_SUBMITTED');
     });
 
+    it('allows rating after a failed pickup outcome', async () => {
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            id: 'booking-noshow',
+            rideId: 'ride-noshow',
+            status: BookingStatus.NO_SHOW,
+            passengerId: 'passenger-noshow',
+            ride: { driverId: 'driver-noshow' },
+        });
+        mockPrisma.rideRating.findUnique.mockResolvedValue(null);
+
+        const tx = {
+            rideRating: {
+                create: jest.fn().mockResolvedValue({
+                    id: 'rating-noshow',
+                    bookingId: 'booking-noshow',
+                    rideId: 'ride-noshow',
+                    raterId: 'driver-noshow',
+                    rateeId: 'passenger-noshow',
+                    stars: 1,
+                    reviewText: 'Passenger did not arrive',
+                    createdAt: new Date('2026-04-08T12:20:00.000Z'),
+                }),
+            },
+            userRatingStats: {
+                findUnique: jest.fn().mockResolvedValue(null),
+                create: jest.fn().mockResolvedValue({}),
+                update: jest.fn(),
+            },
+        };
+        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+
+        const result = await submitBookingRating('driver-noshow', 'booking-noshow', {
+            stars: 1,
+            reviewText: 'Passenger did not arrive',
+        });
+
+        expect(result.id).toBe('rating-noshow');
+        expect(result.rateeId).toBe('passenger-noshow');
+    });
+
     it('rejects when booking is not completed', async () => {
         mockPrisma.rideBooking.findUnique.mockResolvedValue({
             id: 'booking-4',

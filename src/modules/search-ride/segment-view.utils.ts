@@ -62,6 +62,15 @@ export interface SegmentRide {
     waypoints: SegmentRideWaypoint[];
 }
 
+const interpolateStopoverPrice = (
+    index: number,
+    totalStopovers: number,
+    basePricePerSeat: number
+): number => {
+    const ratio = (index + 1) / (totalStopovers + 1);
+    return Math.round(basePricePerSeat * ratio * 100) / 100;
+};
+
 export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
     const stopoverWaypoints = [...ride.waypoints]
         .filter((waypoint) => waypoint.waypointType === 'STOPOVER')
@@ -85,7 +94,8 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
             address: waypoint.address,
             lat: waypoint.lat,
             lng: waypoint.lng,
-            cumulativePrice: waypoint.pricePerSeat ?? Number.NaN,
+            cumulativePrice: waypoint.pricePerSeat
+                ?? interpolateStopoverPrice(index, stopoverWaypoints.length, ride.basePricePerSeat),
             position: index + 1,
         })),
         {
@@ -126,10 +136,6 @@ export const resolveSegmentView = (
     }
 
     if (pickup.position >= drop.position) {
-        return null;
-    }
-
-    if (Number.isNaN(pickup.cumulativePrice) || Number.isNaN(drop.cumulativePrice)) {
         return null;
     }
 

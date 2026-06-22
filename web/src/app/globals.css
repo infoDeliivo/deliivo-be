@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+@theme inline {
+  /* Primary orange scale */
+  --color-primary-50: #fff7ed;
+  --color-primary-100: #ffedd5;
+  --color-primary-200: #fed7aa;
+  --color-primary-300: #fdba74;
+  --color-primary-400: #fb923c;
+  --color-primary-500: #f97316;
+  --color-primary-600: #ea580c;
+  --color-primary-700: #c2410c;
+  --color-primary-800: #9a3412;
+  --color-primary-900: #7c2d12;
+
+  /* Brand aliases */
+  --color-deliivo-orange: #f97316;
+  --color-deliivo-orange-dark: #ea580c;
+  --color-deliivo-orange-light: #fff7ed;
+  --color-deliivo-cream: #fff8f0;
+  --color-deliivo-dark: #1a1a2e;
+  --color-deliivo-gray: #6b7280;
+
+  /* Font */
+  --font-sans: var(--font-inter);
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-full bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 disabled:opacity-50 disabled:cursor-not-allowed sm:px-6;
+  }
+
+  .btn-outline {
+    @apply inline-flex items-center justify-center rounded-full border border-primary-500 px-4 py-2.5 text-sm font-semibold text-primary-500 transition-colors hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 disabled:opacity-50 disabled:cursor-not-allowed sm:px-6;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-full px-4 py-2.5 text-sm font-semibold text-deliivo-gray transition-colors hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400 disabled:opacity-50 disabled:cursor-not-allowed sm:px-6;
+  }
+
+  .card {
+    @apply rounded-2xl bg-white p-4 shadow-sm sm:p-6;
+  }
+
+  .input-field {
+    @apply block w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-base text-deliivo-dark placeholder-deliivo-gray shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 sm:text-sm;
+  }
+}

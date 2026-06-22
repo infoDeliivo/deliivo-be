@@ -1,0 +1,79 @@
+graph LR
+    subgraph Actors
+        P[Passenger]
+        D[Driver]
+        A[Admin]
+        SYS[System / Scheduler]
+    end
+
+    subgraph "Authentication & Profile"
+        UC1[Sign Up with OTP]
+        UC2[Log In with OTP]
+        UC3[Manage Profile]
+        UC4[Upload Avatar]
+        UC5[Accept Terms of Service]
+        UC6[Verify Driving License]
+        UC7[GDPR Data Export]
+        UC8[GDPR Account Deletion]
+    end
+
+    subgraph "Ride Management - Driver"
+        UC10[Create Ride Draft]
+        UC11[Publish Ride]
+        UC12[Start Ride]
+        UC13[Complete Ride]
+        UC14[Cancel Ride]
+        UC15[Accept Booking]
+        UC16[Reject Booking]
+        UC17[Verify Pickup OTP]
+        UC18[Verify Drop OTP]
+    end
+
+    subgraph "Ride Discovery - Passenger"
+        UC20[Search Rides]
+        UC21[Advanced Search with Segments]
+        UC22[Preview Price]
+        UC23[Book Ride]
+        UC24[Pay via Stripe]
+        UC25[Cancel Booking]
+        UC26[Extend Driver Wait]
+    end
+
+    subgraph "Communication"
+        UC30[Send Chat Message]
+        UC31[Real-time Typing Indicators]
+        UC32[Receive Notifications]
+        UC33[Rate and Review]
+    end
+
+    subgraph "Safety & Trust"
+        UC40[Report User]
+        UC41[Block User]
+        UC42[Stripe Connect Onboarding]
+    end
+
+    subgraph "Administration"
+        UC50[Ban/Unban Users]
+        UC51[View Platform Stats]
+        UC52[Verify Vehicles]
+        UC53[Force Refund]
+    end
+
+    subgraph "Automated"
+        UC60[Deadline Auto-Cancel]
+        UC61[Nightly Cleanup]
+    end
+
+    P --> UC1 & UC2 & UC3 & UC4 & UC5 & UC7 & UC8
+    P --> UC20 & UC21 & UC22 & UC23 & UC24 & UC25 & UC26
+    P --> UC30 & UC31 & UC32 & UC33
+    P --> UC40 & UC41
+
+    D --> UC1 & UC2 & UC3 & UC6 & UC42
+    D --> UC10 & UC11 & UC12 & UC13 & UC14
+    D --> UC15 & UC16 & UC17 & UC18
+    D --> UC30 & UC32 & UC33 & UC40
+
+    A --> UC50 & UC51 & UC52 & UC53
+
+    SYS --> UC60 & UC61

@@ -3,6 +3,11 @@ import { prisma } from '../../config/index.js';
 import { SubmitRatingInput, SubmittedRating } from './ratings.types.js';
 
 const round2 = (value: number): number => Number(value.toFixed(2));
+const rateableBookingStatuses: BookingStatus[] = [
+  BookingStatus.COMPLETED,
+  BookingStatus.NO_SHOW,
+  BookingStatus.DRIVER_MISSED_PICKUP,
+];
 
 export const submitBookingRating = async (
   raterId: string,
@@ -31,7 +36,7 @@ export const submitBookingRating = async (
   });
 
   if (!booking) throw new Error('BOOKING_NOT_FOUND');
-  if (booking.status !== BookingStatus.COMPLETED) throw new Error('BOOKING_NOT_COMPLETED');
+  if (!rateableBookingStatuses.includes(booking.status)) throw new Error('BOOKING_NOT_COMPLETED');
 
   // Check rater is participant (passenger or driver)
   const isPassenger = booking.passengerId === raterId;

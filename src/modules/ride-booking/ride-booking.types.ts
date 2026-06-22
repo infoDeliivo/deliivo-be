@@ -38,6 +38,7 @@ export interface CreateBookingInput {
     pickupWaypointId?: string;
     dropoffWaypointId?: string;
     notes?: string;
+    responseExpiryOption?: string; // ONE_HOUR, THREE_HOURS, SIX_HOURS, TWELVE_HOURS, TWENTY_FOUR_HOURS, BEFORE_DEPARTURE
 }
 
 export interface BookingPaymentInfo {
@@ -140,7 +141,7 @@ export interface BookingListResponse {
 
 /* ================= LIST BOOKINGS QUERY ================= */
 export interface ListBookingsQuery {
-    status?: BookingStatus;
+    status?: BookingStatus | string;
     page?: number;
     limit?: number;
 }

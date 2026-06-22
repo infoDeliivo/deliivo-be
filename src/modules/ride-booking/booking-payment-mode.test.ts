@@ -14,11 +14,10 @@ describe('booking payment mode helper', () => {
         }
     });
 
-    it('defaults to bypass when env is missing', () => {
+    it('throws when env is missing', () => {
         delete process.env.BOOKING_PAYMENT_MODE;
 
-        expect(getBookingPaymentMode()).toBe('bypass');
-        expect(isBypassBookingPaymentMode()).toBe(true);
+        expect(() => getBookingPaymentMode()).toThrow('BOOKING_PAYMENT_MODE env var is not set');
     });
 
     it('returns stripe when env is stripe', () => {
@@ -35,11 +34,10 @@ describe('booking payment mode helper', () => {
         expect(isBypassBookingPaymentMode()).toBe(false);
     });
 
-    it('defaults to bypass when env is blank or whitespace only', () => {
+    it('throws when env is blank or whitespace only', () => {
         process.env.BOOKING_PAYMENT_MODE = '   ';
 
-        expect(getBookingPaymentMode()).toBe('bypass');
-        expect(isBypassBookingPaymentMode()).toBe(true);
+        expect(() => getBookingPaymentMode()).toThrow('BOOKING_PAYMENT_MODE env var is not set');
     });
 
     it('throws BOOKING_PAYMENT_MODE_INVALID for invalid values', () => {

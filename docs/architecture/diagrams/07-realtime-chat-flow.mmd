@@ -1,0 +1,30 @@
+sequenceDiagram
+    participant A as User A
+    participant WS as Socket.IO Server
+    participant RDS as Redis
+    participant DB as PostgreSQL
+    participant B as User B
+
+    A->>WS: connect JWT in handshake
+    WS->>RDS: Add socket to sockets:userA SET
+    WS->>A: chat:sync undelivered messages
+
+    A->>WS: chat:send receiverId, text, clientMsgId
+    WS->>DB: Persist Message
+    WS->>DB: Update Conversation.lastMsgAt
+    WS->>A: ACK messageId, createdAt
+    WS->>RDS: Lookup sockets:userB
+    alt User B Online
+        WS->>B: chat:message full message
+        WS->>A: chat:delivered messageId
+    else User B Offline
+        WS->>DB: Message stays undelivered
+        WS->>RDS: Push notification via FCM
+    end
+
+    A->>WS: chat:typing conversationId, receiverId
+    WS->>B: chat:typing conversationId, senderId
+
+    B->>WS: chat:read conversationId, lastReadMessageId
+    WS->>DB: Batch mark messages as read
+    WS->>A: chat:read conversationId, readBy, readAt

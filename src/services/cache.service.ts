@@ -1,4 +1,5 @@
 import redis from '../cache/redis.js';
+import { logError } from '../utils/logger.js';
 
 // Default TTL: 5 minutes
 const DEFAULT_TTL = 300;
@@ -12,7 +13,7 @@ export const getCache = async <T>(key: string): Promise<T | null> => {
         if (!data) return null;
         return JSON.parse(data) as T;
     } catch (error) {
-        console.error(`Cache GET error for key ${key}:`, error);
+        logError('Cache GET error', error, { key });
         return null;
     }
 };
@@ -28,7 +29,7 @@ export const setCache = async (
     try {
         await redis.setex(key, ttl, JSON.stringify(data));
     } catch (error) {
-        console.error(`Cache SET error for key ${key}:`, error);
+        logError('Cache SET error', error, { key });
     }
 };
 
@@ -39,7 +40,7 @@ export const deleteCache = async (key: string): Promise<void> => {
     try {
         await redis.del(key);
     } catch (error) {
-        console.error(`Cache DELETE error for key ${key}:`, error);
+        logError('Cache DELETE error', error, { key });
     }
 };
 
@@ -48,12 +49,18 @@ export const deleteCache = async (key: string): Promise<void> => {
  */
 export const deleteCachePattern = async (pattern: string): Promise<void> => {
     try {
-        const keys = await redis.keys(pattern);
-        if (keys.length > 0) {
-            await redis.del(...keys);
-        }
+        let cursor = '0';
+        do {
+            const [nextCursor, keys] = await redis.scan(
+                Number(cursor), 'MATCH', pattern, 'COUNT', 100
+            );
+            cursor = nextCursor;
+            if (keys.length > 0) {
+                await redis.del(...keys);
+            }
+        } while (cursor !== '0');
     } catch (error) {
-        console.error(`Cache DELETE PATTERN error for ${pattern}:`, error);
+        logError('Cache DELETE PATTERN error', error, { pattern });
     }
 };
 

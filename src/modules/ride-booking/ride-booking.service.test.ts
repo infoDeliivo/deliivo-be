@@ -1,5 +1,8 @@
 const mockPrisma = {
     $transaction: jest.fn(),
+    user: {
+        findUnique: jest.fn().mockResolvedValue({ tosAcceptedAt: new Date(), isBanned: false }),
+    },
     rideBooking: {
         update: jest.fn(),
     },
@@ -16,11 +19,28 @@ jest.mock('../payments/stripe.service.js', () => ({
     refundPaymentIntent: jest.fn(),
 }));
 
+jest.mock('../payments/payment.service.js', () => ({
+    __esModule: true,
+    createPayment: jest.fn().mockResolvedValue({ id: 'payment-mock-id' }),
+    markPaymentPending: jest.fn().mockResolvedValue({}),
+    markPaymentPaid: jest.fn().mockResolvedValue({}),
+}));
+
 const mockCreateNotification = jest.fn();
 
 jest.mock('../notification/notification.service.js', () => ({
     __esModule: true,
     createNotification: (...args: unknown[]) => mockCreateNotification(...args),
+}));
+
+jest.mock('../../queue/deadline.queue.js', () => ({
+    __esModule: true,
+    enqueueDeadlineCheck: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('./segment-capacity.utils.js', () => ({
+    __esModule: true,
+    releaseSegmentSeats: jest.fn().mockResolvedValue(undefined),
 }));
 
 import { createBooking } from './ride-booking.service';
@@ -86,6 +106,7 @@ const buildTx = () => {
         ride: {
             findFirst: jest.fn().mockResolvedValue(ride),
             update: jest.fn().mockResolvedValue(null),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         rideBooking: {
             findFirst: jest.fn().mockResolvedValue(null),
@@ -105,6 +126,17 @@ const buildTx = () => {
             })),
             findUnique: jest.fn(),
             update: jest.fn(),
+        },
+        rideSegmentCapacity: {
+            findMany: jest.fn().mockResolvedValue([
+                { rideId: 'ride-1', fromPosition: 0, toPosition: 1, occupiedSeats: 0 },
+                { rideId: 'ride-1', fromPosition: 1, toPosition: 2, occupiedSeats: 0 },
+                { rideId: 'ride-1', fromPosition: 2, toPosition: 3, occupiedSeats: 0 },
+            ]),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        userBlock: {
+            findFirst: jest.fn().mockResolvedValue(null),
         },
     };
 };
@@ -240,24 +272,25 @@ describe('createBooking segment pricing + payment intent', () => {
         expect(booking.status).toBe('DRIVER_PENDING');
         expect(booking.payment).toBeNull();
         expect(mockedCreateBookingPaymentIntent).not.toHaveBeenCalled();
-        expect(mockedCreateNotification).toHaveBeenCalledWith({
-            userId: 'driver-1',
-            type: 'booking.request.driver_decision',
-            title: 'New ride request',
-            body: 'Passenger wants B to C',
-            data: {
-                bookingId: 'booking-1',
-                rideId: 'ride-1',
-                passengerName: 'Passenger',
-                passengerAvatarUrl: '',
-                originAddress: 'B',
-                destinationAddress: 'C',
-                seatsBooked: '1',
-                totalPrice: '10',
-                currency: 'GBP',
-                decisionDeadlineAt: '',
-                deepLink: 'app://driver/booking-request/booking-1',
-            },
-        });
+        expect(mockedCreateNotification).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: 'driver-1',
+                type: 'booking.request.driver_decision',
+                title: 'New ride request',
+                body: 'Passenger wants B to C',
+                data: expect.objectContaining({
+                    bookingId: 'booking-1',
+                    rideId: 'ride-1',
+                    passengerName: 'Passenger',
+                    passengerAvatarUrl: '',
+                    originAddress: 'B',
+                    destinationAddress: 'C',
+                    seatsBooked: '1',
+                    totalPrice: '10',
+                    currency: 'GBP',
+                    deepLink: 'app://driver/booking-request/booking-1',
+                }),
+            })
+        );
     });
 });
