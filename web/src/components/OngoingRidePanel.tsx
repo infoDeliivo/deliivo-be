@@ -34,7 +34,7 @@ const ACTIVE_RIDE_STATUSES = ['IN_PROGRESS'];
 const UPCOMING_BOOKING_STATUSES = ['CONFIRMED', 'WAITING_FOR_PICKUP', 'DRIVER_ARRIVED'];
 const UPCOMING_RIDE_STATUSES = ['PUBLISHED', 'READY_TO_START'];
 
-const HIDDEN_ROUTE_PREFIXES = ['/auth', '/onboarding', '/admin', '/tracking'];
+const HIDDEN_ROUTE_PREFIXES = ['/auth', '/onboarding', '/admin', '/tracking', '/rides/'];
 
 function getDepartureTimeMs(date: string, time: string) {
   const [hours = '0', minutes = '0'] = time.split(':');
@@ -163,11 +163,15 @@ export default function OngoingRidePanel() {
     const unsubNotification = onSocketEvent<NotificationPayload>('notification:new', reload);
 
     window.addEventListener('focus', reload);
+    window.addEventListener('online', reload);
+    document.addEventListener('visibilitychange', reload);
     return () => {
       unsubBooking();
       unsubRide();
       unsubNotification();
       window.removeEventListener('focus', reload);
+      window.removeEventListener('online', reload);
+      document.removeEventListener('visibilitychange', reload);
     };
   }, [hidden, loadRide, user]);
 

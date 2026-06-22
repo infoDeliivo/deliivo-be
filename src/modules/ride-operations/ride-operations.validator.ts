@@ -20,6 +20,7 @@ const rideEventFields = {
     lat: latitude.optional(),
     lng: longitude.optional(),
     clientTimestamp: isoTimestamp.default(() => new Date().toISOString()),
+    overrideReason: z.string().max(500).optional(),
 };
 
 // ============ RIDE EVENT BODY (start / finish / dropoff confirmations / missed pickup) ============

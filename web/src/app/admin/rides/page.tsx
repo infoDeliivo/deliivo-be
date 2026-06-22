@@ -130,7 +130,7 @@ export default function AdminRidesPage() {
       )}
 
       <div className="rounded-2xl bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap gap-2">
             {STATUSES.map((value) => (
               <button

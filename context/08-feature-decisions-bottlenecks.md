@@ -174,19 +174,29 @@ Final decisions:
 
 - Admin capabilities use protected backend routes and web admin screens.
 - Domain-specific admin actions stay near their owning modules.
-- Pricing config is currently visible through APIs, not mutated through the pricing router.
+- Pricing config mutation is handled through protected admin routes, not the public pricing router.
+- Content publishing is handled by the admin CMS surface backed by persistent posts and audit logs.
 
 Open questions:
 
 - Which admin actions require dual control or explicit audit approval?
 - Should pricing config management be added to admin?
-- Initial operational dashboards are defined in `11-kpis-slas-monitoring.md`; implementation is still pending.
+- Operational dashboards now exist; the remaining gap is richer historical metrics export and alerting.
 
 Bottlenecks and risks:
 
 - Admin pages need aggregation across many modules.
 - Forbidden errors must distinguish missing auth from missing admin role.
 - Manual actions can cause financial inconsistency if they bypass ledger/reconciliation.
+- Content workflows still need localization approval and publishing policy.
+- Manual override policy should stay explicit in admin settings and limit what support may change without finance review.
+
+Manual override policy:
+
+- Allowed without escalation: resend support links, refresh stale canonical state, and use dev-only simulation in non-production.
+- Allowed with admin review: force refund, close or cancel a ride when evidence is clear, and recover blocked OTP/cancellation flows.
+- Not allowed: edit ledger history directly, override without ride and booking IDs, or use production bypass flags.
+- Manual override actions must still be written into the dispute evidence trail so later auto-evaluation can account for GPS history, OTP state, and recovery context.
 
 ## Web Portal
 
@@ -197,7 +207,7 @@ Final decisions:
 - API utilities, auth context, socket utilities, Stripe provider, and map components are shared infrastructure.
 - Screens refetch canonical state after important actions.
 - English, Estonian, and Russian are the supported launch languages for preference selection.
-- Public guide/blog content can launch as static curated content while backend-managed CMS support is designed.
+- Public guide/blog content is persisted in the backend CMS and surfaced through the admin content page.
 
 Open questions:
 
@@ -214,4 +224,5 @@ Bottlenecks and risks:
 - Build-time public env vars require web rebuilds after changes.
 - Ride detail pages intentionally avoid embedded maps so live tracking can be consumed through compact status panels, notifications, email, SMS, and dedicated tracking links instead of duplicated map widgets.
 - Language preference without full translated message catalogs can create a false sense of localization completeness.
-- Static content cannot satisfy admin publishing, localized copy approval, or audit requirements.
+- Multilingual guide publishing still needs an approval and localization workflow layered on top of the CMS.
+- Transient GET failures now retry once, but non-idempotent actions still depend on canonical post-action refetches and socket recovery.

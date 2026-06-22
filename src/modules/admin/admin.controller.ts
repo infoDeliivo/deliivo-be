@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../../types/auth.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
 import * as AdminService from './admin.service.js';
+import { createPricingConfig as createPricingConfigService, listPricingConfigs as listPricingConfigsService, updatePricingConfig as updatePricingConfigService } from '../pricing/pricing.service.js';
 
 /* ================= LIST USERS ================= */
 export const listUsers = async (req: AuthRequest, res: Response) => {
@@ -53,6 +54,15 @@ export const getStats = async (req: AuthRequest, res: Response) => {
         return sendSuccess(res, { message: 'Stats fetched', data: result });
     } catch {
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch stats' });
+    }
+};
+
+export const getMonitoringTrends = async (_req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.getMonitoringTrends();
+        return sendSuccess(res, { message: 'Monitoring trends fetched', data: result });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch monitoring trends' });
     }
 };
 
@@ -153,5 +163,69 @@ export const adminRefundBooking = async (req: AuthRequest, res: Response) => {
             default:
                 return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to refund booking' });
         }
+    }
+};
+
+/* ================= PRICING CONFIGURATION ================= */
+export const listPricingConfigs = async (_req: AuthRequest, res: Response) => {
+    try {
+        const configs = await listPricingConfigsService();
+        return sendSuccess(res, { message: 'Pricing configs fetched', data: configs });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch pricing configs' });
+    }
+};
+
+export const createPricingConfig = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await createPricingConfigService({
+            regionCode: req.body.regionCode,
+            currency: req.body.currency,
+            minRatePerKm: req.body.minRatePerKm,
+            recommendedRatePerKm: req.body.recommendedRatePerKm,
+            maxRatePerKm: req.body.maxRatePerKm,
+            minimumSeatPrice: req.body.minimumSeatPrice,
+            roundingStrategy: req.body.roundingStrategy,
+            active: req.body.active,
+            validFrom: req.body.validFrom,
+            validTo: req.body.validTo ?? null,
+            createdBy: req.user.id,
+        });
+        return sendSuccess(res, { status: HttpStatus.CREATED, message: 'Pricing config created', data: result });
+    } catch (error: any) {
+        if (error.message === 'PRICING_CONFIG_NOT_FOUND') {
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Pricing config not found' });
+        }
+        if (error.message === 'INVALID_PRICING_CONFIG') {
+            return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'Invalid pricing thresholds' });
+        }
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to create pricing config' });
+    }
+};
+
+export const updatePricingConfig = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await updatePricingConfigService(req.params.id as string, {
+            regionCode: req.body.regionCode,
+            currency: req.body.currency,
+            minRatePerKm: req.body.minRatePerKm,
+            recommendedRatePerKm: req.body.recommendedRatePerKm,
+            maxRatePerKm: req.body.maxRatePerKm,
+            minimumSeatPrice: req.body.minimumSeatPrice,
+            roundingStrategy: req.body.roundingStrategy,
+            active: req.body.active,
+            validFrom: req.body.validFrom,
+            validTo: req.body.validTo ?? undefined,
+            createdBy: req.user.id,
+        });
+        return sendSuccess(res, { message: 'Pricing config updated', data: result });
+    } catch (error: any) {
+        if (error.message === 'PRICING_CONFIG_NOT_FOUND') {
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Pricing config not found' });
+        }
+        if (error.message === 'INVALID_PRICING_CONFIG') {
+            return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'Invalid pricing thresholds' });
+        }
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to update pricing config' });
     }
 };

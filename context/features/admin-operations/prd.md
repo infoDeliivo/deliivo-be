@@ -14,6 +14,8 @@ Give operations staff the tools to inspect, recover, and govern marketplace acti
 - Admin route group.
 - User and marketplace data access patterns.
 - Pricing visibility through active pricing config APIs.
+- Admin pricing management through protected list/create/update routes.
+- Content CMS routes with persistent posts and audit trail.
 - Dispute admin routes.
 - Payout admin routes.
 - Reconciliation issue module.
@@ -35,6 +37,7 @@ Give operations staff the tools to inspect, recover, and govern marketplace acti
 - Admin revenue ledger must expose copyable booking, payment, and user IDs and allow navigation from booking ledger entries back to ride history.
 - Admin reconciliation jobs and issue resolution actions must provide visible success/failure feedback.
 - Admins can inspect active pricing configuration where implemented.
+- Admins can edit, publish, delete, and review audit history for guide/blog content.
 - Admin pages must show clear forbidden or missing-role explanations.
 - Admin actions must create traceable records.
 
@@ -44,7 +47,7 @@ Give operations staff the tools to inspect, recover, and govern marketplace acti
 - Admin pages should not expose sensitive secrets or full payment data.
 - Operational actions must be idempotent where repeated clicks are possible.
 - Admin screens need enough filtering to avoid manual database inspection for common support tasks.
-- Pricing config create/update is not currently exposed by the implemented pricing router.
+- Pricing config create/update is exposed through the protected admin router, not the public pricing router.
 
 ## Success Metrics
 

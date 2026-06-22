@@ -151,20 +151,23 @@ export default function Navbar() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-gray-100 bg-white px-4 pb-4 pt-2">
-          <nav className="flex flex-col gap-1">
+        <div className="md:hidden border-t border-gray-100 bg-white px-4 pb-4 pt-3">
+          <nav className="grid grid-cols-2 gap-2">
             {navLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="rounded-xl px-3 py-2.5 text-sm font-medium text-deliivo-gray hover:bg-primary-50 hover:text-deliivo-orange transition-colors"
+                className="rounded-2xl border border-gray-100 bg-gray-50 px-3 py-3 text-sm font-medium text-deliivo-dark hover:border-primary-200 hover:bg-primary-50 hover:text-deliivo-orange transition-colors"
                 onClick={() => setMobileOpen(false)}
               >
-            {link.label}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate">{link.label}</span>
+                  {link.badge ? <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-deliivo-orange px-1.5 py-0.5 text-[10px] font-semibold text-white">{link.badge}</span> : null}
+                </div>
               </Link>
             ))}
           </nav>
-          <div className="mt-3 flex flex-col gap-2">
+          <div className="mt-3 grid gap-2">
             <LanguageSwitcher />
             {user ? (
               <>

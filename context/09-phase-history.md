@@ -2,6 +2,238 @@
 
 This document records implementation phases in chronological order. PRDs and ADRs describe target behavior and decisions; this history records what changed during each implementation slice.
 
+## 2026-06-22 - Startup Observability Checklist
+
+Scope:
+
+- Added a startup-grade observability checklist that separates existing logging and health checks from the remaining metrics, alerting, tracing, and log-shipping gaps.
+- Linked the checklist into the context pack index for future reference.
+
+Code areas:
+
+- Documentation only.
+
+Documentation updated:
+
+- `context/13-startup-observability-checklist.md`
+- `context/README.md`
+- `context/09-phase-history.md`
+
+Verification:
+
+- Not applicable. Documentation-only update.
+
+## 2026-06-22 - Overdue Ride Scheduler And Cleanup Policy
+
+Scope:
+
+- Added a maintenance worker job that promotes rides past scheduled departure from `PUBLISHED` or `SCHEDULED` to `READY_TO_START`.
+- Added a configurable overdue cleanup path that auto-cancels rides that never start after the grace window, releases seats, and triggers refunds where applicable.
+- Added an overdue completion monitor for `IN_PROGRESS` rides that exceed the expected end window so admin and support have an explicit issue trail.
+- Recorded the ride-overdue job and lifecycle policy in the working background jobs context doc.
+
+Code areas:
+
+- `src/queue/maintenance.queue.ts`
+
+Documentation updated:
+
+- `context/12-working-background-jobs.md`
+- `context/09-phase-history.md`
+
+Verification:
+
+- Backend TypeScript and Prisma build passed.
+
+## 2026-06-22 - Dispute Evidence Scoring Expansion
+
+Scope:
+
+- Expanded dispute evidence collection to include driver GPS history, rider-side GPS signals, and manual override or fallback signals.
+- Updated dispute evaluation so manual override actions are treated as first-class evidence instead of invisible bypasses.
+- Added evaluation factor summaries so admin review can see why the engine leaned toward payout, refund, or manual review.
+- Exposed rider and driver manual recovery controls in the ride-day UI behind the manual override env gate.
+
+Code areas:
+
+- `src/modules/dispute/dispute.service.ts`
+- `web/src/app/admin/reports/page.tsx`
+- `web/src/app/rides/[id]/page.tsx`
+- `web/src/app/rides/[id]/manage/page.tsx`
+
+Documentation updated:
+
+- `docs/bug-fix/dispute-settlement-implementation.md`
+- `context/features/disputes-safety-ratings/prd.md`
+- `context/features/disputes-safety-ratings/adr.md`
+- `context/08-feature-decisions-bottlenecks.md`
+
+## 2026-06-22 - Manual Override Policy Matrix
+
+Scope:
+
+- Added an explicit manual override policy matrix to the admin settings page.
+- Tightened support override copy on rider and driver ride-day surfaces.
+- Documented allowed, review-required, and forbidden override categories in the context docs.
+
+Code areas:
+
+- `web/src/app/admin/settings/page.tsx`
+- `web/src/components/SupportOverrideCard.tsx`
+
+Documentation updated:
+
+- `context/08-feature-decisions-bottlenecks.md`
+- `context/05-open-questions-and-risks.md`
+- `context/10-production-readiness.md`
+- `context/09-phase-history.md`
+
+Verification:
+
+- Backend TypeScript check passed.
+- Web production build passed.
+
+## 2026-06-22 - UI Density And Layout Polish
+
+Scope:
+
+- Widened the profile, rider ride detail, and driver manage-ride shells for better desktop density.
+- Adjusted the notification panel width and detail cards to avoid cramped text on desktop while preserving mobile readability.
+- Kept the existing card-based layout but reduced the feeling of mobile-only spacing on larger screens.
+
+Code areas:
+
+- `web/src/app/profile/page.tsx`
+- `web/src/components/NotificationPanel.tsx`
+- `web/src/app/rides/[id]/page.tsx`
+- `web/src/app/rides/[id]/manage/page.tsx`
+
+Documentation updated:
+
+- `context/features/web-portal/prd.md`
+- `context/09-phase-history.md`
+
+Verification:
+
+- Backend TypeScript check passed.
+- Web production build passed.
+
+## 2026-06-22 - Resilience And Canonical Refresh
+
+Scope:
+
+- Added one retry for transient idempotent GET requests in the shared web API client.
+- Added auth refresh-on-focus and refresh-on-online recovery behavior.
+- Expanded ongoing ride recovery to refresh on reconnect, focus, visibility change, and online events.
+- Kept the notification store on its existing persisted-source refresh loop while aligning it with the broader recovery model.
+
+Code areas:
+
+- `web/src/lib/api.ts`
+- `web/src/lib/auth-context.tsx`
+- `web/src/components/OngoingRidePanel.tsx`
+- `web/src/lib/notification-store.ts`
+
+Documentation updated:
+
+- `context/features/web-portal/prd.md`
+- `context/08-feature-decisions-bottlenecks.md`
+- `context/09-phase-history.md`
+
+Verification:
+
+- Backend TypeScript check passed.
+- Web production build passed.
+
+## 2026-06-22 - Persistent Content CMS And Audit Trail
+
+Scope:
+
+- Moved public guide/blog content to Prisma-backed persistence.
+- Added content audit logging for create, update, and delete actions.
+- Seeded the database from the existing guide content JSON file.
+- Extended the admin content page with visible audit history for the selected post.
+
+Code areas:
+
+- `prisma/schema.prisma`
+- `src/modules/content/content.service.ts`
+- `src/modules/content/content.controller.ts`
+- `src/modules/content/content.routes.ts`
+- `src/scripts/seed.ts`
+- `web/src/lib/api.ts`
+- `web/src/app/admin/content/page.tsx`
+
+Documentation updated:
+
+- `context/features/web-portal/prd.md`
+- `context/09-phase-history.md`
+
+Verification:
+
+- Backend TypeScript check passed.
+- Web production build passed.
+
+## 2026-06-22 - Monitoring Trend Workbench
+
+Scope:
+
+- Added a 7-day activity trend endpoint for monitoring rides, bookings, webhook volume, and revenue.
+- Extended the admin monitoring page with a lightweight historical trend table.
+- Updated monitoring docs to reflect the richer operational surface and remaining alerting gap.
+
+Code areas:
+
+- `src/modules/admin/admin.service.ts`
+- `src/modules/admin/admin.controller.ts`
+- `src/modules/admin/admin.routes.ts`
+- `web/src/lib/api.ts`
+- `web/src/app/admin/monitoring/page.tsx`
+
+Documentation updated:
+
+- `context/11-kpis-slas-monitoring.md`
+- `context/08-feature-decisions-bottlenecks.md`
+- `context/09-phase-history.md`
+
+Verification:
+
+- Backend TypeScript check passed.
+- Web production build passed.
+
+## 2026-06-22 - Admin Pricing Config Management
+
+Scope:
+
+- Added protected admin pricing config list, create, and update routes.
+- Added admin pricing config validation for required pricing bounds and active config handoff.
+- Added a dedicated admin pricing management page in the web portal.
+- Kept the public pricing router read-only for config listing, preview, and validation.
+
+Code areas:
+
+- `src/modules/pricing/pricing.validator.ts`
+- `src/modules/pricing/pricing.service.ts`
+- `src/modules/admin/admin.controller.ts`
+- `src/modules/admin/admin.routes.ts`
+- `web/src/lib/api.ts`
+- `web/src/app/admin/pricing/page.tsx`
+- `web/src/app/admin/_components/AdminSidebar.tsx`
+
+Documentation updated:
+
+- `context/features/pricing/prd.md`
+- `context/features/pricing/adr.md`
+- `context/features/admin-operations/prd.md`
+- `context/features/admin-operations/adr.md`
+- `context/06-implementation-cross-check.md`
+- `context/09-phase-history.md`
+
+Verification:
+
+- Backend TypeScript check passed.
+- Web production build passed.
+
 ## 2026-06-21 - Batch 1 Remaining Phase Fixes
 
 Scope:
@@ -1202,6 +1434,29 @@ Verification:
 
 - Web production build passed.
 - Backend TypeScript compile passed.
+
+## 2026-06-21 - Next Phase: Booking Expiry Consistency
+
+Scope:
+
+- Carried the rider-selected `responseExpiryOption` through Stripe payment success so the actual driver decision deadline matches the rider's selected window.
+- Updated the booking timeout cron to follow the same two-step lifecycle as the queue worker: initial expiry notice first, extended auto-cancel only after the grace period.
+- Restored segment seat release during cron-based auto-cancellation so recovery keeps booking state and capacity in sync.
+
+Code areas:
+
+- `src/modules/ride-booking/ride-booking.service.ts`
+- `src/jobs/booking-timeout.cron.ts`
+
+Documentation updated:
+
+- `context/06-implementation-cross-check.md`
+- `context/09-phase-history.md`
+
+Verification:
+
+- Backend TypeScript compile passed.
+- Web production build passed.
 
 ## Update Rule
 

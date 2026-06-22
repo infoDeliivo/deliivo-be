@@ -26,6 +26,7 @@ Give users and admins structured tools to report issues, resolve disputes, prese
 - Users can open disputes tied to ride and booking context.
 - Disputes must include reason, description, actor, target, and current ride or booking state.
 - Operational evidence must be available to admin review.
+- The same evidence record must include driver GPS, rider-side location evidence, and manual override or fallback signals so the dispute engine can score all recovery paths consistently.
 - Admin dispute lifecycle must show evidence as a checklist plus concrete ride event rows with GPS/no-GPS indicators where available.
 - Admin can make terminal decisions that affect dispute status and financial reconciliation.
 - Users can rate eligible completed rides.
@@ -39,6 +40,7 @@ Give users and admins structured tools to report issues, resolve disputes, prese
 - Dispute decisions must be auditable.
 - Safety reporting must not depend on realtime delivery.
 - Emergency SOS must be durable even when realtime push delivery fails.
+- Manual override actions must be treated as evidence, not as invisible bypasses.
 - Rating and report flows must be protected against duplicate submission where product policy requires one final record.
 - Admin decision effects on payments must be explicit and traceable.
 

@@ -225,6 +225,36 @@ export default function AdminSettingsPage() {
     'If a manual action fixes a user issue, review reconciliation afterwards so the financial trail remains consistent.',
   ];
 
+  const overridePolicy = [
+    {
+      title: 'Allowed support actions',
+      tone: 'pass' as const,
+      items: [
+        'Resend a notification or recovery link after confirming the canonical state.',
+        'Re-open a stale booking or ride page by refreshing the source of truth.',
+        'Use dev-only ride simulation to unblock testing when env flags allow it.',
+      ],
+    },
+    {
+      title: 'Require admin review',
+      tone: 'warn' as const,
+      items: [
+        'Force refund a booking after checking payment, dispute, and reconciliation context.',
+        'Cancel or close a ride when payment or ride-day evidence shows the current state is wrong.',
+        'Override a rider or driver flow when OTP, pickup, or cancellation is blocked but evidence exists.',
+      ],
+    },
+    {
+      title: 'Not allowed',
+      tone: 'fail' as const,
+      items: [
+        'Edit ledger history or payment state directly in the UI.',
+        'Apply a manual override without ride ID and booking ID.',
+        'Use dev simulation, hidden bypasses, or support actions in production without audit trail.',
+      ],
+    },
+  ];
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -313,6 +343,33 @@ export default function AdminSettingsPage() {
               </li>
             ))}
           </ul>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2">
+          <Shield className="h-4 w-4 text-[#F97316]" />
+          <h2 className="text-sm font-semibold text-gray-900">Manual override policy</h2>
+        </div>
+        <p className="mt-1 text-sm text-gray-500">Use these rules to decide whether a support issue can be handled instantly, needs admin review, or must be refused.</p>
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {overridePolicy.map((section) => (
+            <div key={section.title} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-gray-900">{section.title}</p>
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${toneClasses(section.tone)}`}>
+                  {toneLabel(section.tone)}
+                </span>
+              </div>
+              <ul className="mt-3 space-y-2 text-sm text-gray-700">
+                {section.items.map((item) => (
+                  <li key={item} className="rounded-lg bg-white px-3 py-2">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       </div>
 

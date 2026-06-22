@@ -10,7 +10,7 @@ Disputes depend on facts produced by booking, ride operation, tracking, notifica
 
 ## Decision
 
-Keep dispute handling in a dedicated module and consume evidence from ride events, booking state, location updates, reports, and financial records. Keep rating logic separate from disputes but use the same ride and booking eligibility context.
+Keep dispute handling in a dedicated module and consume evidence from ride events, booking state, location updates, reports, manual override signals, and financial records. Keep rating logic separate from disputes but use the same ride and booking eligibility context.
 
 ## Rationale
 
@@ -18,6 +18,7 @@ Keep dispute handling in a dedicated module and consume evidence from ride event
 - Evidence reuse avoids duplicating operational data.
 - Separating ratings prevents reputation updates from becoming coupled to dispute state.
 - Reconciliation can apply financial consequences after a dispute decision.
+- Manual override and fallback actions remain first-class evidence inputs, so support recovery does not bypass dispute scoring.
 
 ## Consequences
 
@@ -31,6 +32,7 @@ Keep dispute handling in a dedicated module and consume evidence from ride event
 - Add dispute flags directly to bookings only. Rejected because disputes can span ride, user, payment, and safety context.
 - Handle ratings only in the frontend. Rejected because eligibility and duplicate prevention must be server enforced.
 - Resolve disputes automatically from status alone. Rejected because evidence and admin judgment are required for edge cases.
+- Store manual overrides outside the dispute evidence trail. Rejected because the engine needs a single canonical record for both support recovery and dispute evaluation.
 
 ## Code References
 

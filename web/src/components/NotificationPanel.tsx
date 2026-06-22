@@ -122,8 +122,8 @@ export default function NotificationPanel({
   }
 
   const content = (
-    <div className={`w-full overflow-hidden rounded-2xl bg-white shadow-sm border border-gray-100 ${className}`}>
-      <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
+    <div className={`mx-auto w-full max-w-[720px] overflow-hidden rounded-2xl bg-white shadow-sm border border-gray-100 ${className}`}>
+      <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 sm:px-5">
         <div className="flex items-center gap-2 min-w-0">
           <Bell className="h-4 w-4 text-deliivo-orange" />
           <div className="min-w-0">
@@ -167,7 +167,7 @@ export default function NotificationPanel({
         </div>
       </div>
       {(lastSyncedAt || lastSyncAttemptAt || lastError) && (
-        <div className="border-b border-gray-100 px-4 py-2 text-[11px] text-deliivo-gray">
+        <div className="border-b border-gray-200 px-4 py-2 text-[11px] text-deliivo-gray sm:px-5">
           {lastError ? (
             <span className="text-red-600">{lastError}</span>
           ) : lastSyncedAt ? (
@@ -196,7 +196,7 @@ export default function NotificationPanel({
             No notifications yet.
           </div>
         ) : (
-          <div className="divide-y divide-gray-100">
+          <div className="divide-y divide-gray-200 bg-white">
             {visibleItems.map((item) => {
               const summary = getNotificationSummary(item);
               const rideId = getString(item.data, 'rideId');
@@ -208,22 +208,25 @@ export default function NotificationPanel({
               const destination = getString(item.data, 'destinationAddress');
 
               return (
-                <div key={item.id} className={`px-4 py-3 ${item.isRead ? 'bg-white' : 'bg-orange-50/60'}`}>
-                  <div className="flex items-start justify-between gap-3">
+                <div
+                  key={item.id}
+                  className={`relative px-4 py-4 transition-colors sm:px-5 ${item.isRead ? 'bg-white' : 'bg-orange-50/50'} border-b border-gray-200 last:border-b-0`}
+                >
+                  <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-deliivo-dark">{item.title}</p>
                       <p className="mt-0.5 text-xs text-deliivo-gray">{item.body}</p>
 
                       {summary && (
-                        <div className="mt-2 rounded-xl bg-gray-50 px-3 py-2 text-xs text-deliivo-gray">
+                        <div className="mt-3 rounded-xl bg-gray-50 px-3 py-2 text-xs text-deliivo-gray">
                           {summary}
                         </div>
                       )}
 
                       {(origin || destination || departureDate || departureTime || rideId || bookingId) && (
-                        <div className="mt-2 grid gap-2 text-[11px] text-deliivo-gray sm:grid-cols-2">
+                        <div className="mt-3 grid gap-3 text-[11px] text-deliivo-gray sm:grid-cols-2">
                           {origin && destination && (
-                            <div className="rounded-xl border border-gray-100 px-3 py-2">
+                            <div className="rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm sm:col-span-2">
                               <div className="flex items-center gap-1.5 font-medium text-deliivo-dark">
                                 <MapPin className="h-3 w-3 text-deliivo-orange" />
                                 Route
@@ -234,7 +237,7 @@ export default function NotificationPanel({
                             </div>
                           )}
                           {(departureDate || departureTime) && (
-                            <div className="rounded-xl border border-gray-100 px-3 py-2">
+                            <div className="rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
                               <div className="flex items-center gap-1.5 font-medium text-deliivo-dark">
                                 <Clock className="h-3 w-3 text-deliivo-orange" />
                                 Schedule
@@ -245,7 +248,7 @@ export default function NotificationPanel({
                             </div>
                           )}
                           {rideId && (
-                            <div className="rounded-xl border border-gray-100 px-3 py-2">
+                            <div className="rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm sm:col-span-2">
                               <div className="flex items-center gap-1.5 font-medium text-deliivo-dark">
                                 <Calendar className="h-3 w-3 text-deliivo-orange" />
                                 Ride ID
@@ -254,7 +257,7 @@ export default function NotificationPanel({
                             </div>
                           )}
                           {bookingId && (
-                            <div className="rounded-xl border border-gray-100 px-3 py-2">
+                            <div className="rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm sm:col-span-2">
                               <div className="flex items-center gap-1.5 font-medium text-deliivo-dark">
                                 <Calendar className="h-3 w-3 text-deliivo-orange" />
                                 Booking ID
@@ -268,7 +271,7 @@ export default function NotificationPanel({
                     {!item.isRead && <span className="mt-0.5 h-2.5 w-2.5 rounded-full bg-deliivo-orange shrink-0" />}
                   </div>
 
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">
                     <p className="text-[11px] uppercase tracking-wide text-deliivo-gray">
                       {item.type.replace(/\./g, ' ')}
                     </p>

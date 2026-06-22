@@ -16,6 +16,7 @@ Provide transparent ride pricing for Baltic carpooling while preserving backend 
 - `POST /api/v1/pricing/price-preview` calculates min, recommended, and max price per seat from distance and active region config.
 - `POST /api/v1/pricing/validate` validates a selected price and creates a `RidePricingSnapshot`.
 - `GET /api/v1/pricing/configs` lists active pricing configs.
+- Admin pricing management is available through `/api/v1/admin/pricing/configs` for list, create, and update workflows.
 - Default pricing region is `BALTIC`.
 - `PricingConfig` stores region, currency, min/recommended/max rate per km, minimum seat price, rounding strategy, active flag, and validity window.
 - `RidePricingSnapshot` stores an immutable pricing snapshot per ride.
@@ -59,6 +60,7 @@ Provide transparent ride pricing for Baltic carpooling while preserving backend 
 - Baltic live fuel source is not implemented; EUR currently uses the `EE` fallback fuel price.
 - The source PDF `Baltic_Carpooling_V1_Pricing_Design_Developer.pdf` was not text-extracted in this environment and should be manually reviewed.
 - Platform service fee comes from `PLATFORM_FEE_PERCENT`, but business policy for the final percentage should be confirmed.
+- Admin pricing CRUD now exists on the protected admin router, but the public pricing router remains read-only for configs.
 
 ## Success Metrics
 

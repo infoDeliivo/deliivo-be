@@ -14,7 +14,7 @@ interface SupportOverrideCardProps {
 
 export default function SupportOverrideCard({
   title = 'Need a manual fallback?',
-  copy = 'If OTP, pickup confirmation, or cancellation flow is blocked, keep the ride or booking ID handy and contact support. Support can use admin override tools after reviewing the ride state.',
+  copy = 'If OTP, pickup confirmation, or cancellation flow is blocked, keep the ride or booking ID handy and contact support. Support can only use override tools after checking the ride state, payment trail, and reconciliation context.',
   identifiers,
   supportTopicHref = '/contact',
 }: SupportOverrideCardProps) {

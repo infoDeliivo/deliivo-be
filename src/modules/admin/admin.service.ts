@@ -148,6 +148,56 @@ export const getStats = async () => {
     };
 };
 
+export const getMonitoringTrends = async (days = 7) => {
+    const safeDays = Math.min(14, Math.max(3, Math.floor(days)));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const points = await Promise.all(
+        Array.from({ length: safeDays }, async (_, index) => {
+            const start = new Date(today);
+            start.setDate(today.getDate() - (safeDays - 1 - index));
+            const end = new Date(start);
+            end.setDate(start.getDate() + 1);
+
+            const [ridesPublished, bookingsCreated, webhookEvents, revenue] = await Promise.all([
+                prisma.ride.count({
+                    where: {
+                        createdAt: { gte: start, lt: end },
+                    },
+                }),
+                prisma.rideBooking.count({
+                    where: {
+                        createdAt: { gte: start, lt: end },
+                    },
+                }),
+                prisma.stripeWebhookEvent.count({
+                    where: {
+                        processedAt: { gte: start, lt: end },
+                    },
+                }),
+                prisma.rideBooking.aggregate({
+                    where: {
+                        createdAt: { gte: start, lt: end },
+                        status: { in: [BookingStatus.CONFIRMED, BookingStatus.COMPLETED, BookingStatus.IN_PROGRESS] },
+                    },
+                    _sum: { paymentAmount: true },
+                }),
+            ]);
+
+            return {
+                date: start.toISOString().slice(0, 10),
+                ridesPublished,
+                bookingsCreated,
+                webhookEvents,
+                revenue: revenue._sum.paymentAmount ?? 0,
+            };
+        })
+    );
+
+    return { points };
+};
+
 /* ================= VERIFY VEHICLE ================= */
 export const verifyVehicle = async (vehicleId: string) => {
     const vehicle = await prisma.vehicle.findUnique({ where: { id: vehicleId }, select: { id: true } });

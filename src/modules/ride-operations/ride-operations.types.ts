@@ -51,6 +51,7 @@ export type RideEventInput = {
     lat?: number;
     lng?: number;
     clientTimestamp: string;
+    overrideReason?: string;
 };
 
 export type DriverArrivedInput = RideEventInput & {

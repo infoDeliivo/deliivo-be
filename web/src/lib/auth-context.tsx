@@ -45,6 +45,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fetchUser();
   }, [fetchUser]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refreshOnResume = () => {
+      if (document.visibilityState === 'visible') {
+        void fetchUser();
+      }
+    };
+    window.addEventListener('focus', refreshOnResume);
+    window.addEventListener('online', refreshOnResume);
+    document.addEventListener('visibilitychange', refreshOnResume);
+    return () => {
+      window.removeEventListener('focus', refreshOnResume);
+      window.removeEventListener('online', refreshOnResume);
+      document.removeEventListener('visibilitychange', refreshOnResume);
+    };
+  }, [fetchUser]);
+
   const login = async (accessToken: string, refreshToken: string) => {
     setTokens({ accessToken, refreshToken });
     await fetchUser();

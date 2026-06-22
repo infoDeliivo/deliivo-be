@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { BookOpen, Globe2, Languages, Loader2, PencilLine, Plus, Save, Trash2 } from 'lucide-react';
-import { contentApi, ContentPost, getApiErrorMessage } from '@/lib/api';
+import { contentApi, ContentAuditLog, ContentPost, getApiErrorMessage } from '@/lib/api';
 import { showError, showSuccess } from '@/lib/app-feedback';
 
 const emptyDraft = {
@@ -22,6 +22,7 @@ export default function AdminContentPage() {
   const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<typeof emptyDraft>(emptyDraft);
+  const [audit, setAudit] = useState<ContentAuditLog[]>([]);
 
   const selectedPost = useMemo(
     () => posts.find((post) => post.id === selectedId) || null,
@@ -35,11 +36,22 @@ export default function AdminContentPage() {
       setPosts(res.data || []);
       if (!selectedId && res.data?.[0]) {
         selectPost(res.data[0]);
+      } else if (selectedId) {
+        loadAudit(selectedId);
       }
     } catch (err: unknown) {
       showError('Could not load content', getApiErrorMessage(err, 'Failed to load content posts'));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadAudit(postId?: string | null) {
+    try {
+      const res = await contentApi.listAdminAudit(postId || undefined, 12);
+      setAudit(res.data || []);
+    } catch {
+      setAudit([]);
     }
   }
 
@@ -59,6 +71,7 @@ export default function AdminContentPage() {
       readTime: post.readTime,
       locale: post.locale,
     });
+    loadAudit(post.id);
   }
 
   function createNew() {
@@ -90,6 +103,7 @@ export default function AdminContentPage() {
       showSuccess('Content deleted', 'The post was removed from the content store.');
       await loadPosts();
       createNew();
+      loadAudit();
     } catch (err: unknown) {
       showError('Could not delete content', getApiErrorMessage(err, 'Failed to delete content post'));
     }
@@ -231,6 +245,39 @@ export default function AdminContentPage() {
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Save post
             </button>
+          </div>
+
+          <div className="mt-8 border-t border-gray-100 pt-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-gray-900">Recent audit trail</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  {selectedId ? 'History for the selected post.' : 'Recent global content actions.'}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-3">
+              {audit.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-sm text-gray-500">
+                  No audit entries available.
+                </div>
+              ) : audit.map((item) => (
+                <div key={item.id} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">{item.action}</p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {item.createdAt} by {item.actorId}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600">{item.postId}</span>
+                  </div>
+                  {item.snapshot && (
+                    <p className="mt-2 text-sm text-gray-700">{item.snapshot.title} · {item.snapshot.status}</p>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </section>
       </div>

@@ -108,7 +108,7 @@ function PaymentMethodsContent() {
 
   return (
     <div className="min-h-screen bg-deliivo-cream">
-      <header className="bg-white border-b border-orange-100 px-6 py-4 flex items-center gap-3">
+      <header className="bg-white border-b border-orange-100 px-4 py-4 flex items-center gap-3 sm:px-6">
         <Link href="/profile" className="flex items-center gap-1 text-sm text-gray-600 hover:text-deliivo-orange transition-colors">
           <ChevronLeft className="w-4 h-4" /> {t('profile.title')}
         </Link>

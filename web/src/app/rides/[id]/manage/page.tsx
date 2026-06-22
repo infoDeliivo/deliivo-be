@@ -47,6 +47,7 @@ const [error, setError] = useState('');
   const [rejectReasonPreset, setRejectReasonPreset] = useState('NO_SEATS');
   const [rejectCustomReason, setRejectCustomReason] = useState('');
   const allowRideSimulation = process.env.NEXT_PUBLIC_ALLOW_RIDE_SIMULATION === 'true';
+  const allowManualOverride = process.env.NEXT_PUBLIC_ALLOW_RIDE_MANUAL_OVERRIDE === 'true';
   const [devBusy, setDevBusy] = useState<string | null>(null);
 
   // Live location tracking
@@ -185,9 +186,13 @@ const [error, setError] = useState('');
   }
 
   async function handleStartRide() {
+    const overrideReason = allowManualOverride
+      ? promptManualOverride('Start ride manually', 'Use only when the ride should start but the normal guard is blocking progress.')
+      : undefined;
+    if (allowManualOverride && overrideReason === null) return;
     setActionLoading('start');
     try {
-      await rideOpsApi.startRide(id);
+      await rideOpsApi.startRide(id, overrideReason || undefined);
       setPhase('in_progress');
       if (ride) setRide({ ...ride, status: 'IN_PROGRESS' });
       await loadData();
@@ -202,9 +207,13 @@ const [error, setError] = useState('');
   }
 
   async function handleFinishRide() {
+    const overrideReason = allowManualOverride
+      ? promptManualOverride('Finish ride manually', 'Use only when the ride is complete but the remaining state is blocking closure.')
+      : undefined;
+    if (allowManualOverride && overrideReason === null) return;
     setActionLoading('finish');
     try {
-      await rideOpsApi.finishRide(id);
+      await rideOpsApi.finishRide(id, overrideReason || undefined);
       setPhase('completed');
       if (ride) setRide({ ...ride, status: 'COMPLETED' });
       await loadData();
@@ -276,12 +285,12 @@ const [error, setError] = useState('');
     }
   }
 
-  async function handleDriverArrived(booking: DriverRideBooking) {
+  async function handleDriverArrived(booking: DriverRideBooking, overrideReason?: string) {
     const bookingId = booking.id;
     setActionLoading(`arrived-${bookingId}`);
     try {
       const location = driverLocation || getBookingPoint(booking, 'pickup');
-      await rideOpsApi.driverArrived(bookingId, location?.lat, location?.lng);
+        await rideOpsApi.driverArrived(bookingId, location?.lat, location?.lng, overrideReason);
       if (location?.lat != null && location?.lng != null) {
         setDriverLocation({ lat: location.lat, lng: location.lng });
       }
@@ -297,10 +306,10 @@ const [error, setError] = useState('');
     }
   }
 
-  async function handleMarkNoShow(bookingId: string) {
+  async function handleMarkNoShow(bookingId: string, overrideReason?: string) {
     setActionLoading(`noshow-${bookingId}`);
     try {
-      await rideOpsApi.markNoShow(bookingId, driverLocation?.lat, driverLocation?.lng);
+        await rideOpsApi.markNoShow(bookingId, driverLocation?.lat, driverLocation?.lng, overrideReason);
       setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'NO_SHOW' } : b));
       await loadData();
       showSuccess(t('manageRide.noShowMarked'), t('manageRide.noShowMarkedCopy'));
@@ -389,12 +398,12 @@ const [error, setError] = useState('');
     }
   }
 
-  async function handleConfirmDropoff(booking: DriverRideBooking) {
+  async function handleConfirmDropoff(booking: DriverRideBooking, overrideReason?: string) {
     const bookingId = booking.id;
     setActionLoading(`dropoff-${bookingId}`);
     try {
       const point = getBookingPoint(booking, 'dropoff');
-      await rideOpsApi.confirmDropoff(bookingId, point?.lat, point?.lng);
+        await rideOpsApi.confirmDropoff(bookingId, point?.lat, point?.lng, overrideReason);
       setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'DROP_PENDING' } : b));
       await loadData();
       showSuccess(t('manageRide.dropoffMarked'), t('manageRide.dropoffMarkedCopy'));
@@ -452,7 +461,7 @@ const [error, setError] = useState('');
     <div className="min-h-screen bg-deliivo-cream">
       {/* Header */}
       <div className="sticky top-0 z-10 border-b border-gray-100 bg-white/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-3xl items-center px-4">
+        <div className="mx-auto flex h-14 max-w-5xl items-center px-4">
           <Link href="/rides" className="flex items-center gap-1.5 text-sm font-medium text-deliivo-gray hover:text-deliivo-dark">
             <ArrowLeft className="h-4 w-4" /> {t('rides.myRides')}
           </Link>
@@ -460,7 +469,7 @@ const [error, setError] = useState('');
         </div>
       </div>
 
-      <div className="mx-auto max-w-3xl px-4 py-6 space-y-6">
+      <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
         {/* Ride status card */}
         <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
           <div className={`px-5 py-4 ${phase === 'in_progress' ? 'bg-gradient-to-r from-green-500 to-green-600' : phase === 'completed' ? 'bg-gradient-to-r from-gray-500 to-gray-600' : phase === 'cancelled' ? 'bg-gradient-to-r from-red-500 to-red-600' : 'bg-gradient-to-r from-deliivo-orange to-primary-600'}`}>
@@ -478,14 +487,14 @@ const [error, setError] = useState('');
           </div>
 
           <div className="p-5">
-            <div className="grid grid-cols-2 gap-3 text-xs text-deliivo-gray sm:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 text-xs text-deliivo-gray sm:grid-cols-2 lg:grid-cols-4">
               <span className="flex items-center gap-1"><Calendar size={13} /> {dateLabel}</span>
               <span className="flex items-center gap-1"><Clock size={13} /> {ride.departureTime}</span>
               <span className="flex items-center gap-1"><Users size={13} /> {t('manageRide.availableSeats', { available: ride.availableSeats, total: ride.totalSeats })}</span>
               <span className="flex items-center gap-1"><MapPin size={13} /> {ride.currency} {ride.basePricePerSeat.toFixed(2)}{t('rideDetail.perSeatShort')}</span>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-xl bg-gray-50 px-3 py-2">
                 <p className="text-[11px] text-deliivo-gray">{t('manageRide.requests')}</p>
                 <p className="text-sm font-semibold text-deliivo-dark">{requestCount}</p>
@@ -528,18 +537,8 @@ const [error, setError] = useState('');
           <EmergencySosButton rideId={ride.id} role="DRIVER" className="w-full" />
         )}
 
-        <SupportOverrideCard
-          title="Driver support and override path"
-          copy="Use this when OTP verification, no-show marking, cancellation, or passenger state does not move as expected. Support should work from the ride and booking IDs below and use admin tools only after checking payment and dispute context."
-          identifiers={[
-            { label: 'Ride ID', value: ride.id },
-            { label: 'Driver ID', value: user?.id },
-          ]}
-          supportTopicHref="/contact"
-        />
-
-        {/* Pickup OTP verification is a primary ride-day action. */}
-        {phase === 'in_progress' && pickupOtpBookings.length > 0 && (
+          {/* Pickup OTP verification is a primary ride-day action. */}
+          {phase === 'in_progress' && pickupOtpBookings.length > 0 && (
           <div className="rounded-2xl border border-orange-100 bg-white p-5 shadow-sm space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-deliivo-dark flex items-center gap-2">
@@ -765,9 +764,9 @@ const [error, setError] = useState('');
         )}
 
         {/* Location updates continue in the background; only live sharing is shown here. */}
-        {phase === 'in_progress' && (
-          <div className="rounded-2xl border border-orange-100 bg-orange-50 p-5">
-            <div className="flex items-center justify-between gap-3">
+          {phase === 'in_progress' && (
+            <div className="rounded-2xl border border-orange-100 bg-orange-50 p-5">
+              <div className="flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-deliivo-dark flex items-center gap-2">
                 <Share2 size={14} className="text-deliivo-orange" />
                 {t('rideDetail.liveSharing')}
@@ -780,14 +779,88 @@ const [error, setError] = useState('');
                 </button>
               )}
             </div>
-            <p className="mt-2 text-xs text-deliivo-gray">
-              {t('manageRide.liveSharingCopy')}
-            </p>
-          </div>
-        )}
+              <p className="mt-2 text-xs text-deliivo-gray">
+                {t('manageRide.liveSharingCopy')}
+              </p>
+            </div>
+          )}
 
-        {rejectTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <SupportOverrideCard
+            title="Driver support and override path"
+            copy="Use this when OTP verification, no-show marking, cancellation, or passenger state does not move as expected. Support should work from the ride and booking IDs below and use admin tools only after checking payment and dispute context."
+            identifiers={[
+              { label: 'Ride ID', value: ride.id },
+              { label: 'Driver ID', value: user?.id },
+            ]}
+            supportTopicHref="/contact"
+          />
+
+          {phase !== 'completed' && phase !== 'cancelled' && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-amber-950">Manual recovery</h3>
+                  <p className="mt-1 text-xs text-amber-900">
+                    Use these only when the normal ride-day control is blocked. Every action is written into the dispute evidence trail.
+                  </p>
+                  {!allowManualOverride && (
+                    <p className="mt-1 text-[11px] font-medium text-amber-800">
+                      Manual override is disabled until `NEXT_PUBLIC_ALLOW_RIDE_MANUAL_OVERRIDE=true`.
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={handleStartRide} disabled={!allowManualOverride} className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-40">
+                  Manual start ride
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const target = pickupOtpBookings[0];
+                    if (!target) return;
+                    const overrideReason = promptManualOverride('Manual OTP verification', 'Use when the pickup OTP cannot be used but the passenger should still be onboarded.');
+                    if (overrideReason === null) return;
+                    setActionLoading(`manual-pickup-${target.id}`);
+                    try {
+                      await rideOpsApi.verifyPickupOtp(target.id, '000000', overrideReason || undefined);
+                      await loadData();
+                    } catch (err: unknown) {
+                      const message = getApiErrorMessage(err, t('manageRide.failedSimulatePickup'));
+                      setError(message);
+                      showError(t('manageRide.couldNotAcceptRequest'), message);
+                    } finally {
+                      setActionLoading('');
+                    }
+                  }}
+                  disabled={Boolean(actionLoading) || !allowManualOverride}
+                  className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-40"
+                >
+                  Manual pickup approval
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = confirmedBookings.find((booking) => booking.status === 'ONBOARD');
+                    if (!target) return;
+                    const overrideReason = promptManualOverride('Manual drop-off confirmation', 'Use when drop-off needs to be completed because the normal confirmation path is blocked.');
+                    if (overrideReason === null) return;
+                    handleConfirmDropoff(target, overrideReason);
+                  }}
+                  disabled={!allowManualOverride}
+                  className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-40"
+                >
+                  Manual drop-off
+                </button>
+                <button type="button" onClick={handleFinishRide} disabled={!allowManualOverride} className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-40">
+                  Manual finish ride
+                </button>
+              </div>
+            </div>
+          )}
+
+          {rejectTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
             <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -1065,6 +1138,13 @@ function formatCountdown(totalSeconds: number, t: (key: string, params?: Record<
   if (hours > 0) return t('manageRide.countdownHoursMinutes', { hours, minutes });
   if (minutes > 0) return t('manageRide.countdownMinutes', { minutes });
   return t('manageRide.countdownSeconds', { seconds });
+}
+
+function promptManualOverride(title: string, body: string) {
+  if (typeof window === 'undefined') return null;
+  const reason = window.prompt(`${title}\n${body}\n\nEnter a short reason for the override:`, '');
+  if (reason === null) return null;
+  return reason.trim();
 }
 
 // ─── OTP Verification Section ─────────────────────────────────────────────────

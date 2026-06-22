@@ -18,6 +18,8 @@ It summarizes the current codebase, existing documentation, implementation histo
 - `09-phase-history.md` records chronological implementation phases, touched code areas, documentation updates, and verification.
 - `10-production-readiness.md` lists production launch checks for environment, Stripe, notifications, operations, and deployment verification.
 - `11-kpis-slas-monitoring.md` defines initial business KPIs, internal SLAs, monitoring signals, and dashboard needs.
+- `12-working-background-jobs.md` inventories the active background jobs, queue workers, and removed duplicates.
+- `13-startup-observability-checklist.md` summarizes the minimum observability stack for a startup deployment.
 - `features/` contains feature-specific PRDs and ADRs.
 
 ## Feature Areas

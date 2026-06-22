@@ -55,6 +55,7 @@ This document defines the first operational metrics and internal service targets
 ## Current Implementation Status
 
 - The admin portal now includes a live monitoring workbench at `/admin/monitoring` that summarizes platform KPIs, SLA targets, logging requirements, and dashboard shortcuts.
+- The monitoring workbench also includes a 7-day activity trend for rides, bookings, webhook traffic, and revenue.
 - The backend now emits request correlation IDs on responses and logs HTTP completion events with timing for traceability.
-- The remaining work is deeper backend tracing/metrics export and richer historical charts, not the operational surface itself.
+- The remaining work is deeper backend tracing/metrics export, alerting, and richer historical charts.
 - The admin settings page now also surfaces `/health/ready` as the deployment gate for ride-day and payment testing.

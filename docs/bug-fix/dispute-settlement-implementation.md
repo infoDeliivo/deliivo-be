@@ -59,6 +59,29 @@ Admin `evaluate` now executes settlement for clear auto outcomes:
 
 Manual review outcomes remain in the admin queue.
 
+### Evidence Model
+
+`collectEvidence()` now builds a richer canonical record:
+
+- booking snapshot, ride snapshot, and operational timestamps
+- driver GPS history from `locationUpdate`
+- rider-side GPS evidence from rider-arrival and related ride events
+- manual override or fallback signals detected from ride events and metadata
+- factor summary that explains why the engine leaned toward payout, refund, or manual review
+
+`evaluateDispute()` now reads the same canonical evidence record and considers manual override signals as a first-class input. Manual override does not bypass dispute review; it changes the evidence score and may still force manual review when GPS or booking state is weak or conflicting.
+
+This keeps support recovery, ride-day fallback, and dispute settlement on one shared evidence trail.
+
+### Ride-Day Manual Recovery UI
+
+The rider and driver ride-day screens now expose explicit manual recovery actions when `NEXT_PUBLIC_ALLOW_RIDE_MANUAL_OVERRIDE=true`.
+
+- Driver screen: manual start ride, manual pickup approval, manual drop-off confirmation, manual finish ride.
+- Rider screen: manual OTP issue report, manual drop-off confirmation, and manual review request.
+
+Each action captures a short reason and writes it into the same evidence trail used by dispute settlement.
+
 ### Payout Freeze
 
 Payout eligibility and payout processing now exclude payments whose booking has an unresolved dispute.

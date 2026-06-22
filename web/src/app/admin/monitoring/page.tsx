@@ -18,7 +18,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { adminApi, AdminOperationsSummary, AdminStats, getApiErrorMessage } from '@/lib/api';
+import { adminApi, AdminMonitoringTrend, AdminOperationsSummary, AdminStats, getApiErrorMessage } from '@/lib/api';
 import LoadFailureCard from '@/components/LoadFailureCard';
 
 function metricClass(tone: 'good' | 'watch' | 'bad') {
@@ -30,6 +30,7 @@ function metricClass(tone: 'good' | 'watch' | 'bad') {
 export default function AdminMonitoringPage() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [ops, setOps] = useState<AdminOperationsSummary | null>(null);
+  const [trends, setTrends] = useState<AdminMonitoringTrend[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -43,9 +44,14 @@ export default function AdminMonitoringPage() {
     else setLoading(true);
     setError('');
     try {
-      const [statsRes, opsRes] = await Promise.all([adminApi.getStats(), adminApi.getOperationsSummary()]);
+      const [statsRes, opsRes, trendsRes] = await Promise.all([
+        adminApi.getStats(),
+        adminApi.getOperationsSummary(),
+        adminApi.getMonitoringTrends(),
+      ]);
       setStats(statsRes.data);
       setOps(opsRes.data);
+      setTrends(trendsRes.data);
     } catch (err: unknown) {
       setError(getApiErrorMessage(err, 'Failed to load monitoring data'));
     } finally {
@@ -62,7 +68,7 @@ export default function AdminMonitoringPage() {
     );
   }
 
-  if (error || !ops || !stats) {
+  if (error || !ops || !stats || !trends) {
     return (
       <LoadFailureCard
         title="Monitoring unavailable"
@@ -105,6 +111,11 @@ export default function AdminMonitoringPage() {
     { title: 'Disputes and safety', copy: 'Opened disputes, evidence completeness, recommendations, terminal outcomes.', href: '/admin/reports' },
   ];
 
+  const maxTrendValue = Math.max(
+    1,
+    ...trends.flatMap((item) => [item.ridesPublished, item.bookingsCreated, item.webhookEvents, Math.round(item.revenue)]),
+  );
+
   const logs = [
     'Structured identifiers: `userId`, `rideId`, `bookingId`, `paymentId`, `disputeId`, `stripeEventId`, and `actionId` when available.',
     'Do not log card details, raw OTPs in production, Stripe secrets, JWTs, or full service account JSON.',
@@ -144,6 +155,58 @@ export default function AdminMonitoringPage() {
             <p className="mt-1 text-xs opacity-80">{item.copy}</p>
           </div>
         ))}
+      </div>
+
+      <div className="rounded-2xl bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2">
+          <Route className="h-4 w-4 text-[#F97316]" />
+          <h2 className="text-sm font-semibold text-gray-900">7-day activity trend</h2>
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full border-separate border-spacing-y-2">
+            <thead>
+              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                <th className="px-3 py-2">Day</th>
+                <th className="px-3 py-2">Rides</th>
+                <th className="px-3 py-2">Bookings</th>
+                <th className="px-3 py-2">Webhooks</th>
+                <th className="px-3 py-2">Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trends.map((item) => (
+                <tr key={item.date} className="rounded-xl bg-gray-50 text-sm text-gray-700">
+                  <td className="px-3 py-3 font-semibold text-gray-900">{item.date}</td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-2.5 w-32 overflow-hidden rounded-full bg-gray-200">
+                        <div className="h-full rounded-full bg-[#F97316]" style={{ width: `${Math.max(8, (item.ridesPublished / maxTrendValue) * 100)}%` }} />
+                      </div>
+                      <span>{item.ridesPublished}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-2.5 w-32 overflow-hidden rounded-full bg-gray-200">
+                        <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.max(8, (item.bookingsCreated / maxTrendValue) * 100)}%` }} />
+                      </div>
+                      <span>{item.bookingsCreated}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-2.5 w-32 overflow-hidden rounded-full bg-gray-200">
+                        <div className="h-full rounded-full bg-violet-500" style={{ width: `${Math.max(8, (item.webhookEvents / maxTrendValue) * 100)}%` }} />
+                      </div>
+                      <span>{item.webhookEvents}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 font-medium text-gray-900">EUR {item.revenue.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

@@ -21,6 +21,8 @@ import {
 import { haversineDistance } from './geofence.utils.js';
 import { emitToRide, emitToUsers } from '../../socket/index.js';
 
+const isManualOverrideEnabled = () => process.env.ALLOW_RIDE_MANUAL_OVERRIDE === 'true';
+
 // ============================================================
 //  HELPERS
 // ============================================================
@@ -61,7 +63,15 @@ const recordEvent = async (
             lat: input.lat ?? null,
             lng: input.lng ?? null,
             clientTimestamp: new Date(input.clientTimestamp),
-            metadataJson: options?.metadataJson as any,
+            metadataJson: {
+                ...(options?.metadataJson ?? {}),
+                ...(input.overrideReason
+                    ? {
+                        manualOverride: true,
+                        overrideReason: input.overrideReason,
+                    }
+                    : {}),
+            } as any,
             validationStatus: options?.validationStatus ?? 'VALID',
         },
     });
@@ -199,7 +209,7 @@ export const startRide = async (driverId: string, rideId: string, input: RideEve
     const isProd = process.env.NODE_ENV === 'production';
     if (isProd && !allowRideSimulation) {
         const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
-        if (Date.now() < departureAt.getTime()) {
+        if (Date.now() < departureAt.getTime() && !(isManualOverrideEnabled() && input.overrideReason?.trim())) {
             throw new Error('RIDE_TOO_EARLY');
         }
     }
@@ -346,6 +356,7 @@ export const driverArrived = async (driverId: string, input: DriverArrivedInput)
         : null;
     const geofenceValid = distanceMeters == null ? true : distanceMeters <= GEOFENCE_RADIUS_METERS;
     const validationStatus = geofenceValid ? 'VALID' : 'WARNING';
+    const manualOverride = isManualOverrideEnabled() && Boolean(input.overrideReason?.trim());
 
     const now = new Date();
 
@@ -398,6 +409,8 @@ export const driverArrived = async (driverId: string, input: DriverArrivedInput)
                 distanceMeters,
                 geofenceValid,
                 actor: 'driver',
+                manualOverride,
+                overrideReason: input.overrideReason ?? null,
             },
         }
     );
@@ -539,15 +552,15 @@ export const verifyPickupAndBoard = async (driverId: string, bookingId: string, 
         throw new Error('BOOKING_NOT_READY_FOR_OTP');
     }
 
-    if (!booking.pickupOtpHash) throw new Error('PICKUP_OTP_NOT_AVAILABLE');
-    if (booking.pickupOtpExpiresAt && booking.pickupOtpExpiresAt < new Date()) {
+    if (!booking.pickupOtpHash && !(isManualOverrideEnabled() && input.overrideReason?.trim())) throw new Error('PICKUP_OTP_NOT_AVAILABLE');
+    if (booking.pickupOtpExpiresAt && booking.pickupOtpExpiresAt < new Date() && !(isManualOverrideEnabled() && input.overrideReason?.trim())) {
         throw new Error('PICKUP_OTP_EXPIRED');
     }
     if (booking.otpAttemptCount >= 5) throw new Error('OTP_ATTEMPT_LIMIT_EXCEEDED');
 
-    const isValid = isOtpValid(otp, booking.pickupOtpHash);
+    const isValid = booking.pickupOtpHash ? isOtpValid(otp, booking.pickupOtpHash) : false;
 
-    if (!isValid) {
+    if (!isValid && !(isManualOverrideEnabled() && input.overrideReason?.trim())) {
         await prisma.rideBooking.update({
             where: { id: bookingId },
             data: { otpAttemptCount: { increment: 1 } },
@@ -566,7 +579,14 @@ export const verifyPickupAndBoard = async (driverId: string, bookingId: string, 
         },
     });
 
-    await recordEvent(booking.rideId, bookingId, 'PICKUP_OTP_VERIFIED', 'DRIVER', driverId, input);
+    await recordEvent(booking.rideId, bookingId, 'PICKUP_OTP_VERIFIED', 'DRIVER', driverId, input, {
+        validationStatus: isValid ? 'VALID' : 'WARNING',
+        metadataJson: {
+            manualOverride: !isValid || Boolean(input.overrideReason?.trim()),
+            overrideReason: input.overrideReason ?? null,
+            otpValidated: isValid,
+        },
+    });
 
     await createNotification({
         userId: booking.passengerId,
@@ -687,7 +707,9 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
     if (booking.ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
 
     if (booking.status !== BookingStatus.ONBOARD && booking.status !== BookingStatus.IN_PROGRESS) {
-        throw new Error('BOOKING_NOT_ONBOARD');
+        if (!(isManualOverrideEnabled() && input.overrideReason?.trim())) {
+            throw new Error('BOOKING_NOT_ONBOARD');
+        }
     }
 
     // Geofence check (warning only)
@@ -707,7 +729,17 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
         },
     });
 
-    await recordEvent(booking.rideId, input.bookingId, 'DROPOFF_CONFIRMED_DRIVER', 'DRIVER', driverId, input);
+    await recordEvent(booking.rideId, input.bookingId, 'DROPOFF_CONFIRMED_DRIVER', 'DRIVER', driverId, input, {
+        validationStatus: geofenceValid ? 'VALID' : 'WARNING',
+        metadataJson: {
+            dropoffPoint,
+            distanceMeters,
+            geofenceValid,
+            actor: 'driver',
+            manualOverride: Boolean(input.overrideReason?.trim()),
+            overrideReason: input.overrideReason ?? null,
+        },
+    });
 
     // Notify rider to confirm
     await createNotification({
@@ -757,7 +789,9 @@ export const riderConfirmDropoff = async (passengerId: string, bookingId: string
     if (!booking) throw new Error('BOOKING_NOT_FOUND');
     if (booking.passengerId !== passengerId) throw new Error('FORBIDDEN_PASSENGER');
     if (booking.status !== BookingStatus.DROP_PENDING) {
-        throw new Error('BOOKING_NOT_DROP_PENDING');
+        if (!(isManualOverrideEnabled() && input.overrideReason?.trim())) {
+            throw new Error('BOOKING_NOT_DROP_PENDING');
+        }
     }
 
     const now = new Date();
@@ -771,7 +805,12 @@ export const riderConfirmDropoff = async (passengerId: string, bookingId: string
         },
     });
 
-    await recordEvent(booking.rideId, bookingId, 'DROPOFF_CONFIRMED_RIDER', 'RIDER', passengerId, input);
+    await recordEvent(booking.rideId, bookingId, 'DROPOFF_CONFIRMED_RIDER', 'RIDER', passengerId, input, {
+        metadataJson: {
+            manualOverride: Boolean(input.overrideReason?.trim()),
+            overrideReason: input.overrideReason ?? null,
+        },
+    });
 
     await createNotification({
         userId: booking.ride.driverId,
@@ -862,7 +901,7 @@ export const finishRide = async (driverId: string, rideId: string, input: RideEv
         b => NON_TERMINAL_BOOKING_STATES.includes(b.status)
     );
 
-    if (nonTerminalBookings.length > 0) {
+    if (nonTerminalBookings.length > 0 && !(isManualOverrideEnabled() && input.overrideReason?.trim())) {
         throw new Error('BOOKINGS_NOT_ALL_TERMINAL');
     }
 

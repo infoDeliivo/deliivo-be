@@ -19,6 +19,14 @@ function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function isIdempotentMethod(method?: string) {
+  return !method || ['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Token storage (client-side only)
 const TOKEN_KEY = 'deliivo_access_token';
 const REFRESH_KEY = 'deliivo_refresh_token';
@@ -130,6 +138,7 @@ export async function apiFetch<T = unknown>(
 ): Promise<T> {
   const tokens = getTokens();
   const isFormData = options.body instanceof FormData;
+  const method = (options.method || 'GET').toUpperCase();
   const requestId = createRequestId();
   const headers: Record<string, string> = {
     'Accept': 'application/json',
@@ -142,18 +151,33 @@ export async function apiFetch<T = unknown>(
     headers['Authorization'] = `Bearer ${tokens.accessToken}`;
   }
 
+  const performFetch = async () => fetch(`${getApiBaseUrl()}${path}`, {
+    ...options,
+    headers,
+  });
+
   let res: Response;
   try {
-    res = await fetch(`${getApiBaseUrl()}${path}`, {
-      ...options,
-      headers,
-    });
+    res = await performFetch();
   } catch (error) {
-    throw new ApiError(
-      'Unable to reach the server. Check your connection and try again.',
-      0,
-      error instanceof Error ? error.message : error
-    );
+    if (retry && isIdempotentMethod(method)) {
+      await delay(350);
+      try {
+        res = await performFetch();
+      } catch (secondError) {
+        throw new ApiError(
+          'Unable to reach the server. Check your connection and try again.',
+          0,
+          secondError instanceof Error ? secondError.message : secondError
+        );
+      }
+    } else {
+      throw new ApiError(
+        'Unable to reach the server. Check your connection and try again.',
+        0,
+        error instanceof Error ? error.message : error
+      );
+    }
   }
 
   // If 401 and we have a refresh token, try refreshing
@@ -172,6 +196,16 @@ export async function apiFetch<T = unknown>(
         window.location.href = '/auth/signin';
       }
       throw new Error('Session expired');
+    }
+  }
+
+  if (retry && isIdempotentMethod(method) && [502, 503, 504].includes(res.status)) {
+    await delay(350);
+    const retryRes = await performFetch();
+    if (retryRes.status !== res.status) {
+      res = retryRes;
+    } else if (retryRes.ok) {
+      res = retryRes;
     }
   }
 
@@ -682,29 +716,30 @@ export const driverBookingApi = {
 };
 
 // Ride Operations API (start/finish/location)
-function createEventMeta() {
+function createEventMeta(overrides?: { overrideReason?: string }) {
   return {
     actionId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     clientTimestamp: new Date().toISOString(),
+    ...(overrides?.overrideReason ? { overrideReason: overrides.overrideReason } : {}),
   };
 }
 
-function createEventMetaWithLocation(lat?: number, lng?: number) {
+function createEventMetaWithLocation(lat?: number, lng?: number, overrides?: { overrideReason?: string }) {
   return {
-    ...createEventMeta(),
+    ...createEventMeta(overrides),
     ...(lat != null && lng != null ? { lat, lng } : {}),
   };
 }
 
 export const rideOpsApi = {
-  startRide(rideId: string) {
+  startRide(rideId: string, overrideReason?: string) {
     return apiFetch<{ message: string }>(`/api/v1/rides/${rideId}/start`, {
-      method: 'POST', body: JSON.stringify(createEventMeta()),
+      method: 'POST', body: JSON.stringify(createEventMeta({ overrideReason })),
     });
   },
-  finishRide(rideId: string) {
+  finishRide(rideId: string, overrideReason?: string) {
     return apiFetch<{ message: string }>(`/api/v1/rides/${rideId}/finish`, {
-      method: 'POST', body: JSON.stringify(createEventMeta()),
+      method: 'POST', body: JSON.stringify(createEventMeta({ overrideReason })),
     });
   },
   submitLocation(rideId: string, lat: number, lng: number) {
@@ -715,49 +750,49 @@ export const rideOpsApi = {
   getLatestLocation(rideId: string) {
     return apiFetch<{ data: LocationUpdateRecord | null }>(`/api/v1/rides/${rideId}/latest-location`);
   },
-  driverArrived(bookingId: string, lat?: number, lng?: number) {
+  driverArrived(bookingId: string, lat?: number, lng?: number, overrideReason?: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/driver-arrived`, {
-      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng, { overrideReason })),
     });
   },
-  markNoShow(bookingId: string, lat?: number, lng?: number) {
+  markNoShow(bookingId: string, lat?: number, lng?: number, overrideReason?: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/mark-no-show`, {
-      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng, { overrideReason })),
     });
   },
-  verifyPickupOtp(bookingId: string, otp: string) {
+  verifyPickupOtp(bookingId: string, otp: string, overrideReason?: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/verify-pickup-otp`, {
-      method: 'POST', body: JSON.stringify({ otp, ...createEventMeta() }),
+      method: 'POST', body: JSON.stringify({ otp, ...createEventMeta({ overrideReason }) }),
     });
   },
-  riderArrivedAtPickup(bookingId: string, lat?: number, lng?: number) {
+  riderArrivedAtPickup(bookingId: string, lat?: number, lng?: number, overrideReason?: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/rider-arrived`, {
-      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng, { overrideReason })),
     });
   },
-  reportMissedPickup(bookingId: string, lat?: number, lng?: number) {
+  reportMissedPickup(bookingId: string, lat?: number, lng?: number, overrideReason?: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/report-missed-pickup`, {
-      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng, { overrideReason })),
     });
   },
-  confirmDropoff(bookingId: string, lat?: number, lng?: number) {
+  confirmDropoff(bookingId: string, lat?: number, lng?: number, overrideReason?: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/confirm-dropoff`, {
-      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng, { overrideReason })),
     });
   },
-  riderConfirmDropoff(bookingId: string) {
+  riderConfirmDropoff(bookingId: string, overrideReason?: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/rider-confirm-dropoff`, {
-      method: 'POST', body: JSON.stringify(createEventMeta()),
+      method: 'POST', body: JSON.stringify(createEventMeta({ overrideReason })),
     });
   },
-  devSimulatePickup(bookingId: string, lat?: number, lng?: number) {
+  devSimulatePickup(bookingId: string, lat?: number, lng?: number, overrideReason?: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/dev-simulate-pickup`, {
-      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng, { overrideReason })),
     });
   },
-  devSimulateDropoff(bookingId: string, lat?: number, lng?: number) {
+  devSimulateDropoff(bookingId: string, lat?: number, lng?: number, overrideReason?: string) {
     return apiFetch(`/api/v1/bookings/${bookingId}/dev-simulate-dropoff`, {
-      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng)),
+      method: 'POST', body: JSON.stringify(createEventMetaWithLocation(lat, lng, { overrideReason })),
     });
   },
 };
@@ -974,11 +1009,29 @@ export const adminApi = {
   getStats() {
     return apiFetch<{ data: AdminStats }>('/api/v1/admin/stats');
   },
+  getMonitoringTrends() {
+    return apiFetch<{ data: AdminMonitoringTrend[] }>('/api/v1/admin/stats/trends');
+  },
   getOperationsSummary() {
     return apiFetch<{ data: AdminOperationsSummary }>('/api/v1/admin/ops/summary');
   },
   getReadinessHealth() {
     return apiFetch<{ data: HealthReadyStatus }>('/health/ready');
+  },
+  getPricingConfigs() {
+    return apiFetch<{ data: AdminPricingConfig[] }>('/api/v1/admin/pricing/configs');
+  },
+  createPricingConfig(data: AdminPricingConfigWriteInput) {
+    return apiFetch<{ data: AdminPricingConfig }>('/api/v1/admin/pricing/configs', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+  updatePricingConfig(id: string, data: Partial<AdminPricingConfigWriteInput>) {
+    return apiFetch<{ data: AdminPricingConfig }>(`/api/v1/admin/pricing/configs/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
   },
   getUsers(params?: { page?: number; limit?: number; search?: string; isBanned?: string; role?: string }) {
     const query = new URLSearchParams();
@@ -1100,6 +1153,13 @@ export const contentApi = {
   listAdminPosts() {
     return apiFetch<{ data: ContentPost[] }>('/api/v1/admin/content/posts');
   },
+  listAdminAudit(postId?: string, limit = 20) {
+    const query = new URLSearchParams();
+    if (postId) query.set('postId', postId);
+    if (limit) query.set('limit', String(limit));
+    const suffix = query.toString() ? `?${query}` : '';
+    return apiFetch<{ data: ContentAuditLog[] }>(`/api/v1/admin/content/audit${suffix}`);
+  },
   saveAdminPost(input: Partial<ContentPost> & Pick<ContentPost, 'title' | 'excerpt' | 'body' | 'category' | 'readTime' | 'locale'>) {
     return apiFetch<{ data: ContentPost }>('/api/v1/admin/content/posts', {
       method: 'POST',
@@ -1119,6 +1179,14 @@ export interface AdminStats {
   totalRides: number;
   totalBookings: number;
   totalRevenue: number;
+}
+
+export interface AdminMonitoringTrend {
+  date: string;
+  ridesPublished: number;
+  bookingsCreated: number;
+  webhookEvents: number;
+  revenue: number;
 }
 
 export interface AdminOperationsSummary {
@@ -1145,6 +1213,36 @@ export interface AdminOperationsSummary {
     locales: string[];
     updatedAt: string | null;
   };
+}
+
+export interface AdminPricingConfig {
+  id: string;
+  regionCode: string;
+  currency: string;
+  minRatePerKm: number;
+  recommendedRatePerKm: number;
+  maxRatePerKm: number;
+  minimumSeatPrice: number;
+  roundingStrategy: string;
+  active: boolean;
+  validFrom: string;
+  validTo?: string | null;
+  createdBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminPricingConfigWriteInput {
+  regionCode: string;
+  currency: string;
+  minRatePerKm: number;
+  recommendedRatePerKm: number;
+  maxRatePerKm: number;
+  minimumSeatPrice: number;
+  roundingStrategy: string;
+  active: boolean;
+  validFrom?: string;
+  validTo?: string | null;
 }
 
 export interface HealthReadyStatus {
@@ -1520,7 +1618,17 @@ export interface ContentPost {
   locale: string;
   createdAt: string;
   updatedAt: string;
+  createdBy?: string;
   updatedBy: string;
+}
+
+export interface ContentAuditLog {
+  id: string;
+  postId: string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
+  actorId: string;
+  snapshot: ContentPost | null;
+  createdAt: string;
 }
 
 export interface AdminPayoutCandidate {

@@ -18,6 +18,7 @@ Expose admin functionality through dedicated protected backend routes and admin 
 - Domain modules retain business rules for sensitive actions.
 - Web admin pages provide operational visibility without requiring direct database access.
 - Clear route boundaries reduce accidental exposure to normal users.
+- Pricing configuration management belongs to the admin router so changes are auditable and separated from read-only public pricing previews.
 
 ## Consequences
 

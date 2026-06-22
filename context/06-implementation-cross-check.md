@@ -23,6 +23,7 @@ This document records the second-pass code check against the context documentati
 
 - The project has a dedicated pricing module mounted at `/api/v1/pricing`.
 - The pricing router exposes preview, validate/snapshot, and active config listing.
+- The admin router now exposes pricing config list/create/update for operational management.
 - `PricingConfig` and `RidePricingSnapshot` exist in Prisma schema.
 - Default config-based pricing region is `BALTIC`.
 - Publish-draft recommended pricing uses route distance, fuel price, and fuel efficiency.
@@ -34,25 +35,23 @@ This document records the second-pass code check against the context documentati
 - Rider booking detail UI displays pending driver response expiry state.
 - Deadline queue sends reminder, initial expiry notification, and extended auto-cancel.
 - Booking timeout cron runs every minute as a recovery sweep.
+- Stripe payment success now carries the rider-selected response expiry option through to the driver decision deadline instead of replacing it with a fixed window.
+- Booking timeout cron now mirrors the queue lifecycle by issuing the initial expiry notification first and only auto-cancelling after the extended window.
 
 ## Corrected Documentation
 
-- Admin docs no longer claim implemented pricing config mutation. Current router only lists active configs.
+- Admin docs now reflect that pricing mutation is available through protected admin routes, while the public pricing router stays read-only for configs.
 - Pricing now has a dedicated PRD and ADR.
 - Booking request expiry now has a dedicated PRD and ADR.
 - Feature map now separates pricing and booking expiry from the broader ride publishing/search/booking feature.
 
 ## Implementation Gaps Found
 
-- Stripe-mode booking expiry does not fully use rider-selected `responseExpiryOption` after payment success. It moves from `PAYMENT_PENDING` to `DRIVER_PENDING` with the fixed `DRIVER_DECISION_WINDOW_MS`.
-- Queue expiry and cron expiry are not product-equivalent. Queue initial expiry allows one more hour before auto-cancel; cron sweep cancels immediately when the deadline is past.
-- Pricing config create/update is not implemented in the protected pricing router.
 - Baltic live fuel price source is not implemented; EUR recommendations use the `EE` fallback fuel price.
 - PDF source documents were not text-extracted in this environment, so PDF-specific requirements need manual review.
 
 ## Recommendation
 
-Before implementing more pricing or expiry changes, resolve the two expiry consistency issues:
+Before implementing more pricing changes, resolve the remaining pricing gaps:
 
-- carry `responseExpiryOption` through Stripe payment success into the actual driver decision deadline.
-- make cron recovery match the queue state machine, or document cron as an emergency cancellation policy.
+- Baltic live fuel price source is still not implemented; EUR recommendations still use the `EE` fallback fuel price.

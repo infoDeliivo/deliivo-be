@@ -10,6 +10,7 @@ import {
   DollarSign,
   Settings,
   Banknote,
+  BadgeDollarSign,
   Newspaper,
   Siren,
   Activity,
@@ -23,6 +24,7 @@ const navItems = [
   { label: 'Disputes', href: '/admin/reports', icon: Flag },
   { label: 'Payouts', href: '/admin/payouts', icon: Banknote },
   { label: 'Revenue', href: '/admin/revenue', icon: DollarSign },
+  { label: 'Pricing', href: '/admin/pricing', icon: BadgeDollarSign },
   { label: 'Monitoring', href: '/admin/monitoring', icon: Activity },
   { label: 'Content', href: '/admin/content', icon: Newspaper },
   { label: 'Settings', href: '/admin/settings', icon: Settings },
@@ -65,7 +67,7 @@ export default function AdminSidebar() {
 
       {/* Footer */}
       <div className="px-6 py-4 border-t border-white/10">
-        <p className="text-xs text-white/30">Deliivo v1.0 · Admin Panel</p>
+        <p className="text-xs text-white/30">Deliivo v1.0 Â· Admin Panel</p>
       </div>
     </aside>
   )

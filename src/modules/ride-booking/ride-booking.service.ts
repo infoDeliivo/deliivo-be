@@ -174,7 +174,7 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
         : intent.latest_charge?.id ?? null;
     const capturedAmount = intent.amount_received > 0 ? intent.amount_received : intent.amount;
     const now = new Date();
-    const decisionDeadlineAt = new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS);
+    const fallbackDecisionDeadlineAt = new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS);
 
     const updateResult = await prisma.rideBooking.updateMany({
         where: {
@@ -188,7 +188,7 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
             paymentAmount: toMajorUnits(capturedAmount),
             paymentCurrency: intent.currency.toUpperCase(),
             paymentCapturedAt: now,
-            driverDecisionDeadlineAt: decisionDeadlineAt,
+            driverDecisionDeadlineAt: fallbackDecisionDeadlineAt,
         },
     });
 
@@ -229,6 +229,24 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
         return true;
     }
 
+    const departureAt = combineDepartureDateTimeUtc(
+        booking.ride.departureDate,
+        booking.ride.departureTime
+    );
+    const { deadlineAt: decisionDeadlineAt, expiryHours } = calculateDeadline(
+        booking.responseExpiryOption ?? undefined,
+        departureAt,
+        now
+    );
+
+    await prisma.rideBooking.update({
+        where: { id: booking.id },
+        data: {
+            driverDecisionDeadlineAt: decisionDeadlineAt,
+            responseExpiryHours: expiryHours,
+        },
+    });
+
     try {
         await markBookingPaymentPaid(booking.id, booking.ride.driverId);
     } catch (error) {
@@ -262,10 +280,10 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
                 seatsBooked: String(booking.seatsBooked),
                 totalPrice: String(booking.totalPrice),
                 currency: booking.paymentCurrency ?? booking.ride.currency,
-                decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
-                decisionTimeRemainingSeconds: booking.driverDecisionDeadlineAt
-                    ? String(Math.max(0, Math.floor((booking.driverDecisionDeadlineAt.getTime() - Date.now()) / 1000)))
-                    : '0',
+                decisionDeadlineAt: decisionDeadlineAt.toISOString(),
+                decisionTimeRemainingSeconds: String(
+                    Math.max(0, Math.floor((decisionDeadlineAt.getTime() - Date.now()) / 1000))
+                ),
                 deepLink: `app://driver/booking-request/${booking.id}`,
             },
         });
@@ -283,7 +301,7 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
                 destinationAddress,
                 departureDate: booking.ride.departureDate.toISOString(),
                 departureTime: booking.ride.departureTime,
-                decisionDeadlineAt: booking.driverDecisionDeadlineAt?.toISOString() ?? '',
+                decisionDeadlineAt: decisionDeadlineAt.toISOString(),
                 deepLink: `app://booking/${booking.id}`,
             },
         });
@@ -299,9 +317,7 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
             updatedAt: new Date().toISOString(),
         });
 
-        const deadlineDelayMs = booking.driverDecisionDeadlineAt
-            ? Math.max(0, booking.driverDecisionDeadlineAt.getTime() - Date.now())
-            : DRIVER_DECISION_WINDOW_MS;
+        const deadlineDelayMs = Math.max(0, decisionDeadlineAt.getTime() - Date.now());
         await enqueueDeadlineCheck(booking.id, deadlineDelayMs);
     } catch (error) {
         console.warn('Stripe payment success side effects failed after booking was moved to DRIVER_PENDING', error);

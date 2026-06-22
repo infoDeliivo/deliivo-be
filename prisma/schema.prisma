@@ -530,6 +530,38 @@ model DriverPenaltyEvent {
   @@index([bookingId])
 }
 
+model ContentPost {
+  id          String   @id
+  slug        String   @unique
+  title       String
+  excerpt     String
+  body        String
+  category    String
+  status      String   @default("DRAFT")
+  publishedAt DateTime?
+  readTime    String
+  locale      String
+  createdBy   String
+  updatedBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, locale, publishedAt])
+  @@index([updatedAt])
+}
+
+model ContentPostAudit {
+  id        String   @id @default(uuid())
+  postId    String
+  action    String
+  actorId   String
+  snapshot  Json?
+  createdAt DateTime @default(now())
+
+  @@index([postId, createdAt])
+  @@index([action, createdAt])
+}
+
 // ============ PAYMENT & PRICING MODELS ============
 model Payment {
   id                     String    @id @default(uuid())

@@ -55,7 +55,7 @@ function RatingsContent() {
 
   return (
     <div className="min-h-screen bg-[#FFF8F0]">
-      <header className="bg-white border-b border-orange-100 px-6 py-4 flex items-center gap-3">
+      <header className="bg-white border-b border-orange-100 px-4 py-4 flex items-center gap-3 sm:px-6">
         <Link
           href="/profile"
           className="flex items-center gap-1 text-sm text-gray-600 hover:text-[#F97316] transition-colors"
@@ -68,8 +68,8 @@ function RatingsContent() {
 
       <div className="max-w-2xl mx-auto px-4 py-8 flex flex-col gap-5">
         {/* Overall score */}
-        <div className="bg-white rounded-2xl shadow-sm p-6">
-          <div className="flex items-center gap-6">
+        <div className="bg-white rounded-2xl shadow-sm p-4 sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
             <div className="text-center">
               <p className="text-5xl font-bold text-[#F97316]">{avg > 0 ? avg.toFixed(1) : '--'}</p>
               <StarRow count={roundedAvg} />

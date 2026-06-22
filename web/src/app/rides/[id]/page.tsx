@@ -95,6 +95,7 @@ function RideDetailContent() {
     { value: 'TWENTY_FOUR_HOURS', label: t('rideDetail.expiryTwentyFourHours') },
     { value: 'BEFORE_DEPARTURE', label: t('rideDetail.expiryBeforeDeparture') },
   ] as const;
+  const allowManualOverride = process.env.NEXT_PUBLIC_ALLOW_RIDE_MANUAL_OVERRIDE === 'true';
 
   useEffect(() => {
     if (!id) return;
@@ -428,7 +429,7 @@ function RideDetailContent() {
     finally { setRatingLoading(false); }
   }
 
-  async function handleCreateDispute() {
+  async function handleCreateDispute(reasonOverride?: string, descriptionOverride?: string) {
     if (!myBooking || !ride) return;
     setDisputeLoading(true);
     setDisputeMessage('');
@@ -437,8 +438,8 @@ function RideDetailContent() {
       await disputesApi.create({
         rideId: ride.id,
         bookingId: myBooking.id,
-        reason: disputeReason,
-        description: disputeDescription.trim() || undefined,
+        reason: reasonOverride || disputeReason,
+        description: descriptionOverride?.trim() || disputeDescription.trim() || undefined,
       });
       setDisputeMessage(t('rideDetail.reportSubmittedCopy'));
       setDisputeDescription('');
@@ -451,6 +452,18 @@ function RideDetailContent() {
     } finally {
       setDisputeLoading(false);
     }
+  }
+
+  function promptManualOverride(title: string, body: string) {
+    if (typeof window === 'undefined') return null;
+    const reason = window.prompt(`${title}\n${body}\n\nEnter a short reason for the override:`, '');
+    if (reason === null) return null;
+    return reason.trim();
+  }
+
+  async function handleManualRideReview(reason: string) {
+    if (!myBooking || !ride) return;
+    await handleCreateDispute(reason, `Manual recovery request: ${reason}`);
   }
 
   async function loadRide() {
@@ -678,7 +691,7 @@ function RideDetailContent() {
     <div className="min-h-screen bg-deliivo-cream">
       {/* Header */}
       <div className="sticky top-0 z-10 border-b border-gray-100 bg-white/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-3xl items-center px-4">
+        <div className="mx-auto flex h-14 max-w-5xl items-center px-4">
           <Link href="/search" className="flex items-center gap-1.5 text-sm font-medium text-deliivo-gray hover:text-deliivo-dark">
             <ArrowLeft className="h-4 w-4" /> {t('common.back')}
           </Link>
@@ -686,7 +699,7 @@ function RideDetailContent() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-3xl px-4 py-6 space-y-6">
+      <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
         {/* Route card */}
         <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
           <div className="bg-gradient-to-r from-deliivo-orange to-primary-600 px-5 py-4">
@@ -755,7 +768,7 @@ function RideDetailContent() {
         {/* Details */}
         <div className="rounded-2xl bg-white shadow-sm p-5 space-y-3">
           <h3 className="text-sm font-semibold text-deliivo-dark">{t('rideDetail.rideInfo')}</h3>
-          <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
             <div className="flex items-center gap-2"><Users size={16} className="text-deliivo-orange" /><span>{t('manageRide.availableSeats', { available: ride.availableSeats, total: ride.totalSeats })}</span></div>
             <div className="flex items-center gap-2"><span className="text-lg font-bold text-primary-500">{ride.currency} {price.toFixed(2)}</span><span className="text-deliivo-gray">{t('rideDetail.perSeatShort')}</span></div>
           </div>
@@ -1051,17 +1064,8 @@ function RideDetailContent() {
               </div>
             )}
 
-            <SupportOverrideCard
-              title="Booking help and manual fallback"
-              copy="If payment, OTP, pickup arrival, or cancellation gets stuck, contact support with the booking and ride IDs. Support can review the canonical state and apply an admin override when justified."
-              identifiers={[
-                { label: 'Ride ID', value: ride.id },
-                { label: 'Booking ID', value: myBooking.id },
-              ]}
-            />
-
-            {myBooking.segmentRide && (
-              <div className="rounded-xl bg-gray-50 border border-gray-100 p-4 space-y-2">
+              {myBooking.segmentRide && (
+                <div className="rounded-xl bg-gray-50 border border-gray-100 p-4 space-y-2">
                 <p className="text-sm font-semibold text-deliivo-dark">{t('rideDetail.bookedSegment')}</p>
                 <div className="text-sm text-deliivo-dark space-y-1">
                   <p><span className="font-medium text-deliivo-gray">{t('rideDetail.pickup')}:</span> {myBooking.segmentRide.originAddress}</p>
@@ -1312,7 +1316,7 @@ function RideDetailContent() {
                 />
                 <button
                   type="button"
-                  onClick={handleCreateDispute}
+                  onClick={() => handleCreateDispute()}
                   disabled={disputeLoading || !!openDispute}
                   className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
                 >
@@ -1358,6 +1362,66 @@ function RideDetailContent() {
             )}
           </div>
         )}
+
+        <SupportOverrideCard
+          title="Booking help and manual fallback"
+          copy="If payment, OTP, pickup arrival, or cancellation gets stuck, contact support with the booking and ride IDs. Support can review the canonical state and apply an admin override when justified."
+          identifiers={[
+            { label: 'Ride ID', value: ride.id },
+            { label: 'Booking ID', value: myBooking?.id || '' },
+          ]}
+        />
+
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-amber-950">Manual recovery</h3>
+              <p className="mt-1 text-xs text-amber-900">
+                Use these when the booking is blocked but the ride should continue. Each action carries a reason into the dispute evidence.
+              </p>
+              {!allowManualOverride && (
+                <p className="mt-1 text-[11px] font-medium text-amber-800">
+                  Manual override is disabled until `NEXT_PUBLIC_ALLOW_RIDE_MANUAL_OVERRIDE=true`.
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => handleManualRideReview('OTP_ISSUE')}
+              disabled={!allowManualOverride}
+              className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-40"
+            >
+              Report OTP issue
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!myBooking) return;
+                const reason = promptManualOverride(
+                  'Manual drop-off confirmation',
+                  'Use when the driver has finished the ride but the app cannot complete the normal confirmation path.'
+                );
+                if (reason === null) return;
+                setRiderActionLoading(true);
+                try {
+                  await rideOpsApi.riderConfirmDropoff(myBooking.id, reason || undefined);
+                  await loadMyBooking();
+                  await loadRide();
+                } catch (err: unknown) {
+                  setBookError(getApiErrorMessage(err, t('rideDetail.failedConfirmDropoff')));
+                } finally {
+                  setRiderActionLoading(false);
+                }
+              }}
+              disabled={!allowManualOverride}
+              className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-40"
+            >
+              Manual drop-off confirm
+            </button>
+          </div>
+        </div>
 
         {isOwnRide && (
           <div className="rounded-2xl bg-primary-50 border border-primary-100 p-5 text-center">

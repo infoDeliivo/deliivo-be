@@ -5,8 +5,6 @@ import http from 'http';
 import app from './app.js';
 import logger from './utils/logger.js';
 import { initSocket, getIO } from './socket/index.js';
-import { startFuelPriceCron } from './jobs/fuel-price.cron.js';
-import { startBookingTimeoutCron } from './jobs/booking-timeout.cron.js';
 import redis from './cache/redis.js';
 import { bullRedis } from './queue/redisConnection.js';
 import { deadlineWorker } from './queue/deadline.queue.js';
@@ -26,11 +24,9 @@ const startServer = async () => {
     await initSocket(server);
 
     // Start scheduled jobs
-    startFuelPriceCron();
-    startBookingTimeoutCron();
 
     server.listen(PORT, () => {
-      logger.info(`Server running on port ${PORT}`);
+        logger.info(`Server running on port ${PORT}`);
     });
   } catch (error) {
     logger.error('Failed to start server:', error);

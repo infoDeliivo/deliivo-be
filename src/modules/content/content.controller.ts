@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { sendError, sendSuccess, HttpStatus } from '../../utils/index.js';
-import { deletePost, listAllPosts, listPublishedPosts, upsertPost } from './content.service.js';
+import { deletePost, listAllPosts, listContentAudit, listPublishedPosts, upsertPost } from './content.service.js';
 import { AuthRequest } from '../../types/auth.js';
 
 export const listPublished = async (req: Request, res: Response) => {
@@ -41,12 +41,21 @@ export const saveAdminPost = async (req: AuthRequest, res: Response) => {
 
 export const removeAdminPost = async (req: AuthRequest, res: Response) => {
     try {
-        const result = await deletePost(req.params.id as string);
+        const result = await deletePost(req.params.id as string, req.user.id);
         return sendSuccess(res, { message: 'Content post deleted', data: result });
     } catch (error: any) {
         if (error.message === 'POST_NOT_FOUND') {
             return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Content post not found' });
         }
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to delete content post' });
+    }
+};
+
+export const listAdminContentAudit = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await listContentAudit(req.query.postId as string | undefined, req.query.limit ? Number(req.query.limit) : undefined);
+        return sendSuccess(res, { message: 'Content audit fetched', data: result });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch content audit' });
     }
 };

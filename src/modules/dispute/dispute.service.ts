@@ -5,6 +5,62 @@ import { emitToUsers } from '../../socket/index.js';
 
 export { DISPUTE_STATUSES };
 
+type DisputeRideEventEvidence = {
+    eventType: string;
+    actorType: string;
+    actorId: string;
+    timestamp: string;
+    hasLocation: boolean;
+    lat: number | null;
+    lng: number | null;
+    validationStatus: string;
+    isManualOverride: boolean;
+};
+
+type DisputeEvidenceFactor = {
+    key: string;
+    label: string;
+    passed: boolean;
+    weight: number;
+    detail: string;
+};
+
+const MANUAL_OVERRIDE_EVENT_HINTS = ['MANUAL', 'OVERRIDE', 'FALLBACK', 'SUPPORT', 'DEV'];
+
+const isManualOverrideEvent = (eventType: string, metadataJson: unknown) => {
+    const upperEventType = String(eventType || '').toUpperCase();
+    if (MANUAL_OVERRIDE_EVENT_HINTS.some((hint) => upperEventType.includes(hint))) {
+        return true;
+    }
+
+    if (!metadataJson || typeof metadataJson !== 'object') {
+        return false;
+    }
+
+    const metadata = metadataJson as Record<string, unknown>;
+    return Boolean(metadata.manualOverride || metadata.supportOverride || metadata.simulation || metadata.overrideReason);
+};
+
+const toIsoString = (value: Date | string | null | undefined) => {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const buildEvidenceFactor = (
+    key: string,
+    label: string,
+    passed: boolean,
+    weight: number,
+    detail: string
+): DisputeEvidenceFactor => ({
+    key,
+    label,
+    passed,
+    weight,
+    detail,
+});
+
 // ============================================================
 //  CREATE DISPUTE
 // ============================================================
@@ -105,6 +161,7 @@ export const collectEvidence = async (disputeId: string) => {
                 select: {
                     id: true,
                     status: true,
+                    passengerId: true,
                     pickupOtpVerifiedAt: true,
                     dropOtpVerifiedAt: true,
                     driverArrivedAt: true,
@@ -113,6 +170,14 @@ export const collectEvidence = async (disputeId: string) => {
                     dropoffConfirmedAt: true,
                     riderDropoffConfirmedAt: true,
                     noShowMarkedAt: true,
+                    cancelledAt: true,
+                    cancelledByRole: true,
+                    cancellationReason: true,
+                    driverDecisionDeadlineAt: true,
+                    driverDecisionAt: true,
+                    deadlineExpiredNotifiedAt: true,
+                    deadlineExtendedAt: true,
+                    autoCancelledAt: true,
                     completedAt: true,
                     createdAt: true,
                 },
@@ -121,6 +186,7 @@ export const collectEvidence = async (disputeId: string) => {
                 select: {
                     id: true,
                     status: true,
+                    driverId: true,
                     actualStartTime: true,
                     actualEndTime: true,
                 },
@@ -141,27 +207,158 @@ export const collectEvidence = async (disputeId: string) => {
     const rideEvents = await prisma.rideEvent.findMany({
         where: { rideId: dispute.rideId, bookingId: dispute.bookingId },
         orderBy: { serverTimestamp: 'asc' },
-        select: { eventType: true, actorType: true, clientTimestamp: true, lat: true, lng: true },
+        select: { eventType: true, actorType: true, actorId: true, clientTimestamp: true, lat: true, lng: true, validationStatus: true, metadataJson: true },
     });
+
+    const riderGpsEvents = rideEvents.filter((event) => event.actorType === 'RIDER' && event.lat != null && event.lng != null);
+    const manualOverrideEvents = rideEvents.filter((event) => isManualOverrideEvent(event.eventType, event.metadataJson));
 
     const evidence = {
         booking: dispute.booking,
         ride: dispute.ride,
+        signalSummary: {
+            driverGpsCount: locationHistory.length,
+            riderGpsCount: riderGpsEvents.length,
+            manualOverrideCount: manualOverrideEvents.length,
+            rideEventCount: rideEvents.length,
+            hasGpsSignals: locationHistory.length > 0 || riderGpsEvents.length > 0,
+        },
         locationHistory: {
             count: locationHistory.length,
             firstUpdate: locationHistory[0] ?? null,
             lastUpdate: locationHistory[locationHistory.length - 1] ?? null,
         },
-        rideEvents: rideEvents.map(e => ({
+        driverGps: {
+            count: locationHistory.length,
+            firstUpdate: locationHistory[0] ?? null,
+            lastUpdate: locationHistory[locationHistory.length - 1] ?? null,
+            latestPosition: locationHistory[locationHistory.length - 1]
+                ? {
+                    lat: locationHistory[locationHistory.length - 1].lat,
+                    lng: locationHistory[locationHistory.length - 1].lng,
+                    timestamp: locationHistory[locationHistory.length - 1].timestamp,
+                }
+                : null,
+        },
+        riderGps: {
+            count: riderGpsEvents.length,
+            firstUpdate: riderGpsEvents[0] ?? null,
+            lastUpdate: riderGpsEvents[riderGpsEvents.length - 1] ?? null,
+            latestPosition: riderGpsEvents[riderGpsEvents.length - 1]
+                ? {
+                    lat: riderGpsEvents[riderGpsEvents.length - 1].lat,
+                    lng: riderGpsEvents[riderGpsEvents.length - 1].lng,
+                    timestamp: riderGpsEvents[riderGpsEvents.length - 1].clientTimestamp,
+                }
+                : null,
+        },
+        manualOverrides: {
+            count: manualOverrideEvents.length,
+            events: manualOverrideEvents.map((event) => ({
+                eventType: event.eventType,
+                actorType: event.actorType,
+                actorId: event.actorId,
+                timestamp: toIsoString(event.clientTimestamp),
+                validationStatus: event.validationStatus,
+                hasLocation: event.lat != null && event.lng != null,
+                metadata: event.metadataJson ?? null,
+            })),
+        },
+        rideEvents: rideEvents.map((e) => ({
             eventType: e.eventType,
             actorType: e.actorType,
-            timestamp: e.clientTimestamp,
+            actorId: e.actorId,
+            timestamp: toIsoString(e.clientTimestamp),
             hasLocation: e.lat != null,
+            lat: e.lat,
+            lng: e.lng,
+            validationStatus: e.validationStatus,
+            isManualOverride: isManualOverrideEvent(e.eventType, e.metadataJson),
         })),
         otpVerified: !!dispute.booking.pickupOtpVerifiedAt,
         dropoffConfirmed: !!dispute.booking.dropoffConfirmedAt,
         riderConfirmedDropoff: !!dispute.booking.riderDropoffConfirmedAt,
         noShowMarked: !!dispute.booking.noShowMarkedAt,
+        bookingSnapshot: {
+            status: dispute.booking.status,
+            passengerId: dispute.booking.passengerId,
+            pickupOtpVerifiedAt: dispute.booking.pickupOtpVerifiedAt,
+            dropOtpVerifiedAt: dispute.booking.dropOtpVerifiedAt,
+            driverArrivedAt: dispute.booking.driverArrivedAt,
+            waitTimerStartedAt: dispute.booking.waitTimerStartedAt,
+            onboardedAt: dispute.booking.onboardedAt,
+            dropoffConfirmedAt: dispute.booking.dropoffConfirmedAt,
+            riderDropoffConfirmedAt: dispute.booking.riderDropoffConfirmedAt,
+            noShowMarkedAt: dispute.booking.noShowMarkedAt,
+            cancelledAt: dispute.booking.cancelledAt,
+            cancelledByRole: dispute.booking.cancelledByRole,
+            cancellationReason: dispute.booking.cancellationReason,
+            driverDecisionDeadlineAt: dispute.booking.driverDecisionDeadlineAt,
+            driverDecisionAt: dispute.booking.driverDecisionAt,
+            deadlineExpiredNotifiedAt: dispute.booking.deadlineExpiredNotifiedAt,
+            deadlineExtendedAt: dispute.booking.deadlineExtendedAt,
+            autoCancelledAt: dispute.booking.autoCancelledAt,
+            completedAt: dispute.booking.completedAt,
+            createdAt: dispute.booking.createdAt,
+        },
+        factorSummary: [
+            buildEvidenceFactor(
+                'driver_gps',
+                'Driver GPS history',
+                locationHistory.length > 0,
+                locationHistory.length > 0 ? 20 : -20,
+                locationHistory.length > 0
+                    ? `${locationHistory.length} driver location updates recorded.`
+                    : 'No driver location history was captured for the ride.'
+            ),
+            buildEvidenceFactor(
+                'rider_gps',
+                'Rider GPS evidence',
+                riderGpsEvents.length > 0,
+                riderGpsEvents.length > 0 ? 10 : -10,
+                riderGpsEvents.length > 0
+                    ? `${riderGpsEvents.length} rider-side location-marking events recorded.`
+                    : 'No rider-side GPS evidence was recorded.'
+            ),
+            buildEvidenceFactor(
+                'manual_override',
+                'Manual override signals',
+                manualOverrideEvents.length > 0,
+                manualOverrideEvents.length > 0 ? -15 : 5,
+                manualOverrideEvents.length > 0
+                    ? `${manualOverrideEvents.length} manual or fallback actions were recorded and must be reviewed with the ride evidence.`
+                    : 'No manual override actions were recorded.'
+            ),
+            buildEvidenceFactor(
+                'otp',
+                'Pickup OTP evidence',
+                !!dispute.booking.pickupOtpVerifiedAt,
+                dispute.booking.pickupOtpVerifiedAt ? 20 : -5,
+                dispute.booking.pickupOtpVerifiedAt
+                    ? 'Pickup OTP was verified before the ride progressed.'
+                    : 'Pickup OTP was not verified.'
+            ),
+            buildEvidenceFactor(
+                'dropoff_confirmation',
+                'Drop-off confirmation',
+                !!dispute.booking.riderDropoffConfirmedAt || !!dispute.booking.dropoffConfirmedAt,
+                (dispute.booking.riderDropoffConfirmedAt || dispute.booking.dropoffConfirmedAt) ? 20 : -5,
+                dispute.booking.riderDropoffConfirmedAt
+                    ? 'Rider confirmed drop-off.'
+                    : dispute.booking.dropoffConfirmedAt
+                        ? 'Driver marked the drop-off.'
+                        : 'No drop-off confirmation exists yet.'
+            ),
+            buildEvidenceFactor(
+                'no_show',
+                'No-show evidence',
+                !!dispute.booking.noShowMarkedAt,
+                dispute.booking.noShowMarkedAt ? -10 : 5,
+                dispute.booking.noShowMarkedAt
+                    ? 'Booking was marked as no-show.'
+                    : 'No no-show mark was recorded.'
+            ),
+        ],
     };
 
     // Update dispute with evidence
@@ -186,54 +383,116 @@ export const evaluateDispute = async (disputeId: string) => {
     if (!dispute.evidenceJson) throw new Error('EVIDENCE_NOT_COLLECTED');
 
     const evidence = dispute.evidenceJson as any;
-    let recommendation: string | null = null;
-    let riskScore = 0.5; // neutral
-    let autoResolution: string | null = null;
+    const driverGpsCount = Number(evidence.locationHistory?.count ?? evidence.driverGps?.count ?? 0);
+    const riderGpsCount = Number(evidence.riderGps?.count ?? 0);
+    const manualOverrideCount = Number(evidence.manualOverrides?.count ?? 0);
+    const hasGpsSignals = driverGpsCount > 0 || riderGpsCount > 0;
+    const hasStrongGpsSignals = driverGpsCount > 0 && riderGpsCount > 0;
+    const rideCompleted = evidence.ride?.status === 'COMPLETED' || !!evidence.bookingSnapshot?.completedAt;
+    const riderDropoffConfirmed = Boolean(evidence.riderConfirmedDropoff || evidence.bookingSnapshot?.riderDropoffConfirmedAt);
+    const driverDropoffConfirmed = Boolean(evidence.dropoffConfirmed || evidence.bookingSnapshot?.dropoffConfirmedAt);
+    const pickupOtpVerified = Boolean(evidence.otpVerified || evidence.bookingSnapshot?.pickupOtpVerifiedAt);
+    const noShowMarked = Boolean(evidence.noShowMarked || evidence.bookingSnapshot?.noShowMarkedAt);
 
-    // Rule 1: No-show marked but OTP was verified → driver lie, refund rider
-    if (evidence.noShowMarked && evidence.otpVerified) {
+    const factors = Array.isArray(evidence.factorSummary)
+        ? [...evidence.factorSummary]
+        : [];
+
+    let riskScore = 0.5;
+    if (hasStrongGpsSignals) {
+        riskScore -= 0.18;
+    } else if (hasGpsSignals) {
+        riskScore -= 0.08;
+    } else {
+        riskScore += 0.15;
+    }
+
+    if (manualOverrideCount > 0) {
+        riskScore += Math.min(0.2, 0.08 + manualOverrideCount * 0.03);
+    }
+
+    if (pickupOtpVerified) {
+        riskScore += 0.1;
+    }
+
+    if (riderDropoffConfirmed) {
+        riskScore -= 0.28;
+    }
+
+    if (driverDropoffConfirmed && rideCompleted) {
+        riskScore -= 0.12;
+    }
+
+    if (noShowMarked && pickupOtpVerified) {
+        riskScore += 0.25;
+    }
+
+    riskScore = Math.min(1, Math.max(0, Number(riskScore.toFixed(2))));
+
+    let recommendation: string = 'MANUAL_REVIEW';
+    let autoResolution: string = DISPUTE_STATUSES.NEEDS_MANUAL_REVIEW;
+
+    // High-confidence rider loss: no-show mark after a verified pickup.
+    if (noShowMarked && pickupOtpVerified) {
         recommendation = 'REFUND_RIDER';
-        riskScore = 0.9;
         autoResolution = DISPUTE_STATUSES.AUTO_RESOLVED_RIDER_REFUND;
     }
-    // Rule 2: Rider confirmed dropoff → dispute invalid, payout driver
-    else if (evidence.riderConfirmedDropoff) {
+    // High-confidence driver win: rider confirmed dropoff and the ride is supported by state or GPS.
+    else if (riderDropoffConfirmed && (rideCompleted || driverDropoffConfirmed || hasStrongGpsSignals)) {
         recommendation = 'PAYOUT_DRIVER';
-        riskScore = 0.1;
         autoResolution = DISPUTE_STATUSES.AUTO_RESOLVED_DRIVER_PAYOUT;
     }
-    // Rule 3: No GPS data at all → suspicious, manual review
-    else if (evidence.locationHistory?.count === 0) {
+    // Manual override evidence should never be ignored; if it is the only signal, keep the dispute in review.
+    else if (manualOverrideCount > 0 && !hasStrongGpsSignals) {
         recommendation = 'MANUAL_REVIEW';
-        riskScore = 0.7;
         autoResolution = DISPUTE_STATUSES.NEEDS_MANUAL_REVIEW;
     }
-    // Rule 4: Dropoff confirmed by driver but not rider, and ride completed
-    else if (evidence.dropoffConfirmed && !evidence.riderConfirmedDropoff && evidence.ride?.status === 'COMPLETED') {
+    // No GPS at all is not sufficient to auto-resolve unless a stronger booking signal exists.
+    else if (!hasGpsSignals) {
         recommendation = 'MANUAL_REVIEW';
-        riskScore = 0.5;
         autoResolution = DISPUTE_STATUSES.NEEDS_MANUAL_REVIEW;
     }
-    // Default: needs manual review
-    else {
+    // Driver confirmed dropoff but rider did not, and the ride is completed: keep it reviewable.
+    else if (driverDropoffConfirmed && !riderDropoffConfirmed && rideCompleted) {
         recommendation = 'MANUAL_REVIEW';
-        riskScore = 0.5;
         autoResolution = DISPUTE_STATUSES.NEEDS_MANUAL_REVIEW;
     }
 
-    const newStatus = autoResolution;
+    factors.unshift(
+        buildEvidenceFactor(
+            'evaluation_path',
+            'Evaluation path',
+            autoResolution !== DISPUTE_STATUSES.NEEDS_MANUAL_REVIEW,
+            autoResolution !== DISPUTE_STATUSES.NEEDS_MANUAL_REVIEW ? 25 : 0,
+            autoResolution === DISPUTE_STATUSES.AUTO_RESOLVED_RIDER_REFUND
+                ? 'Dispute auto-resolved in favor of the rider.'
+                : autoResolution === DISPUTE_STATUSES.AUTO_RESOLVED_DRIVER_PAYOUT
+                    ? 'Dispute auto-resolved in favor of the driver.'
+                    : 'The dispute remains in manual review.'
+        )
+    );
 
     await prisma.dispute.update({
         where: { id: disputeId },
         data: {
             recommendation,
             riskScore,
-            status: newStatus,
-            ...(newStatus.startsWith('AUTO_RESOLVED') ? { resolvedAt: new Date(), resolution: recommendation } : {}),
+            status: autoResolution,
+            evidenceJson: {
+                ...evidence,
+                evaluation: {
+                    recommendation,
+                    riskScore,
+                    status: autoResolution,
+                    evaluatedAt: new Date().toISOString(),
+                    factors,
+                },
+            },
+            ...(autoResolution.startsWith('AUTO_RESOLVED') ? { resolvedAt: new Date(), resolution: recommendation } : {}),
         },
     });
 
-    return { disputeId, recommendation, riskScore, status: newStatus };
+    return { disputeId, recommendation, riskScore, status: autoResolution, factors };
 };
 
 // ============================================================

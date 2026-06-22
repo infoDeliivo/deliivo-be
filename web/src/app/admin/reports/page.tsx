@@ -217,7 +217,32 @@ export default function AdminReportsPage() {
                   {renderEvidenceItem('Drop-off confirmed', Boolean((selectedDispute.evidenceJson as any)?.dropoffConfirmed), (selectedDispute.evidenceJson as any)?.dropoffConfirmed ? 'Driver drop-off confirmation exists.' : 'No driver drop-off confirmation.')}
                   {renderEvidenceItem('Rider drop-off confirmation', Boolean((selectedDispute.evidenceJson as any)?.riderConfirmedDropoff), (selectedDispute.evidenceJson as any)?.riderConfirmedDropoff ? 'Rider confirmed drop-off.' : 'Rider did not confirm drop-off.')}
                   {renderEvidenceItem('No-show marked', Boolean((selectedDispute.evidenceJson as any)?.noShowMarked), (selectedDispute.evidenceJson as any)?.noShowMarked ? 'No-show was marked.' : 'No no-show mark recorded.')}
+                  {renderEvidenceItem(
+                    'Manual override signals',
+                    Boolean((selectedDispute.evidenceJson as any)?.manualOverrides?.events?.length > 0),
+                    (selectedDispute.evidenceJson as any)?.manualOverrides?.events?.length > 0
+                      ? `${(selectedDispute.evidenceJson as any).manualOverrides.events.length} support or fallback actions were recorded.`
+                      : 'No manual override actions were recorded.',
+                  )}
                 </div>
+                {Array.isArray((selectedDispute.evidenceJson as any)?.factorSummary) && (selectedDispute.evidenceJson as any).factorSummary.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3">
+                    <p className="text-xs font-semibold text-gray-700">Evaluation factors</p>
+                    <div className="mt-2 space-y-1.5">
+                      {(selectedDispute.evidenceJson as any).factorSummary.map((factor: any, index: number) => (
+                        <div key={`${factor.key || factor.label || index}`} className="flex items-start justify-between gap-3 rounded-lg bg-gray-50 px-2.5 py-2">
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-semibold text-gray-800">{factor.label || factor.key || 'Factor'}</p>
+                            <p className="text-[11px] text-gray-500">{factor.detail || 'No detail available.'}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${factor.passed ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                            {factor.passed ? 'PASS' : 'REVIEW'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {Array.isArray((selectedDispute.evidenceJson as any)?.rideEvents) && (selectedDispute.evidenceJson as any).rideEvents.length > 0 && (
                   <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3">
                     <p className="text-xs font-semibold text-gray-700">Ride event evidence</p>
@@ -231,6 +256,25 @@ export default function AdminReportsPage() {
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${event.hasLocation ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
                             {event.hasLocation ? 'GPS' : 'No GPS'}
                           </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {Array.isArray((selectedDispute.evidenceJson as any)?.manualOverrides?.events) && (selectedDispute.evidenceJson as any).manualOverrides.events.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-semibold text-amber-900">Manual override evidence</p>
+                    <div className="mt-2 space-y-1.5">
+                      {(selectedDispute.evidenceJson as any).manualOverrides.events.map((event: any, index: number) => (
+                        <div key={`${event.eventType}-${index}`} className="rounded-lg bg-white px-2.5 py-2">
+                          <p className="text-[11px] font-semibold text-amber-900">{String(event.eventType || 'UNKNOWN').replace(/_/g, ' ')}</p>
+                          <p className="text-[11px] text-amber-800">
+                            {event.actorType || 'UNKNOWN'}
+                            {event.timestamp ? ` - ${new Date(event.timestamp).toLocaleString()}` : ''}
+                          </p>
+                          {event.metadata?.overrideReason && (
+                            <p className="mt-0.5 text-[11px] text-amber-800">{String(event.metadata.overrideReason)}</p>
+                          )}
                         </div>
                       ))}
                     </div>

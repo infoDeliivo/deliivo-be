@@ -20,8 +20,8 @@ Provide the browser experience for riders, drivers, and admins across onboarding
 - Notification panel and notification page.
 - Ongoing ride sticky panel for active or next-24-hour rides.
 - Public terms, privacy, FAQ, and contact pages.
-- Public guide/blog route with seeded Baltic rider, driver, and safety content.
-- Admin content operations route for reviewing current guide content and language readiness.
+- Public guide/blog route backed by persistent CMS posts and localized guide content.
+- Admin content operations route for editing guide content, publishing state, and audit review.
 - Language preference selector and translation catalogs for English, Estonian, and Russian.
 - Stripe Elements integration.
 - Google Maps integration.
@@ -30,6 +30,7 @@ Provide the browser experience for riders, drivers, and admins across onboarding
 ## Functional Requirements
 
 - Web pages must render current canonical state after refresh.
+- Shared request handling must retry transient idempotent GET failures once and keep request IDs visible in errors.
 - User actions must show immediate loading state and refetch after completion.
 - Driver and rider ride details must present role-specific actions clearly.
 - Ride-day OTP and verification controls must appear near the top of driver and rider ride-detail screens.
@@ -38,7 +39,7 @@ Provide the browser experience for riders, drivers, and admins across onboarding
 - Landing page must explain rider and driver workflows separately.
 - Legal and support links must resolve to production-ready public pages.
 - Public guide content must be reachable from top navigation and footer support links.
-- Admins must have a content operations entry point before persistent CMS editing is added.
+- Admins must have a content operations entry point for persistent CMS editing and audit review.
 - Language preference must persist locally and be represented through the page `lang` attribute.
 - Public contact emails must be configurable through documented `NEXT_PUBLIC_*` environment variables.
 - API/network failures must be normalized into readable user-facing messages.
@@ -57,8 +58,10 @@ Provide the browser experience for riders, drivers, and admins across onboarding
 - Build must pass TypeScript checks.
 - API errors must render actionable messages instead of raw JSON parse failures.
 - Client code must avoid assuming socket events always arrive.
+- Auth, profile, notifications, and sticky ride surfaces must refresh on focus, visibility change, and reconnect.
 - Responsive layout must avoid clipped text and duplicated map sections.
 - Profile and account hub layouts must use desktop width effectively while remaining readable on mobile.
+- Profile, ride-detail, and notification surfaces should preserve desktop readability without collapsing into mobile-width cards.
 - Admin shell spacing must remain readable on compact and desktop screens.
 - Environment variables must be documented and available in Docker builds.
 
@@ -67,8 +70,9 @@ Provide the browser experience for riders, drivers, and admins across onboarding
 - The web portal now supports language preference selection for `en`, `et`, and `ru`.
 - Public/common surfaces now use translation catalogs: navigation, footer, landing, search form, FAQ, contact, blog landing, terms summary, and privacy summary.
 - Authenticated rider, driver, payment, payout, and admin operation screens still need page-by-page translation-key migration.
-- The blog/guide route is backed by static seed content. Production admin editing requires backend content models, audit fields, publishing states, and localized content storage.
-- The admin content page intentionally disables editing until persistent backend support exists.
+- The blog/guide route is backed by persistent database content with seeded starter posts.
+- Admin content editing is enabled and records audit events for create, update, and delete actions.
+- Localized content storage is still basic and does not yet provide full translation workflow management.
 
 ## Success Metrics
 
