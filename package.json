@@ -30,7 +30,7 @@
     "db:push": "prisma db push",
     "test:e2e": "jest --config jest.e2e.config.js --runInBand",
     "test:e2e:open": "node scripts/run-e2e.mjs --open",
-    "postinstall": "prisma generate",
+    "postinstall": "node scripts/postinstall.mjs",
     "test:e2e:watch": "jest --config jest.e2e.config.js --runInBand --watch",
     "test:e2e:run": "bash scripts/run-e2e.sh",
     "test:e2e:docker": "bash scripts/run-e2e.sh --down-after"
