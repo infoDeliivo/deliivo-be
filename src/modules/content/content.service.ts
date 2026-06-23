@@ -66,64 +66,96 @@ function toContentPost(row: {
     };
 }
 
-export async function listPublishedPosts(locale?: string) {
-    const posts = await prisma.contentPost.findMany({
-        where: {
-            status: 'PUBLISHED',
-            ...(locale ? { locale } : {}),
-        },
-        orderBy: [
-            { publishedAt: 'desc' },
-            { updatedAt: 'desc' },
-        ],
-    });
+function isMissingContentTableError(error: unknown) {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021';
+}
 
-    return posts.map(toContentPost);
+export async function listPublishedPosts(locale?: string) {
+    try {
+        const posts = await prisma.contentPost.findMany({
+            where: {
+                status: 'PUBLISHED',
+                ...(locale ? { locale } : {}),
+            },
+            orderBy: [
+                { publishedAt: 'desc' },
+                { updatedAt: 'desc' },
+            ],
+        });
+
+        return posts.map(toContentPost);
+    } catch (error) {
+        if (isMissingContentTableError(error)) return [];
+        throw error;
+    }
 }
 
 export async function listAllPosts() {
-    const posts = await prisma.contentPost.findMany({
-        orderBy: { updatedAt: 'desc' },
-    });
+    try {
+        const posts = await prisma.contentPost.findMany({
+            orderBy: { updatedAt: 'desc' },
+        });
 
-    return posts.map(toContentPost);
+        return posts.map(toContentPost);
+    } catch (error) {
+        if (isMissingContentTableError(error)) return [];
+        throw error;
+    }
 }
 
 export async function getContentSummary() {
-    const [posts, published, drafts] = await Promise.all([
-        prisma.contentPost.findMany({
-            select: { locale: true, updatedAt: true },
-            orderBy: { updatedAt: 'desc' },
-        }),
-        prisma.contentPost.count({ where: { status: 'PUBLISHED' } }),
-        prisma.contentPost.count({ where: { status: 'DRAFT' } }),
-    ]);
+    try {
+        const [posts, published, drafts] = await Promise.all([
+            prisma.contentPost.findMany({
+                select: { locale: true, updatedAt: true },
+                orderBy: { updatedAt: 'desc' },
+            }),
+            prisma.contentPost.count({ where: { status: 'PUBLISHED' } }),
+            prisma.contentPost.count({ where: { status: 'DRAFT' } }),
+        ]);
 
-    const locales = Array.from(new Set(posts.map((post) => post.locale))).sort();
-    return {
-        total: posts.length,
-        published,
-        drafts,
-        locales,
-        updatedAt: posts[0]?.updatedAt.toISOString() || null,
-    };
+        const locales = Array.from(new Set(posts.map((post) => post.locale))).sort();
+        return {
+            total: posts.length,
+            published,
+            drafts,
+            locales,
+            updatedAt: posts[0]?.updatedAt.toISOString() || null,
+        };
+    } catch (error) {
+        if (isMissingContentTableError(error)) {
+            return {
+                total: 0,
+                published: 0,
+                drafts: 0,
+                locales: [],
+                updatedAt: null,
+            };
+        }
+        throw error;
+    }
 }
 
 export async function listContentAudit(postId?: string, limit = 20): Promise<ContentAuditLog[]> {
-    const audit = await prisma.contentPostAudit.findMany({
-        where: postId ? { postId } : undefined,
-        orderBy: { createdAt: 'desc' },
-        take: Math.max(1, Math.min(100, limit)),
-    });
+    try {
+        const audit = await prisma.contentPostAudit.findMany({
+            where: postId ? { postId } : undefined,
+            orderBy: { createdAt: 'desc' },
+            take: Math.max(1, Math.min(100, limit)),
+        });
 
-    return audit.map((row) => ({
-        id: row.id,
-        postId: row.postId,
-        action: row.action as 'CREATE' | 'UPDATE' | 'DELETE',
-        actorId: row.actorId,
-        snapshot: row.snapshot ? (row.snapshot as unknown as ContentPost) : null,
-        createdAt: row.createdAt.toISOString(),
-    }));
+        return audit.map((row) => ({
+            id: row.id,
+            postId: row.postId,
+            action: row.action as 'CREATE' | 'UPDATE' | 'DELETE',
+            actorId: row.actorId,
+            snapshot: row.snapshot ? (row.snapshot as unknown as ContentPost) : null,
+            createdAt: row.createdAt.toISOString(),
+        }));
+    } catch (error) {
+        if (isMissingContentTableError(error)) return [];
+        throw error;
+    }
 }
 
 async function writeAudit(action: 'CREATE' | 'UPDATE' | 'DELETE', post: ContentPost, actorId: string) {
