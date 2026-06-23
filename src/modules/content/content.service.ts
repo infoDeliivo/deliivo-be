@@ -40,6 +40,10 @@ function sanitizeSlug(input: string) {
         .slice(0, 120);
 }
 
+function normalizeLocale(input?: string) {
+    return (input || 'en').trim().toLowerCase();
+}
+
 function toContentPost(row: {
     id: string;
     slug: string;
@@ -119,11 +123,12 @@ async function ensureContentTables() {
 }
 
 export async function listPublishedPosts(locale?: string) {
+    const normalizedLocale = locale ? normalizeLocale(locale) : undefined;
     try {
         const posts = await prisma.contentPost.findMany({
             where: {
                 status: 'PUBLISHED',
-                ...(locale ? { locale } : {}),
+                ...(normalizedLocale ? { locale: normalizedLocale } : {}),
             },
             orderBy: [
                 { publishedAt: 'desc' },
@@ -138,7 +143,7 @@ export async function listPublishedPosts(locale?: string) {
             const posts = await prisma.contentPost.findMany({
                 where: {
                     status: 'PUBLISHED',
-                    ...(locale ? { locale } : {}),
+                    ...(normalizedLocale ? { locale: normalizedLocale } : {}),
                 },
                 orderBy: [
                     { publishedAt: 'desc' },
@@ -247,6 +252,7 @@ export async function upsertPost(
 ) {
     await ensureContentTables();
     const slug = sanitizeSlug(input.slug || input.title);
+    const locale = normalizeLocale(input.locale);
     if (!slug) {
         throw new Error('INVALID_SLUG');
     }
@@ -277,7 +283,7 @@ export async function upsertPost(
                 status: nextStatus,
                 publishedAt: nextPublishedAt,
                 readTime: input.readTime,
-                locale: input.locale,
+                locale,
                 updatedBy: actorId,
             },
         });
@@ -302,7 +308,7 @@ export async function upsertPost(
             status,
             publishedAt: status === 'PUBLISHED' ? now : null,
             readTime: input.readTime,
-            locale: input.locale,
+            locale,
             createdBy: actorId,
             updatedBy: actorId,
         },
