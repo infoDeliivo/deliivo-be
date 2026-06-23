@@ -9,6 +9,7 @@ ENV DATABASE_URL=$DATABASE_URL
 COPY package.json package-lock.json ./
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
+COPY scripts ./scripts/
 RUN npm ci
 
 # Build
