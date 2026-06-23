@@ -23,7 +23,7 @@ echo "[entrypoint] Migrations complete."
 
 if [ "${SKIP_DB_SEED}" != "true" ]; then
   echo "[entrypoint] Running database seed..."
-  npx prisma db seed
+  node dist/scripts/seed.js
   echo "[entrypoint] Database seed complete."
 fi
 
