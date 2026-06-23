@@ -2,9 +2,6 @@
   "name": "carpooling-backend",
   "version": "1.0.0",
   "private": true,
-  "workspaces": [
-    "web"
-  ],
   "main": "index.js",
   "type": "module",
   "scripts": {
