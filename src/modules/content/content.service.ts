@@ -70,6 +70,54 @@ function isMissingContentTableError(error: unknown) {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021';
 }
 
+let ensureContentTablesPromise: Promise<void> | null = null;
+
+async function createContentTables() {
+    await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "ContentPost" (
+            "id" TEXT PRIMARY KEY,
+            "slug" TEXT NOT NULL UNIQUE,
+            "title" TEXT NOT NULL,
+            "excerpt" TEXT NOT NULL,
+            "body" TEXT NOT NULL,
+            "category" TEXT NOT NULL,
+            "status" TEXT NOT NULL DEFAULT 'DRAFT',
+            "publishedAt" TIMESTAMP(3),
+            "readTime" TEXT NOT NULL,
+            "locale" TEXT NOT NULL,
+            "createdBy" TEXT NOT NULL,
+            "updatedBy" TEXT NOT NULL,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ContentPost_status_locale_publishedAt_idx" ON "ContentPost" ("status", "locale", "publishedAt");`);
+    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ContentPost_updatedAt_idx" ON "ContentPost" ("updatedAt");`);
+
+    await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "ContentPostAudit" (
+            "id" TEXT PRIMARY KEY,
+            "postId" TEXT NOT NULL,
+            "action" TEXT NOT NULL,
+            "actorId" TEXT NOT NULL,
+            "snapshot" JSONB,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ContentPostAudit_postId_createdAt_idx" ON "ContentPostAudit" ("postId", "createdAt");`);
+    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ContentPostAudit_action_createdAt_idx" ON "ContentPostAudit" ("action", "createdAt");`);
+}
+
+async function ensureContentTables() {
+    if (!ensureContentTablesPromise) {
+        ensureContentTablesPromise = createContentTables().catch((error) => {
+            ensureContentTablesPromise = null;
+            throw error;
+        });
+    }
+    await ensureContentTablesPromise;
+}
+
 export async function listPublishedPosts(locale?: string) {
     try {
         const posts = await prisma.contentPost.findMany({
@@ -85,7 +133,20 @@ export async function listPublishedPosts(locale?: string) {
 
         return posts.map(toContentPost);
     } catch (error) {
-        if (isMissingContentTableError(error)) return [];
+        if (isMissingContentTableError(error)) {
+            await ensureContentTables();
+            const posts = await prisma.contentPost.findMany({
+                where: {
+                    status: 'PUBLISHED',
+                    ...(locale ? { locale } : {}),
+                },
+                orderBy: [
+                    { publishedAt: 'desc' },
+                    { updatedAt: 'desc' },
+                ],
+            });
+            return posts.map(toContentPost);
+        }
         throw error;
     }
 }
@@ -98,7 +159,13 @@ export async function listAllPosts() {
 
         return posts.map(toContentPost);
     } catch (error) {
-        if (isMissingContentTableError(error)) return [];
+        if (isMissingContentTableError(error)) {
+            await ensureContentTables();
+            const posts = await prisma.contentPost.findMany({
+                orderBy: { updatedAt: 'desc' },
+            });
+            return posts.map(toContentPost);
+        }
         throw error;
     }
 }
@@ -124,6 +191,7 @@ export async function getContentSummary() {
         };
     } catch (error) {
         if (isMissingContentTableError(error)) {
+            await ensureContentTables();
             return {
                 total: 0,
                 published: 0,
@@ -153,7 +221,10 @@ export async function listContentAudit(postId?: string, limit = 20): Promise<Con
             createdAt: row.createdAt.toISOString(),
         }));
     } catch (error) {
-        if (isMissingContentTableError(error)) return [];
+        if (isMissingContentTableError(error)) {
+            await ensureContentTables();
+            return [];
+        }
         throw error;
     }
 }
@@ -174,6 +245,7 @@ export async function upsertPost(
     input: Partial<ContentPost> & Pick<ContentPost, 'title' | 'excerpt' | 'body' | 'category' | 'readTime' | 'locale'>,
     actorId: string,
 ) {
+    await ensureContentTables();
     const slug = sanitizeSlug(input.slug || input.title);
     if (!slug) {
         throw new Error('INVALID_SLUG');
@@ -242,6 +314,7 @@ export async function upsertPost(
 }
 
 export async function deletePost(postId: string, actorId: string) {
+    await ensureContentTables();
     const existing = await prisma.contentPost.findUnique({ where: { id: postId } });
     if (!existing) {
         throw new Error('POST_NOT_FOUND');
