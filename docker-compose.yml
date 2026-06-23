@@ -141,7 +141,7 @@ services:
 
   web:
     build:
-      context: ./web
+      context: ./deliivo-webapp
       dockerfile: Dockerfile
       args:
         # Build-time args for NEXT_PUBLIC_ vars (baked into client bundle)
