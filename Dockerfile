@@ -16,7 +16,6 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src/
 COPY docs ./docs/
-COPY content ./content/
 RUN npm run build
 
 # Production image
@@ -30,7 +29,6 @@ COPY --from=base /app/dist ./dist/
 COPY --from=base /app/prisma ./prisma/
 COPY --from=base /app/prisma.config.ts ./
 COPY --from=base /app/docs ./docs/
-COPY --from=base /app/content ./content/
 COPY --from=base /app/scripts ./scripts/
 
 EXPOSE 3000
