@@ -1,4 +1,5 @@
 import { prisma } from '../config/index.js';
+import { pool } from '../config/prisma.js';
 import { UserRole, OnboardingStatus } from '@prisma/client';
 import fs from 'fs/promises';
 import path from 'path';
@@ -141,4 +142,5 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    await pool.end();
   });
