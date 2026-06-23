@@ -11,7 +11,7 @@ const mockPrisma = {
         findFirst: jest.fn(),
     },
     user: {
-        findUnique: jest.fn().mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date() }),
+        findUnique: jest.fn().mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' }),
     },
     $transaction: jest.fn(),
 };
@@ -41,6 +41,7 @@ import { RideStatus } from '@prisma/client';
 describe('publishRide', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' });
     });
 
     it('stores stopover pricing on the draft when updatePricing is called', async () => {
@@ -136,6 +137,10 @@ describe('publishRide', () => {
         const rideFindUnique = jest.fn().mockResolvedValue({
             id: 'ride-1',
             status: RideStatus.PUBLISHED,
+            departureDate: new Date('2026-04-01T00:00:00.000Z'),
+            departureTime: '09:30',
+            originAddress: 'Origin',
+            destinationAddress: 'Destination',
             waypoints: [],
         });
 
@@ -170,5 +175,128 @@ describe('publishRide', () => {
                 }),
             ]),
         });
+    });
+
+    it('rejects female-only publish when driver gender is not FEMALE', async () => {
+        const draft = {
+            userId: 'driver-1',
+            step: 13,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originPlaceId: 'origin-place',
+            originAddress: 'Origin',
+            originLat: 10,
+            originLng: 20,
+            destinationPlaceId: 'destination-place',
+            destinationAddress: 'Destination',
+            destinationLat: 11,
+            destinationLng: 21,
+            routePolyline: 'encoded-polyline',
+            departureDate: new Date('2026-04-01T00:00:00.000Z').toISOString(),
+            departureTime: '09:30',
+            totalSeats: 3,
+            basePricePerSeat: 40,
+            femaleOnly: true,
+        };
+
+        mockRedis.get.mockResolvedValue(JSON.stringify(draft));
+        mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'MALE' });
+        mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
+
+        await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('FEMALE_ONLY_NOT_ALLOWED');
+    });
+
+    it('marks ferry routes as not publishable and blocks final publish', async () => {
+        const draft = {
+            userId: 'driver-1',
+            step: 2,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originPlaceId: 'origin-place',
+            originAddress: 'Origin',
+            originLat: 10,
+            originLng: 20,
+            destinationPlaceId: 'destination-place',
+            destinationAddress: 'Destination',
+            destinationLat: 11,
+            destinationLng: 21,
+        };
+
+        const fetchMock = jest.fn().mockResolvedValue({
+            json: async () => ({
+                routes: [
+                    {
+                        distanceMeters: 10000,
+                        duration: '1200s',
+                        description: 'Fastest route',
+                        warnings: ['This route includes a ferry.'],
+                        polyline: { encodedPolyline: 'encoded-polyline' },
+                        legs: [
+                            {
+                                steps: [
+                                    {
+                                        travelMode: 'DRIVE',
+                                        navigationInstruction: {
+                                            maneuver: 'FERRY',
+                                            instructions: 'Take the ferry',
+                                        },
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }),
+        });
+
+        const blockedDraft = {
+            ...draft,
+            routePolyline: 'encoded-polyline',
+            routeDistanceMeters: 10000,
+            routeDurationSeconds: 1200,
+            routeIsPublishable: false,
+            routeBlockedReason: 'NON_ROAD_ROUTE_NOT_ALLOWED',
+            departureDate: new Date('2026-04-01T00:00:00.000Z').toISOString(),
+            departureTime: '09:30',
+            totalSeats: 3,
+            basePricePerSeat: 40,
+        };
+        const cachedRoutes = JSON.stringify([
+            {
+                index: 0,
+                polyline: 'encoded-polyline',
+                distanceMeters: 10000,
+                durationSeconds: 1200,
+                distanceText: '10.0 km',
+                durationText: '20 min',
+                description: 'Fastest route',
+                warnings: ['This route includes a ferry.'],
+                isPublishable: false,
+                blockedReason: 'NON_ROAD_ROUTE_NOT_ALLOWED',
+            },
+        ]);
+
+        mockRedis.get
+            .mockResolvedValueOnce(JSON.stringify(draft))
+            .mockResolvedValueOnce(JSON.stringify(draft))
+            .mockResolvedValueOnce(cachedRoutes)
+            .mockResolvedValueOnce(JSON.stringify(blockedDraft));
+        mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
+
+        const originalFetch = global.fetch;
+        global.fetch = fetchMock as any;
+
+        try {
+            const result = await DraftRideService.computeRouteOptions('driver-1');
+            expect(result.routes[0]).toMatchObject({
+                isPublishable: false,
+                blockedReason: 'NON_ROAD_ROUTE_NOT_ALLOWED',
+            });
+
+            await DraftRideService.selectRoute('driver-1', 0);
+            await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('NON_ROAD_ROUTE_NOT_ALLOWED');
+        } finally {
+            global.fetch = originalFetch;
+        }
     });
 });

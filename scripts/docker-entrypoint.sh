@@ -21,5 +21,11 @@ echo "[entrypoint] Running database migrations..."
 npx prisma migrate deploy
 echo "[entrypoint] Migrations complete."
 
+if [ "${SKIP_DB_SEED}" != "true" ]; then
+  echo "[entrypoint] Running database seed..."
+  npx prisma db seed
+  echo "[entrypoint] Database seed complete."
+fi
+
 echo "[entrypoint] Starting: $*"
 exec "$@"

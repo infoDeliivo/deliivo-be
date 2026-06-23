@@ -5,16 +5,18 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 
 async function main() {
-  const adminEmail = 'admin@test.dev';
-  const adminPhone = '+37251009999';
+  const adminEmail = process.env.ADMIN_SEED_EMAIL || 'admin@test.dev';
+  const adminPhone = process.env.ADMIN_SEED_PHONE || '+37251009999';
+  const adminName = process.env.ADMIN_SEED_NAME || 'Admin Baltic';
+  const adminNickName = process.env.ADMIN_SEED_NICKNAME || 'admin-baltic';
 
   const admin = await prisma.user.upsert({
     where: { email: adminEmail },
     update: {
       role: UserRole.ADMIN,
       phone: adminPhone,
-      name: 'Admin Baltic',
-      nickName: 'admin-baltic',
+      name: adminName,
+      nickName: adminNickName,
       emailVerified: true,
       phoneVerified: true,
       isVerified: true,
@@ -25,8 +27,8 @@ async function main() {
       email: adminEmail,
       phone: adminPhone,
       role: UserRole.ADMIN,
-      name: 'Admin Baltic',
-      nickName: 'admin-baltic',
+      name: adminName,
+      nickName: adminNickName,
       emailVerified: true,
       phoneVerified: true,
       isVerified: true,

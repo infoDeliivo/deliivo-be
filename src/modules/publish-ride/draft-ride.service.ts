@@ -95,6 +95,10 @@ interface DraftRide {
   routePolyline?: string;
   routeDistanceMeters?: number;
   routeDurationSeconds?: number;
+  routeDescription?: string;
+  routeWarnings?: string[];
+  routeIsPublishable?: boolean;
+  routeBlockedReason?: string;
 
   // Stopovers (Step 8)
   stopovers?: LocationInput[];
@@ -141,6 +145,38 @@ const saveDraft = async (draft: DraftRide): Promise<DraftRide> => {
   draft.updatedAt = new Date().toISOString();
   await redis.setex(key, DRAFT_TTL, JSON.stringify(draft));
   return draft;
+};
+
+const WATER_ROUTE_KEYWORDS = ['ferry', 'water', 'boat', 'ship'];
+const ROUTE_BLOCKED_REASON = 'NON_ROAD_ROUTE_NOT_ALLOWED';
+
+const normalizeRouteText = (value?: string | null) => (value || '').toLowerCase();
+
+const detectBlockedRoute = (route: any): { isPublishable: boolean; blockedReason?: string } => {
+  const warnings = Array.isArray(route?.warnings) ? route.warnings : [];
+  const description = normalizeRouteText(route?.description);
+  const stepHints = Array.isArray(route?.legs)
+    ? route.legs.flatMap((leg: any) =>
+        Array.isArray(leg?.steps)
+          ? leg.steps.flatMap((step: any) => [
+              normalizeRouteText(step?.navigationInstruction?.instructions),
+              normalizeRouteText(step?.navigationInstruction?.maneuver),
+              normalizeRouteText(step?.travelMode),
+            ])
+          : [],
+      )
+    : [];
+
+  const combinedText = [...warnings.map((warning: string) => normalizeRouteText(warning)), description, ...stepHints];
+  const hasWaterSegment = combinedText.some((entry) =>
+    WATER_ROUTE_KEYWORDS.some((keyword) => entry.includes(keyword)),
+  );
+
+  if (hasWaterSegment) {
+    return { isPublishable: false, blockedReason: ROUTE_BLOCKED_REASON };
+  }
+
+  return { isPublishable: true };
 };
 
 // ============================================================
@@ -304,7 +340,7 @@ export const computeRouteOptions = async (
             headers: {
                 'Content-Type': 'application/json',
                 'X-Goog-Api-Key': process.env.GOOGLE_MAPS_API_KEY || '',
-                'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+                'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.description,routes.warnings,routes.legs.steps.navigationInstruction.instructions,routes.legs.steps.navigationInstruction.maneuver,routes.legs.steps.travelMode',
             },
             body: JSON.stringify({
                 origin: { location: { latLng: origin } },
@@ -326,6 +362,7 @@ export const computeRouteOptions = async (
   const routes: RouteOption[] = data.routes.map((route: any, index: number) => {
     const distanceMeters = route.distanceMeters || 0;
     const durationSeconds = parseInt(route.duration?.replace('s', '') || '0');
+    const routeStatus = detectBlockedRoute(route);
 
     return {
       index,
@@ -334,6 +371,10 @@ export const computeRouteOptions = async (
       durationSeconds,
       distanceText: `${(distanceMeters / 1000).toFixed(1)} km`,
       durationText: formatDuration(durationSeconds),
+      description: route.description || '',
+      warnings: Array.isArray(route.warnings) ? route.warnings : [],
+      isPublishable: routeStatus.isPublishable,
+      blockedReason: routeStatus.blockedReason,
     };
   });
 
@@ -369,6 +410,10 @@ export const selectRoute = async (driverId: string, routeIndex: number): Promise
   draft.routePolyline = selectedRoute.polyline;
   draft.routeDistanceMeters = selectedRoute.distanceMeters;
   draft.routeDurationSeconds = selectedRoute.durationSeconds;
+  draft.routeDescription = selectedRoute.description;
+  draft.routeWarnings = selectedRoute.warnings;
+  draft.routeIsPublishable = selectedRoute.isPublishable !== false;
+  draft.routeBlockedReason = selectedRoute.blockedReason;
   draft.step = Math.max(draft.step, 7);
 
   return saveDraft(draft);
@@ -1051,7 +1096,7 @@ export const publishRide = async (driverId: string) => {
     // Validate driver has accepted ToS and has verified DL
     const driver = await prisma.user.findUnique({
         where: { id: driverId },
-        select: { dlVerified: true, tosAcceptedAt: true },
+        select: { dlVerified: true, tosAcceptedAt: true, gender: true },
     });
 
     if (!driver?.tosAcceptedAt) {
@@ -1061,6 +1106,14 @@ export const publishRide = async (driverId: string) => {
     const skipDlCheck = process.env.SKIP_DL_VERIFICATION === 'true';
     if (!driver?.dlVerified && !skipDlCheck) {
         throw new Error('DRIVER_NOT_VERIFIED');
+    }
+
+    if (draft.femaleOnly && driver?.gender !== 'FEMALE') {
+        throw new Error('FEMALE_ONLY_NOT_ALLOWED');
+    }
+
+    if (draft.routeIsPublishable === false) {
+        throw new Error(draft.routeBlockedReason || ROUTE_BLOCKED_REASON);
     }
 
   // Validate user has a verified vehicle

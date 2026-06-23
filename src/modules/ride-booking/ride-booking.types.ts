@@ -35,6 +35,7 @@ export interface CreateBookingInput {
     segmentId?: string;
     seatsBooked: number;
     luggageCount?: number;
+    requiresChildSeat?: boolean;
     pickupWaypointId?: string;
     dropoffWaypointId?: string;
     notes?: string;
@@ -152,6 +153,7 @@ export interface PricePreviewInput {
     segmentId?: string;
     seatsBooked: number;
     luggageCount?: number;
+    requiresChildSeat?: boolean;
     pickupWaypointId?: string;
     dropoffWaypointId?: string;
 }

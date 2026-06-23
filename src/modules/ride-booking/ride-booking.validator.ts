@@ -7,6 +7,7 @@ export const createBookingSchema = z.object({
     segmentId: z.string().min(1, 'segmentId is required').optional(),
     seatsBooked: z.number().int().min(1, 'At least 1 seat required').max(4, 'Maximum 4 seats per booking'),
     luggageCount: z.number().int().min(0).max(10).default(0),
+    requiresChildSeat: z.boolean().optional().default(false),
     pickupWaypointId: z.string().uuid().optional(),
     dropoffWaypointId: z.string().uuid().optional(),
     notes: z.string().max(300, 'Notes must be 300 characters or less').optional(),
@@ -26,6 +27,7 @@ export const pricePreviewSchema = z.object({
     segmentId: z.string().min(1, 'segmentId is required').optional(),
     seatsBooked: z.number().int().min(1, 'At least 1 seat required').max(4, 'Maximum 4 seats per booking'),
     luggageCount: z.number().int().min(0).max(10).default(0),
+    requiresChildSeat: z.boolean().optional().default(false),
     pickupWaypointId: z.string().uuid().optional(),
     dropoffWaypointId: z.string().uuid().optional(),
 });

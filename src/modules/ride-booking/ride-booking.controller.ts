@@ -71,6 +71,14 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 status = HttpStatus.FORBIDDEN;
                 message = 'This ride is for female passengers only';
                 break;
+            case 'PASSENGER_TOO_YOUNG':
+                status = HttpStatus.FORBIDDEN;
+                message = 'Passengers must be at least 8 years old to book a ride';
+                break;
+            case 'CHILD_SEAT_REQUIRED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'This booking requires a ride with a child seat';
+                break;
             case 'INVALID_BOOKING_SEGMENT':
                 status = HttpStatus.BAD_REQUEST;
                 message = 'Selected ride segment is invalid';
@@ -333,6 +341,14 @@ export const getBookingPricePreview = async (req: AuthRequest, res: Response) =>
             case 'INVALID_BOOKING_SEGMENT':
                 status = HttpStatus.BAD_REQUEST;
                 message = 'Selected ride segment is invalid';
+                break;
+            case 'PASSENGER_TOO_YOUNG':
+                status = HttpStatus.FORBIDDEN;
+                message = 'Passengers must be at least 8 years old to book a ride';
+                break;
+            case 'CHILD_SEAT_REQUIRED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'This booking requires a ride with a child seat';
                 break;
         }
 

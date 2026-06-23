@@ -216,6 +216,10 @@ export interface RouteOption {
     durationSeconds: number;
     distanceText: string;
     durationText: string;
+    description?: string;
+    warnings?: string[];
+    isPublishable?: boolean;
+    blockedReason?: string;
 }
 
 export interface ComputeRoutesResult {

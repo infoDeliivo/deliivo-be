@@ -1,4 +1,11 @@
 import { z } from 'zod';
+import { isAtLeastAge, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
+
+const dobSchema = z
+  .string()
+  .refine((val) => !isNaN(Date.parse(val)), 'Date of birth must be a valid date')
+  .refine((val) => isAtLeastAge(val, MINIMUM_BOOKING_AGE_YEARS), `User must be at least ${MINIMUM_BOOKING_AGE_YEARS} years old`);
+
 export const updateProfileSchema = z.object({
   bio: z.string().max(150).optional(),
   username: z
@@ -8,7 +15,7 @@ export const updateProfileSchema = z.object({
     .regex(/^[a-zA-Z0-9_]+$/)
     .optional(),
   gender: z.enum(['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY']).optional(),
-  dob: z.string().datetime().optional(), // ISO string
+  dob: dobSchema.optional(),
   preferences: z
     .object({
       smoking: z.boolean().optional(),
@@ -27,7 +34,7 @@ export const updateProfileSchemaOnBoarding = z.object({
   salutation: z.enum(['MR', 'MS', 'MRS', 'MX', 'OTHER']),
   gender: z.enum(['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY']),
 
-  dob: z.string().refine((val) => !isNaN(Date.parse(val)), 'Date of birth must be a valid date'),
+  dob: dobSchema,
 });
 
 export const avatarUploadSchema = z
@@ -53,7 +60,7 @@ export const fullProfileUpdateSchema = z.object({
     .optional(),
   salutation: z.enum(['MR', 'MS', 'MRS', 'MX', 'OTHER']).optional(),
   gender: z.enum(['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY']).optional(),
-  dob: z.string().refine((val) => !isNaN(Date.parse(val)), 'Date of birth must be a valid date').optional(),
+  dob: dobSchema.optional(),
 
   // Travel preferences (inline update)
   travelPreference: z.object({

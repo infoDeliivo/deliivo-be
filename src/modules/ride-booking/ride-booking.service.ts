@@ -40,6 +40,7 @@ import {
     markPaymentPaid,
 } from '../payments/payment.service.js';
 import { emitToUsers } from '../../socket/index.js';
+import { calculateAgeYears, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
 
 type RideWaypointDetails = {
     id: string;
@@ -594,7 +595,7 @@ export const createBooking = async (
     // Guard: passenger must have accepted ToS and must not be banned
     const passenger = await prisma.user.findUnique({
         where: { id: passengerId },
-        select: { tosAcceptedAt: true, privacyAcceptedAt: true, isBanned: true },
+        select: { tosAcceptedAt: true, privacyAcceptedAt: true, isBanned: true, dob: true },
     });
 
     if (!passenger?.tosAcceptedAt || !passenger?.privacyAcceptedAt) {
@@ -605,6 +606,10 @@ export const createBooking = async (
         throw new Error('USER_BANNED');
     }
 
+    if (!passenger.dob || calculateAgeYears(passenger.dob) < MINIMUM_BOOKING_AGE_YEARS) {
+        throw new Error('PASSENGER_TOO_YOUNG');
+    }
+
     const bypassBookingPaymentMode = isBypassBookingPaymentMode();
     const now = new Date();
     const paymentCapturedAt = bypassBookingPaymentMode ? now : null;
@@ -613,11 +618,19 @@ export const createBooking = async (
         segmentId,
         seatsBooked,
         luggageCount = 0,
+        requiresChildSeat = false,
         pickupWaypointId,
         dropoffWaypointId,
         notes,
         responseExpiryOption,
     } = input;
+    const normalizedNotes = [
+        notes?.trim() || '',
+        requiresChildSeat ? 'Child seat required for this booking.' : '',
+    ]
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 300);
 
     const bookingSeed = await prisma.$transaction(async (tx) => {
         const ride = await tx.ride.findFirst({
@@ -690,6 +703,10 @@ export const createBooking = async (
             if (passenger?.gender !== 'FEMALE') {
                 throw new Error('FEMALE_ONLY_RIDE');
             }
+        }
+
+        if (requiresChildSeat && !ride.childSeatAvailable) {
+            throw new Error('CHILD_SEAT_REQUIRED');
         }
 
         let pickupRef: SegmentPointRef;
@@ -938,7 +955,7 @@ export const createBooking = async (
 
         return mapBookingResponse(bookingSeed.booking as unknown as BookingWithRideDetails, {
             luggageCount,
-            notes: notes ?? null,
+            notes: normalizedNotes || null,
             priceBreakdown: bookingSeed.priceBreakdown,
         });
     }
@@ -1073,7 +1090,7 @@ export const createBooking = async (
 
         return mapBookingResponse(booking as unknown as BookingWithRideDetails, {
             luggageCount,
-            notes: notes ?? null,
+            notes: normalizedNotes || null,
             priceBreakdown: bookingSeed.priceBreakdown,
             payment: {
                 provider: 'stripe',
@@ -1523,9 +1540,19 @@ export const getBookingPricePreview = async (
         segmentId,
         seatsBooked,
         luggageCount = 0,
+        requiresChildSeat = false,
         pickupWaypointId,
         dropoffWaypointId,
     } = input;
+
+    const passenger = await prisma.user.findUnique({
+        where: { id: passengerId },
+        select: { dob: true },
+    });
+
+    if (!passenger?.dob || calculateAgeYears(passenger.dob) < MINIMUM_BOOKING_AGE_YEARS) {
+        throw new Error('PASSENGER_TOO_YOUNG');
+    }
 
     const ride = await prisma.ride.findFirst({
         where: {
@@ -1545,6 +1572,10 @@ export const getBookingPricePreview = async (
 
     if (ride.driverId === passengerId) {
         throw new Error('CANNOT_BOOK_OWN_RIDE');
+    }
+
+    if (requiresChildSeat && !ride.childSeatAvailable) {
+        throw new Error('CHILD_SEAT_REQUIRED');
     }
 
     // Validate seat count (min/max) and availability

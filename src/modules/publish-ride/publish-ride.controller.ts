@@ -360,6 +360,12 @@ export const publishRide = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'CAPACITY_AND_PRICING_REQUIRED') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Seats and pricing are required before publishing';
+        } else if (error.message === 'FEMALE_ONLY_NOT_ALLOWED') {
+            status = HttpStatus.FORBIDDEN;
+            message = 'Only female drivers can publish female-only rides';
+        } else if (error.message === 'NON_ROAD_ROUTE_NOT_ALLOWED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Routes that include ferry or water transport cannot be published';
         } else if (error.message === 'TOS_NOT_ACCEPTED') {
             status = HttpStatus.FORBIDDEN;
             message = 'You must accept the Terms of Service before publishing a ride';
