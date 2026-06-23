@@ -23,8 +23,11 @@ echo "[entrypoint] Migrations complete."
 
 if [ "${SKIP_DB_SEED}" != "true" ]; then
   echo "[entrypoint] Running database seed..."
-  node dist/scripts/seed.js
-  echo "[entrypoint] Database seed complete."
+  if node dist/scripts/seed.js; then
+    echo "[entrypoint] Database seed complete."
+  else
+    echo "[entrypoint] Database seed failed; continuing startup."
+  fi
 fi
 
 echo "[entrypoint] Starting: $*"

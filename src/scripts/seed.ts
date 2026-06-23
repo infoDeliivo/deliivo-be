@@ -10,32 +10,45 @@ async function main() {
   const adminName = process.env.ADMIN_SEED_NAME || 'Admin Baltic';
   const adminNickName = process.env.ADMIN_SEED_NICKNAME || 'admin-baltic';
 
-  const admin = await prisma.user.upsert({
-    where: { email: adminEmail },
-    update: {
-      role: UserRole.ADMIN,
-      phone: adminPhone,
-      name: adminName,
-      nickName: adminNickName,
-      emailVerified: true,
-      phoneVerified: true,
-      isVerified: true,
-      onboardingStatus: OnboardingStatus.COMPLETED,
-      isBanned: false,
-    },
-    create: {
-      email: adminEmail,
-      phone: adminPhone,
-      role: UserRole.ADMIN,
-      name: adminName,
-      nickName: adminNickName,
-      emailVerified: true,
-      phoneVerified: true,
-      isVerified: true,
-      onboardingStatus: OnboardingStatus.COMPLETED,
-      isBanned: false,
-    },
-  });
+  const [existingByEmail, existingByPhone] = await Promise.all([
+    adminEmail ? prisma.user.findUnique({ where: { email: adminEmail } }) : Promise.resolve(null),
+    adminPhone ? prisma.user.findUnique({ where: { phone: adminPhone } }) : Promise.resolve(null),
+  ]);
+
+  const targetUser = existingByEmail || existingByPhone;
+  const phoneBelongsToOtherUser = Boolean(
+    adminPhone &&
+    existingByPhone &&
+    (!targetUser || existingByPhone.id !== targetUser.id)
+  );
+
+  if (phoneBelongsToOtherUser) {
+    console.warn(
+      `Admin seed skipped phone assignment because ${adminPhone} is already used by user ${existingByPhone?.id}.`
+    );
+  }
+
+  const adminPayload = {
+    role: UserRole.ADMIN,
+    name: adminName,
+    nickName: adminNickName,
+    emailVerified: true,
+    phoneVerified: !phoneBelongsToOtherUser,
+    isVerified: true,
+    onboardingStatus: OnboardingStatus.COMPLETED,
+    isBanned: false,
+    ...(adminEmail ? { email: adminEmail } : {}),
+    ...(phoneBelongsToOtherUser ? {} : (adminPhone ? { phone: adminPhone } : {})),
+  };
+
+  const admin = targetUser
+    ? await prisma.user.update({
+        where: { id: targetUser.id },
+        data: adminPayload,
+      })
+    : await prisma.user.create({
+        data: adminPayload,
+      });
 
   console.log(`Seeded admin user: ${admin.email} (${admin.id})`);
 
