@@ -223,7 +223,7 @@ export const updateStopovers = async (req: AuthRequest, res: Response) => {
             message = 'Draft not found';
         } else if (error.message === 'MAX_STOPOVER_POINTS_EXCEEDED') {
             status = HttpStatus.BAD_REQUEST;
-            message = 'Maximum 1 stopover allowed';
+            message = 'Maximum 3 stopovers allowed';
         }
 
         return sendError(res, {
