@@ -179,7 +179,7 @@ export const updateDropoffsSchema = z.object({
 
 // Stopovers (Screen 8)
 export const updateStopoversSchema = z.object({
-    stopovers: z.array(locationSchema).max(3, 'Maximum 3 pickup points allowed').optional().default([]),
+    stopovers: z.array(locationSchema).max(1, 'Maximum 1 stopover allowed').optional().default([]),
 });
 
 /* ================= PHASE 2: ROUTE COMPUTATION ================= */

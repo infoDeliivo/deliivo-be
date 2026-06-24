@@ -35,7 +35,7 @@ import { createNotification } from '../notification/notification.service.js';
 
 const DRAFT_TTL = 3600; // 10 minutes
 const ROUTES_TTL = 300; // 5 minutes for computed routes
-const MAX_ROUTE_PICKUP_POINTS = 3;
+const MAX_STOPOVER_POINTS = 1;
 const MAX_ORIGIN_PICKUP_POINTS = 3;
 const MAX_DESTINATION_DROPOFF_POINTS = 3;
 const MAX_GROUP_SUGGESTIONS = 3;
@@ -895,8 +895,8 @@ export const updateStopovers = async (
   driverId: string,
   input: UpdateStopoversInput,
 ): Promise<DraftRide> => {
-  if ((input.stopovers?.length || 0) > MAX_ROUTE_PICKUP_POINTS) {
-    throw new Error('MAX_ROUTE_PICKUP_POINTS_EXCEEDED');
+  if ((input.stopovers?.length || 0) > MAX_STOPOVER_POINTS) {
+    throw new Error('MAX_STOPOVER_POINTS_EXCEEDED');
   }
 
   const draft = await getDraft(driverId);

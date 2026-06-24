@@ -221,9 +221,9 @@ export const updateStopovers = async (req: AuthRequest, res: Response) => {
         if (error.message === 'DRAFT_NOT_FOUND') {
             status = HttpStatus.NOT_FOUND;
             message = 'Draft not found';
-        } else if (error.message === 'MAX_ROUTE_PICKUP_POINTS_EXCEEDED') {
+        } else if (error.message === 'MAX_STOPOVER_POINTS_EXCEEDED') {
             status = HttpStatus.BAD_REQUEST;
-            message = 'Maximum 3 pickup points allowed';
+            message = 'Maximum 1 stopover allowed';
         }
 
         return sendError(res, {
