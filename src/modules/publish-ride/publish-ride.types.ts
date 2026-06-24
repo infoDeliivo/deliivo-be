@@ -274,6 +274,23 @@ export interface StopoverSuggestionsResult {
     basePricePerSeat: number | null;
 }
 
+export type RouteLocationMode = 'INTRACITY' | 'INTERCITY';
+
+export interface StopoverPointGroup {
+    stopover: StopoverSuggestion;
+    directSelectable: boolean;
+    pointSuggestions: StopoverSuggestion[];
+}
+
+export interface RouteLocationSuggestionsResult {
+    routeMode: RouteLocationMode;
+    originPickupSuggestions: StopoverSuggestion[];
+    destinationDropoffSuggestions: StopoverSuggestion[];
+    stopoverGroups: StopoverPointGroup[];
+    routeDistanceKm: number;
+    basePricePerSeat: number | null;
+}
+
 /* ================= PHASE 4: DRAFT MANAGEMENT TYPES ================= */
 
 export interface DraftSummary {

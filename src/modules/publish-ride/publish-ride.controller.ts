@@ -46,14 +46,20 @@ export const updatePickups = async (req: AuthRequest, res: Response) => {
             data: formatDraftResponse(draft),
         });
     } catch (error: any) {
-        const status = error.message === 'DRAFT_NOT_FOUND'
-            ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to update pickup locations';
+
+        if (error.message === 'DRAFT_NOT_FOUND') {
+            status = HttpStatus.NOT_FOUND;
+            message = 'Draft not found';
+        } else if (error.message === 'MAX_PICKUP_POINTS_EXCEEDED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Maximum 3 pickup points allowed';
+        }
+
         return sendError(res, {
             status,
-            message: error.message === 'DRAFT_NOT_FOUND'
-                ? 'Draft not found'
-                : 'Failed to update pickup locations',
+            message,
         });
     }
 };
@@ -90,14 +96,20 @@ export const updateDropoffs = async (req: AuthRequest, res: Response) => {
             data: formatDraftResponse(draft),
         });
     } catch (error: any) {
-        const status = error.message === 'DRAFT_NOT_FOUND'
-            ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to update dropoff locations';
+
+        if (error.message === 'DRAFT_NOT_FOUND') {
+            status = HttpStatus.NOT_FOUND;
+            message = 'Draft not found';
+        } else if (error.message === 'MAX_DROPOFF_POINTS_EXCEEDED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Maximum 3 dropoff points allowed';
+        }
+
         return sendError(res, {
             status,
-            message: error.message === 'DRAFT_NOT_FOUND'
-                ? 'Draft not found'
-                : 'Failed to update dropoff locations',
+            message,
         });
     }
 };
@@ -203,15 +215,48 @@ export const updateStopovers = async (req: AuthRequest, res: Response) => {
             data: formatDraftResponse(draft),
         });
     } catch (error: any) {
-        const status = error.message === 'DRAFT_NOT_FOUND'
-            ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to update stopovers';
+
+        if (error.message === 'DRAFT_NOT_FOUND') {
+            status = HttpStatus.NOT_FOUND;
+            message = 'Draft not found';
+        } else if (error.message === 'MAX_ROUTE_PICKUP_POINTS_EXCEEDED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Maximum 3 pickup points allowed';
+        }
+
         return sendError(res, {
             status,
-            message: error.message === 'DRAFT_NOT_FOUND'
-                ? 'Draft not found'
-                : 'Failed to update stopovers',
+            message,
         });
+    }
+};
+
+export const getLocationSuggestions = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await DraftRideService.getRouteLocationSuggestions(req.user.id);
+
+        return sendSuccess(res, {
+            message: 'Route location suggestions fetched successfully',
+            data: result,
+        });
+    } catch (error: any) {
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to get route location suggestions';
+
+        if (error.message === 'DRAFT_NOT_FOUND') {
+            status = HttpStatus.NOT_FOUND;
+            message = 'Draft not found';
+        } else if (error.message === 'ROUTE_REQUIRED_FOR_SUGGESTIONS') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Please select a route before getting route location suggestions';
+        } else if (error.message === 'INVALID_POLYLINE') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Invalid route polyline';
+        }
+
+        return sendError(res, { status, message });
     }
 };
 

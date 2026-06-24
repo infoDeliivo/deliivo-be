@@ -10,6 +10,8 @@ import {
     updateNotesSchema,
     listRidesQuerySchema,
     rideIdParamSchema,
+    updatePickupsSchema,
+    updateDropoffsSchema,
     updateStopoversSchema,
     selectRouteSchema,
 } from './publish-ride.validator.js';
@@ -39,6 +41,20 @@ router.put(
     controller.updateDestination
 );
 
+// Step 2b: Set origin-area pickup points
+router.put(
+    '/draft/pickups',
+    validate({ body: updatePickupsSchema }),
+    controller.updatePickups
+);
+
+// Step 2c: Set destination-area dropoff points
+router.put(
+    '/draft/dropoffs',
+    validate({ body: updateDropoffsSchema }),
+    controller.updateDropoffs
+);
+
 // Step 3: Compute route options
 router.get(
     '/draft/routes/compute',
@@ -56,6 +72,11 @@ router.put(
 router.get(
     '/draft/stopovers/suggestions',
     controller.getStopoverSuggestions
+);
+
+router.get(
+    '/draft/location-suggestions',
+    controller.getLocationSuggestions
 );
 
 // Step 6: Set stopper points

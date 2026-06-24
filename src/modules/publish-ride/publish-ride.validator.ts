@@ -169,17 +169,17 @@ export const updateCapacitySchema = z.object({
 
 // Pickups (Screens 2-3)
 export const updatePickupsSchema = z.object({
-    pickups: z.array(locationSchema).min(1, 'At least one pickup location required'),
+    pickups: z.array(locationSchema).max(3, 'Maximum 3 pickup points allowed').optional().default([]),
 });
 
 // Dropoffs (Screens 5-6)
 export const updateDropoffsSchema = z.object({
-    dropoffs: z.array(locationSchema).min(1, 'At least one dropoff location required'),
+    dropoffs: z.array(locationSchema).max(3, 'Maximum 3 dropoff points allowed').optional().default([]),
 });
 
 // Stopovers (Screen 8)
 export const updateStopoversSchema = z.object({
-    stopovers: z.array(locationSchema).optional().default([]),
+    stopovers: z.array(locationSchema).max(3, 'Maximum 3 pickup points allowed').optional().default([]),
 });
 
 /* ================= PHASE 2: ROUTE COMPUTATION ================= */

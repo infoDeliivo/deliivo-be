@@ -5,6 +5,7 @@
 ```
 docs/
 ├── INDEX.md                          ← You are here
+├── FEEDBACK_LIST.md                  ← Execution-tracked feedback backlog
 ├── architecture/                     ← System design & diagrams
 │   ├── DESIGN_DOCUMENT.md           ← Full architecture doc with embedded diagrams
 │   ├── PRICE_CALCULATION.md         ← Pricing algorithm & fuel cost model
@@ -76,6 +77,7 @@ docs/
 - [Logging Guide](guides/logging-guide.md) — how to use the Winston logger
 - [OpenAPI Spec](api/openapi/openapi.yaml) — full API reference
 - [Price Calculation](architecture/PRICE_CALCULATION.md) — pricing algorithm details
+- [Feedback List](FEEDBACK_LIST.md) — tracked execution list for active product feedback
 
 ### Operations
 - [Railway Deployment](deployment/railway-deployment.md) — deploy to production

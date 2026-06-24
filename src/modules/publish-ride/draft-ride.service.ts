@@ -20,6 +20,9 @@ import {
   LocationInput,
   StopoverSuggestion,
   StopoverSuggestionsResult,
+  RouteLocationMode,
+  StopoverPointGroup,
+  RouteLocationSuggestionsResult,
 } from './publish-ride.types.js';
 import { getFuelPriceForCurrency } from '../../services/fuel-price.service.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
@@ -32,6 +35,11 @@ import { createNotification } from '../notification/notification.service.js';
 
 const DRAFT_TTL = 3600; // 10 minutes
 const ROUTES_TTL = 300; // 5 minutes for computed routes
+const MAX_ROUTE_PICKUP_POINTS = 3;
+const MAX_ORIGIN_PICKUP_POINTS = 3;
+const MAX_DESTINATION_DROPOFF_POINTS = 3;
+const MAX_GROUP_SUGGESTIONS = 3;
+const INTRACITY_ROUTE_THRESHOLD_METERS = 25000;
 
 // ============================================================
 //  CACHE KEY HELPERS
@@ -214,6 +222,10 @@ export const updatePickups = async (
   driverId: string,
   input: UpdatePickupsInput,
 ): Promise<DraftRide> => {
+  if ((input.pickups?.length || 0) > MAX_ORIGIN_PICKUP_POINTS) {
+    throw new Error('MAX_PICKUP_POINTS_EXCEEDED');
+  }
+
   const draft = await getDraft(driverId);
   draft.pickups = input.pickups;
   draft.step = Math.max(draft.step, 2);
@@ -248,6 +260,10 @@ export const updateDropoffs = async (
   driverId: string,
   input: UpdateDropoffsInput,
 ): Promise<DraftRide> => {
+  if ((input.dropoffs?.length || 0) > MAX_DESTINATION_DROPOFF_POINTS) {
+    throw new Error('MAX_DROPOFF_POINTS_EXCEEDED');
+  }
+
   const draft = await getDraft(driverId);
   draft.dropoffs = input.dropoffs;
   draft.step = Math.max(draft.step, 5);
@@ -554,6 +570,123 @@ function samplePointsAlongRoute(
   return sampled;
 }
 
+const toSuggestion = (
+  place: any,
+  origin: { lat: number; lng: number },
+): StopoverSuggestion => {
+  const distFromOrigin = haversineDistance(
+    origin,
+    { lat: place.geometry.location.lat, lng: place.geometry.location.lng },
+  );
+
+  return {
+    placeId: place.place_id,
+    name: place.name,
+    address: place.vicinity || place.name,
+    lat: place.geometry.location.lat,
+    lng: place.geometry.location.lng,
+    distanceFromOriginKm: Math.round((distFromOrigin / 1000) * 10) / 10,
+    distanceFromOriginMeters: Math.round(distFromOrigin),
+    types: place.types || [],
+  };
+};
+
+const enrichSuggestionPricing = (
+  suggestion: StopoverSuggestion,
+  draft: DraftRide,
+  totalDistanceKm: number,
+): StopoverSuggestion => {
+  const enriched = { ...suggestion };
+
+  if (draft.basePricePerSeat && totalDistanceKm > 0) {
+    const distanceRatio = enriched.distanceFromOriginKm / totalDistanceKm;
+    enriched.pricePerSeat = Math.round(draft.basePricePerSeat * distanceRatio * 100) / 100;
+  }
+
+  return enriched;
+};
+
+const fetchNearbySuggestions = async (
+  center: { lat: number; lng: number },
+  origin: { lat: number; lng: number },
+  options: {
+    radiusMeters: number;
+    type?: string;
+    keyword?: string;
+    maxResults?: number;
+  },
+): Promise<StopoverSuggestion[]> => {
+  const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+  const url = new URL('https://maps.googleapis.com/maps/api/place/nearbysearch/json');
+  url.searchParams.set('location', `${center.lat},${center.lng}`);
+  url.searchParams.set('radius', String(options.radiusMeters));
+  if (options.type) url.searchParams.set('type', options.type);
+  if (options.keyword) url.searchParams.set('keyword', options.keyword);
+  url.searchParams.set('key', GOOGLE_API_KEY);
+
+  const response = await fetch(url.toString());
+  const data = (await response.json()) as any;
+  if (!data.results || !Array.isArray(data.results)) {
+    return [];
+  }
+
+  return data.results
+    .slice(0, options.maxResults ?? MAX_GROUP_SUGGESTIONS)
+    .map((place: any) => toSuggestion(place, origin));
+};
+
+const buildAreaSuggestions = async (
+  center: { lat: number; lng: number; address: string; placeId: string },
+  origin: { lat: number; lng: number },
+  draft: DraftRide,
+  totalDistanceKm: number,
+): Promise<StopoverSuggestion[]> => {
+  const unique = new Map<string, StopoverSuggestion>();
+
+  const fallback: StopoverSuggestion = {
+    placeId: center.placeId,
+    name: center.address.split(',')[0] || center.address,
+    address: center.address,
+    lat: center.lat,
+    lng: center.lng,
+    distanceFromOriginKm: Math.round((haversineDistance(origin, center) / 1000) * 10) / 10,
+    distanceFromOriginMeters: Math.round(haversineDistance(origin, center)),
+    types: [],
+  };
+
+  unique.set(fallback.placeId, enrichSuggestionPricing(fallback, draft, totalDistanceKm));
+
+  for (const query of [
+    { type: 'transit_station', radiusMeters: 3500 },
+    { keyword: 'parking', radiusMeters: 3500 },
+  ]) {
+    try {
+      const results = await fetchNearbySuggestions(center, origin, {
+        ...query,
+        maxResults: MAX_GROUP_SUGGESTIONS,
+      });
+      for (const result of results) {
+        if (!unique.has(result.placeId)) {
+          unique.set(result.placeId, enrichSuggestionPricing(result, draft, totalDistanceKm));
+        }
+        if (unique.size >= MAX_GROUP_SUGGESTIONS) {
+          break;
+        }
+      }
+      if (unique.size >= MAX_GROUP_SUGGESTIONS) {
+        break;
+      }
+    } catch (err) {
+      logWarn('Places API area suggestion error', {
+        center,
+        error: err instanceof Error ? err.message : err,
+      });
+    }
+  }
+
+  return Array.from(unique.values()).slice(0, MAX_GROUP_SUGGESTIONS);
+};
+
 /**
  * Get stopper point suggestions — famous cities/places along the selected route.
  * Decodes polyline → samples points every ~30km → queries Google Places Nearby Search.
@@ -674,6 +807,86 @@ export const getStopoversAlongRoute = async (
   };
 };
 
+export const getRouteLocationSuggestions = async (
+  driverId: string,
+): Promise<RouteLocationSuggestionsResult> => {
+  const draft = await getDraft(driverId);
+
+  if (!draft.routePolyline || !draft.originLat || !draft.originLng || !draft.destinationLat || !draft.destinationLng || !draft.originAddress || !draft.destinationAddress || !draft.originPlaceId || !draft.destinationPlaceId) {
+    throw new Error('ROUTE_REQUIRED_FOR_SUGGESTIONS');
+  }
+
+  const routeDistanceKm = Math.round(((draft.routeDistanceMeters || 0) / 1000) * 10) / 10;
+  const routeMode: RouteLocationMode =
+    (draft.routeDistanceMeters || 0) <= INTRACITY_ROUTE_THRESHOLD_METERS ? 'INTRACITY' : 'INTERCITY';
+
+  const origin = { lat: draft.originLat, lng: draft.originLng };
+  const originPickupSuggestions = await buildAreaSuggestions(
+    {
+      lat: draft.originLat,
+      lng: draft.originLng,
+      address: draft.originAddress,
+      placeId: draft.originPlaceId,
+    },
+    origin,
+    draft,
+    routeDistanceKm,
+  );
+
+  const destinationDropoffSuggestions = await buildAreaSuggestions(
+    {
+      lat: draft.destinationLat,
+      lng: draft.destinationLng,
+      address: draft.destinationAddress,
+      placeId: draft.destinationPlaceId,
+    },
+    origin,
+    draft,
+    routeDistanceKm,
+  );
+
+  const stopoverCities = await getStopoversAlongRoute(driverId);
+  const stopoverGroups: StopoverPointGroup[] = [];
+
+  for (const stopover of stopoverCities.suggestions) {
+    if (routeMode === 'INTRACITY') {
+      stopoverGroups.push({
+        stopover,
+        directSelectable: true,
+        pointSuggestions: [],
+      });
+      continue;
+    }
+
+    const pointSuggestions = await buildAreaSuggestions(
+      {
+        lat: stopover.lat,
+        lng: stopover.lng,
+        address: stopover.address,
+        placeId: stopover.placeId,
+      },
+      origin,
+      draft,
+      routeDistanceKm,
+    );
+
+    stopoverGroups.push({
+      stopover,
+      directSelectable: false,
+      pointSuggestions,
+    });
+  }
+
+  return {
+    routeMode,
+    originPickupSuggestions,
+    destinationDropoffSuggestions,
+    stopoverGroups,
+    routeDistanceKm,
+    basePricePerSeat: draft.basePricePerSeat || null,
+  };
+};
+
 // ============================================================
 //  STEP 6: UPDATE STOPOVERS
 // ============================================================
@@ -682,6 +895,10 @@ export const updateStopovers = async (
   driverId: string,
   input: UpdateStopoversInput,
 ): Promise<DraftRide> => {
+  if ((input.stopovers?.length || 0) > MAX_ROUTE_PICKUP_POINTS) {
+    throw new Error('MAX_ROUTE_PICKUP_POINTS_EXCEEDED');
+  }
+
   const draft = await getDraft(driverId);
   draft.stopovers = input.stopovers;
   draft.step = Math.max(draft.step, 8);
@@ -1179,6 +1396,7 @@ export const publishRide = async (driverId: string) => {
       lng: p.lng,
       waypointType: 'PICKUP' as const,
       orderIndex: i,
+      pricePerSeat: p.recommendedPrice ?? 0,
     }));
 
     // Create dropoff waypoints
@@ -1190,6 +1408,7 @@ export const publishRide = async (driverId: string) => {
       lng: d.lng,
       waypointType: 'DROPOFF' as const,
       orderIndex: i + 100,
+      pricePerSeat: d.recommendedPrice ?? newRide.basePricePerSeat,
     }));
 
     // Create stopover waypoints

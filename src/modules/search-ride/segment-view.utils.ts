@@ -72,8 +72,7 @@ const interpolateStopoverPrice = (
 };
 
 export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
-    const stopoverWaypoints = [...ride.waypoints]
-        .filter((waypoint) => waypoint.waypointType === 'STOPOVER')
+    const segmentWaypoints = [...ride.waypoints]
         .sort((a, b) => a.orderIndex - b.orderIndex);
 
     return [
@@ -87,7 +86,7 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
             cumulativePrice: 0,
             position: 0,
         },
-        ...stopoverWaypoints.map((waypoint, index) => ({
+        ...segmentWaypoints.map((waypoint, index) => ({
             ref: `waypoint:${waypoint.id}` as const,
             waypointId: waypoint.id,
             placeId: waypoint.placeId,
@@ -95,7 +94,7 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
             lat: waypoint.lat,
             lng: waypoint.lng,
             cumulativePrice: waypoint.pricePerSeat
-                ?? interpolateStopoverPrice(index, stopoverWaypoints.length, ride.basePricePerSeat),
+                ?? interpolateStopoverPrice(index, segmentWaypoints.length, ride.basePricePerSeat),
             position: index + 1,
         })),
         {
@@ -106,7 +105,7 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
             lat: ride.destinationLat,
             lng: ride.destinationLng,
             cumulativePrice: ride.basePricePerSeat,
-            position: stopoverWaypoints.length + 1,
+            position: segmentWaypoints.length + 1,
         },
     ];
 };
