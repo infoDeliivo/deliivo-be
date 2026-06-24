@@ -4,6 +4,7 @@ import * as controller from './content.controller.js';
 
 export const contentRouter = Router();
 contentRouter.get('/posts', controller.listPublished);
+contentRouter.get('/posts/:slug', controller.getPublishedBySlug);
 
 export const adminContentRouter = Router();
 adminContentRouter.use(authorize('ADMIN') as any);

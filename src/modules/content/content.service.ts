@@ -156,6 +156,34 @@ export async function listPublishedPosts(locale?: string) {
     }
 }
 
+export async function getPublishedPostBySlug(slug: string, locale?: string) {
+    const normalizedLocale = locale ? normalizeLocale(locale) : undefined;
+    try {
+        const post = await prisma.contentPost.findFirst({
+            where: {
+                slug,
+                status: 'PUBLISHED',
+                ...(normalizedLocale ? { locale: normalizedLocale } : {}),
+            },
+        });
+
+        return post ? toContentPost(post) : null;
+    } catch (error) {
+        if (isMissingContentTableError(error)) {
+            await ensureContentTables();
+            const post = await prisma.contentPost.findFirst({
+                where: {
+                    slug,
+                    status: 'PUBLISHED',
+                    ...(normalizedLocale ? { locale: normalizedLocale } : {}),
+                },
+            });
+            return post ? toContentPost(post) : null;
+        }
+        throw error;
+    }
+}
+
 export async function listAllPosts() {
     try {
         const posts = await prisma.contentPost.findMany({
