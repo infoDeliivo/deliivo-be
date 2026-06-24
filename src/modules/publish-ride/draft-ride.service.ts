@@ -1429,24 +1429,25 @@ export const publishRide = async (driverId: string) => {
     );
 
     // Calculate arrival times for each waypoint
-    if (allWaypoints.length > 0 && newRide.routeDurationSeconds) {
-      const arrivalTimes = calculateWaypointArrivalTimes(
-        newRide.departureTime,
-        newRide.routeDurationSeconds,
-        allWaypoints.length,
-      );
+    if (allWaypoints.length > 0) {
+      if (newRide.routeDurationSeconds) {
+        const arrivalTimes = calculateWaypointArrivalTimes(
+          newRide.departureTime,
+          newRide.routeDurationSeconds,
+          allWaypoints.length,
+        );
 
-      // Add estimated arrival time to each waypoint
-      allWaypoints.forEach((waypoint, index) => {
-        (waypoint as any).estimatedArrivalTime = arrivalTimes[index] || null;
-      });
+        // Add estimated arrival time to each waypoint when route timing is available.
+        allWaypoints.forEach((waypoint, index) => {
+          (waypoint as any).estimatedArrivalTime = arrivalTimes[index] || null;
+        });
+      }
 
       await tx.rideWaypoint.createMany({ data: allWaypoints });
     }
 
         // Create segment capacity edges for per-segment seat tracking
-        const stopoverCount = stopovers.length;
-        const totalPositions = stopoverCount + 1; // edges = stopoverCount + 1 (origin→...→destination)
+        const totalPositions = allWaypoints.length + 1; // edges = route points + 1 (originâ†’...â†’destination)
         const segmentCapacityData = Array.from({ length: totalPositions }, (_, i) => ({
             rideId: newRide.id,
             fromPosition: i,
