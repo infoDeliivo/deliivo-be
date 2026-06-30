@@ -55,6 +55,9 @@ export const updatePickups = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'MAX_PICKUP_POINTS_EXCEEDED') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Maximum 3 pickup points allowed';
+        } else if (error.message === 'PICKUP_OUTSIDE_CITY_RADIUS') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Pickup point must be within the allowed radius of the origin city';
         }
 
         return sendError(res, {
@@ -105,6 +108,9 @@ export const updateDropoffs = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'MAX_DROPOFF_POINTS_EXCEEDED') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Maximum 3 dropoff points allowed';
+        } else if (error.message === 'DROPOFF_OUTSIDE_CITY_RADIUS') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Drop-off point must be within the allowed radius of the destination city';
         }
 
         return sendError(res, {
@@ -224,6 +230,9 @@ export const updateStopovers = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'MAX_STOPOVER_POINTS_EXCEEDED') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Maximum 3 stopovers allowed';
+        } else if (error.message === 'STOPOVER_OUTSIDE_CITY_RADIUS') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Stopover point must be within the allowed radius of its selected stopover city';
         }
 
         return sendError(res, {
@@ -588,12 +597,16 @@ export const startRide = async (req: AuthRequest, res: Response) => {
     } catch (error: any) {
         const status = error.message === 'RIDE_NOT_FOUND_OR_CANNOT_START'
             ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
+            : error.message === 'RIDE_TOO_EARLY'
+                ? HttpStatus.CONFLICT
+                : HttpStatus.INTERNAL_ERROR;
         return sendError(res, {
             status,
             message: error.message === 'RIDE_NOT_FOUND_OR_CANNOT_START'
                 ? 'Ride not found or cannot be started'
-                : 'Failed to start ride',
+                : error.message === 'RIDE_TOO_EARLY'
+                    ? 'Ride cannot be started more than 10 minutes before departure'
+                    : 'Failed to start ride',
         });
     }
 };

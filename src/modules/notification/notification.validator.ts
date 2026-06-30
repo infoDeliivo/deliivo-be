@@ -27,3 +27,7 @@ export const registerDeviceSchema = z.object({
 export const tokenIdParamSchema = z.object({
     tokenId: z.string().uuid('Invalid token ID'),
 });
+
+export const notificationIdParamSchema = z.object({
+    notificationId: z.string().uuid('Invalid notification ID'),
+});

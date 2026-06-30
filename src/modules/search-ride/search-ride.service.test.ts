@@ -1,9 +1,19 @@
 const mockPrisma = {
     ride: {
         findMany: jest.fn(),
+        groupBy: jest.fn(),
     },
     vehicle: {
         findMany: jest.fn(),
+    },
+    user: {
+        findUnique: jest.fn(),
+    },
+    userRatingStats: {
+        findMany: jest.fn(),
+    },
+    rideBooking: {
+        groupBy: jest.fn(),
     },
 };
 
@@ -19,6 +29,10 @@ describe('searchRidesAdvanced segment shaping', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockPrisma.vehicle.findMany.mockResolvedValue([]);
+        mockPrisma.ride.groupBy.mockResolvedValue([]);
+        mockPrisma.user.findUnique.mockResolvedValue(null);
+        mockPrisma.userRatingStats.findMany.mockResolvedValue([]);
+        mockPrisma.rideBooking.groupBy.mockResolvedValue([]);
     });
 
     it('returns matched segment addresses, segment fare, bookingContext, and segmentId', async () => {
@@ -222,5 +236,62 @@ describe('searchRidesAdvanced segment shaping', () => {
         expect(result.rides[0].isSegmentView).toBeFalsy();
         expect(result.rides[0].bookingContext).toBeUndefined();
         expect(result.rides[0].segmentId).toBeUndefined();
+    });
+
+    it('keeps women-only rides hidden for guests', async () => {
+        mockPrisma.ride.findMany.mockResolvedValue([]);
+
+        await searchRidesAdvanced({
+            originLat: 1,
+            originLng: 1,
+            destinationLat: 2,
+            destinationLng: 2,
+            departureDate: new Date('2026-03-30T00:00:00.000Z'),
+            page: 1,
+            limit: 10,
+            radiusKm: 5,
+        });
+
+        expect(mockPrisma.ride.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ femaleOnly: false }),
+        }));
+    });
+
+    it('allows women-only rides into candidate search for female viewers', async () => {
+        mockPrisma.ride.findMany.mockResolvedValue([]);
+        mockPrisma.user.findUnique.mockResolvedValue({ gender: 'FEMALE' });
+
+        await searchRidesAdvanced({
+            originLat: 1,
+            originLng: 1,
+            destinationLat: 2,
+            destinationLng: 2,
+            departureDate: new Date('2026-03-30T00:00:00.000Z'),
+            page: 1,
+            limit: 10,
+            radiusKm: 5,
+        }, 'female-viewer');
+
+        const call = mockPrisma.ride.findMany.mock.calls[0][0];
+        expect(call.where.femaleOnly).toBeUndefined();
+    });
+
+    it('filters exclusively to women-only rides when a female viewer requests it', async () => {
+        mockPrisma.ride.findMany.mockResolvedValue([]);
+        mockPrisma.user.findUnique.mockResolvedValue({ gender: 'FEMALE' });
+
+        await searchRidesAdvanced({
+            originLat: 1,
+            originLng: 1,
+            destinationLat: 2,
+            destinationLng: 2,
+            departureDate: new Date('2026-03-30T00:00:00.000Z'),
+            femaleOnly: true,
+            page: 1,
+            limit: 10,
+            radiusKm: 5,
+        }, 'female-viewer');
+
+        expect(mockPrisma.ride.findMany.mock.calls[0][0].where.femaleOnly).toBe(true);
     });
 });

@@ -5,6 +5,8 @@ import {
     getUnreadCount,
     registerDevice,
     removeDevice,
+    deleteNotification,
+    clearNotifications,
 } from './notification.controller.js';
 import { validate } from '../../middlewares/validate.js';
 import {
@@ -12,6 +14,7 @@ import {
     markReadSchema,
     registerDeviceSchema,
     tokenIdParamSchema,
+    notificationIdParamSchema,
 } from './notification.validator.js';
 
 const notificationRouter = Router();
@@ -30,6 +33,16 @@ notificationRouter.post(
     '/mark-read',
     validate({ body: markReadSchema }),
     markAsRead,
+);
+
+// Clear the current user's notification inbox.
+notificationRouter.delete('/', clearNotifications);
+
+// Remove one notification owned by the current user.
+notificationRouter.delete(
+    '/:notificationId',
+    validate({ params: notificationIdParamSchema }),
+    deleteNotification,
 );
 
 // GET /notifications/unread-count — cached unread count

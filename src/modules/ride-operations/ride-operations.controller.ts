@@ -41,7 +41,7 @@ const mapRideOpsError = (error: Error) => {
         case 'RIDE_NOT_IN_PROGRESS':
             return { status: HttpStatus.CONFLICT, message: 'Ride is not in progress' };
         case 'RIDE_TOO_EARLY':
-            return { status: HttpStatus.CONFLICT, message: 'Ride cannot be started before the scheduled departure time' };
+            return { status: HttpStatus.CONFLICT, message: 'Ride cannot be started more than 10 minutes before the scheduled departure time' };
         case 'DEV_SIMULATION_DISABLED':
             return { status: HttpStatus.FORBIDDEN, message: 'Ride simulation is disabled' };
         case 'BOOKINGS_NOT_ALL_TERMINAL':

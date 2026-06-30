@@ -147,7 +147,7 @@ app.use('/api/v1/auth/otp/verify', otpLimiter);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', protect, userRouter);
 app.use('/api/v1/publish-ride', protect, publishRideRouter);
-app.use('/api/v1/search-rides', protect, searchLimiter, searchRideRouter);
+app.use('/api/v1/search-rides', searchLimiter, searchRideRouter);
 app.use('/api/v1/bookings', protect, bookingLimiter, rideBookingRouter);
 app.use('/api/v1/bookings', protect, bookingOperationsRouter);
 app.use('/api/v1/driver/bookings', protect, driverBookingRouter);

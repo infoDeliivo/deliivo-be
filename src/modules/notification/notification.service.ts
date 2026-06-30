@@ -4,9 +4,119 @@ import type { CreateNotificationInput } from './notification.types.js';
 import { sendPushToUser } from '../../services/push.service.js';
 import logger from '../../utils/logger.js';
 import { pushQueue } from '../../jobs/index.js';
+import { RideStatus } from '@prisma/client';
 
 // Redis key for unread count cache (60s TTL)
 const unreadKey = (userId: string) => `unread:${userId}`;
+const OVERDUE_UNSTARTED_RIDE_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
+const TERMINAL_RIDE_STATUSES = new Set<RideStatus>([RideStatus.COMPLETED, RideStatus.CANCELLED]);
+const UNSTARTED_RIDE_STATUSES = new Set<RideStatus>([
+    RideStatus.PUBLISHED,
+    RideStatus.SCHEDULED,
+    RideStatus.READY_TO_START,
+]);
+const staleCleanupInFlight = new Map<string, Promise<number>>();
+
+const getRideId = (data: unknown): string | null => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const rideId = (data as Record<string, unknown>).rideId;
+    return typeof rideId === 'string' && rideId.trim() ? rideId.trim() : null;
+};
+
+const getDepartureAt = (departureDate: Date, departureTime: string): Date | null => {
+    const [hoursRaw, minutesRaw] = departureTime.split(':');
+    const hours = Number(hoursRaw);
+    const minutes = Number(minutesRaw);
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        return null;
+    }
+
+    return new Date(Date.UTC(
+        departureDate.getUTCFullYear(),
+        departureDate.getUTCMonth(),
+        departureDate.getUTCDate(),
+        hours,
+        minutes,
+    ));
+};
+
+const invalidateUnreadCount = async (userId: string) => {
+    try {
+        await redis.del(unreadKey(userId));
+    } catch (error) {
+        logger.error('Redis unread cache invalidation error:', error);
+    }
+};
+
+/** Remove ride activity notifications that can no longer lead to an active ride. */
+export const removeStaleRideNotifications = async (userId: string): Promise<number> => {
+    const existing = staleCleanupInFlight.get(userId);
+    if (existing) return existing;
+
+    const cleanup = (async () => {
+        const notificationRows = await prisma.notification.findMany({
+            where: { userId },
+            select: { id: true, data: true },
+        });
+        const notificationRideIds = new Map<string, string>();
+
+        for (const row of notificationRows) {
+            const rideId = getRideId(row.data);
+            if (rideId) notificationRideIds.set(row.id, rideId);
+        }
+
+        const rideIds = [...new Set(notificationRideIds.values())];
+        if (rideIds.length === 0) return 0;
+
+        const rides = await prisma.ride.findMany({
+            where: { id: { in: rideIds } },
+            select: {
+                id: true,
+                status: true,
+                departureDate: true,
+                departureTime: true,
+                actualStartTime: true,
+            },
+        });
+        const ridesById = new Map(rides.map((ride) => [ride.id, ride]));
+        const now = Date.now();
+        const staleRideIds = new Set<string>();
+
+        for (const rideId of rideIds) {
+            const ride = ridesById.get(rideId);
+            if (!ride) {
+                staleRideIds.add(rideId);
+                continue;
+            }
+            if (TERMINAL_RIDE_STATUSES.has(ride.status)) {
+                staleRideIds.add(rideId);
+                continue;
+            }
+            if (UNSTARTED_RIDE_STATUSES.has(ride.status) && !ride.actualStartTime) {
+                const departureAt = getDepartureAt(ride.departureDate, ride.departureTime);
+                if (departureAt && now >= departureAt.getTime() + OVERDUE_UNSTARTED_RIDE_MINUTES * 60 * 1000) {
+                    staleRideIds.add(rideId);
+                }
+            }
+        }
+
+        const notificationIds = [...notificationRideIds.entries()]
+            .filter(([, rideId]) => staleRideIds.has(rideId))
+            .map(([notificationId]) => notificationId);
+        if (notificationIds.length === 0) return 0;
+
+        const result = await prisma.notification.deleteMany({
+            where: { userId, id: { in: notificationIds } },
+        });
+        if (result.count > 0) await invalidateUnreadCount(userId);
+        return result.count;
+    })().finally(() => {
+        staleCleanupInFlight.delete(userId);
+    });
+
+    staleCleanupInFlight.set(userId, cleanup);
+    return cleanup;
+};
 
 export const normalizeNotificationDataForTransport = (
     data?: Record<string, unknown>
@@ -120,6 +230,7 @@ export const getNotifications = async (
     cursor?: string,
     limit: number = 20,
 ) => {
+    await removeStaleRideNotifications(userId);
     const notifications = await prisma.notification.findMany({
         where: { userId },
         orderBy: { createdAt: 'desc' },
@@ -180,6 +291,20 @@ export const markAsRead = async (userId: string, notificationIds: string[]) => {
     return { markedCount: result.count };
 };
 
+export const deleteNotification = async (userId: string, notificationId: string) => {
+    const result = await prisma.notification.deleteMany({
+        where: { id: notificationId, userId },
+    });
+    if (result.count > 0) await invalidateUnreadCount(userId);
+    return { deletedCount: result.count };
+};
+
+export const clearNotifications = async (userId: string) => {
+    const result = await prisma.notification.deleteMany({ where: { userId } });
+    if (result.count > 0) await invalidateUnreadCount(userId);
+    return { deletedCount: result.count };
+};
+
 // ============ UNREAD COUNT ============
 
 /**
@@ -187,6 +312,7 @@ export const markAsRead = async (userId: string, notificationIds: string[]) => {
  * Uses Redis cache with 60s TTL, falls back to DB.
  */
 export const getUnreadCount = async (userId: string): Promise<number> => {
+    await removeStaleRideNotifications(userId);
     const key = unreadKey(userId);
 
     // Try Redis cache first

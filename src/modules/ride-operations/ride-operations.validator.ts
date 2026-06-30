@@ -59,6 +59,7 @@ export const offlineSyncSchema = z.object({
             lat: latitude.optional(),
             lng: longitude.optional(),
             clientTimestamp: isoTimestamp,
+            overrideReason: z.string().trim().min(1).max(500).optional(),
         })
     ).min(1).max(50),
 });

@@ -1,0 +1,1 @@
+ALTER TABLE "Ride" ALTER COLUMN "currency" SET DEFAULT 'EUR';

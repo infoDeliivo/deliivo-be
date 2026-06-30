@@ -75,9 +75,9 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 status = HttpStatus.FORBIDDEN;
                 message = 'Passengers must be at least 8 years old to book a ride';
                 break;
-            case 'CHILD_SEAT_REQUIRED':
+            case 'CHILD_SEAT_ACK_REQUIRED':
                 status = HttpStatus.BAD_REQUEST;
-                message = 'This booking requires a ride with a child seat';
+                message = 'Riders travelling with a child aged 2 or younger must confirm they will bring their own child seat';
                 break;
             case 'INVALID_BOOKING_SEGMENT':
                 status = HttpStatus.BAD_REQUEST;
@@ -201,6 +201,13 @@ export const cancelBooking = async (req: AuthRequest, res: Response) => {
             return sendError(res, {
                 status: HttpStatus.CONFLICT,
                 message: 'Booking can no longer be cancelled',
+            });
+        }
+
+        if (error.message === 'CANCELLATION_WINDOW_CLOSED') {
+            return sendError(res, {
+                status: HttpStatus.CONFLICT,
+                message: 'Confirmed bookings cannot be cancelled within 3 hours of departure',
             });
         }
 
@@ -346,9 +353,9 @@ export const getBookingPricePreview = async (req: AuthRequest, res: Response) =>
                 status = HttpStatus.FORBIDDEN;
                 message = 'Passengers must be at least 8 years old to book a ride';
                 break;
-            case 'CHILD_SEAT_REQUIRED':
+            case 'CHILD_SEAT_ACK_REQUIRED':
                 status = HttpStatus.BAD_REQUEST;
-                message = 'This booking requires a ride with a child seat';
+                message = 'Riders travelling with a child aged 2 or younger must confirm they will bring their own child seat';
                 break;
         }
 

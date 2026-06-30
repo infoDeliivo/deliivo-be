@@ -12,28 +12,45 @@ This document explains how ride price is calculated in the `publish-ride` module
 
 ## 2. Recommended Price Formula
 
-### Constants used by backend
+### Current implementation
 
-- `FUEL_EFFICIENCY_KM_PER_LITER` (default `12`, configurable via env)
-- `FUEL_PRICE_PER_LITER` is now fetched automatically for UK (`GBP`) from GOV weekly road fuel CSV.
-- `PRICE_PER_KM = fuelPricePerLiter / fuelEfficiencyKmPerLiter`
+The publish recommendation is now distance-rate-based.
 
-### 2.1 How to get fuel price in UK
+1. If an active pricing config exists for the ride region, the backend uses:
+   - `minRatePerKm`
+   - `recommendedRatePerKm`
+   - `maxRatePerKm`
+   - `minimumSeatPrice`
+   - `roundingStrategy`
+2. If no pricing config exists, the publish recommendation falls back to a built-in Baltic default:
+   - `minRatePerKm = 0.06`
+   - `recommendedRatePerKm = 0.08`
+   - `maxRatePerKm = 0.12`
+   - `minimumSeatPrice = 3.00`
+   - `roundingStrategy = NEAREST_EURO`
 
-Use these sources for automatic `FUEL_PRICE_PER_LITER` retrieval (with Redis cache + fallback):
+### Operational source of truth
 
-UK (official):
+The distance-rate values are not currently read from `.env`.
 
-1. Source page: `https://www.gov.uk/government/statistics/weekly-road-fuel-prices`
-2. Download the latest CSV from that page.
-3. Read the newest petrol/diesel pump price row.
-4. If value is in pence per litre, convert to GBP per litre by dividing by `100`.
+Current precedence:
 
-Recommended backend handling:
+1. Active `PricingConfig` row in the database for the target region
+2. Built-in fallback config in code for `BALTIC`
 
-- Store normalized values as `pricePerLiter`, `currency`, `fuelType`, `countryCode`, `effectiveDate`.
-- Refresh UK weekly.
-- Fallback to a safe default constant if live source is unavailable.
+This means:
+
+- `.env` is not where `minRatePerKm`, `recommendedRatePerKm`, `maxRatePerKm`, or `minimumSeatPrice` are controlled
+- production should have an active DB pricing config so pricing is admin-managed and not dependent on the code fallback
+
+Recommended production config for `BALTIC`:
+
+- `currency = EUR`
+- `minRatePerKm = 0.06`
+- `recommendedRatePerKm = 0.08`
+- `maxRatePerKm = 0.12`
+- `minimumSeatPrice = 3.00`
+- `roundingStrategy = NEAREST_EURO`
 
 ### Inputs
 
@@ -41,19 +58,22 @@ Recommended backend handling:
 
 ### Calculation
 
-- `fuelCost = distanceKm * PRICE_PER_KM`
-- `minPrice = round(fuelCost * 0.8)`
-- `recommendedPrice = round(fuelCost * 1.5)`
-- `maxPrice = round(fuelCost * 2.5)`
+- `rawRecommended = distanceKm * recommendedRatePerKm`
+- `rawMin = distanceKm * minRatePerKm`
+- `rawMax = distanceKm * maxRatePerKm`
+- `recommendedPrice = max(minimumSeatPrice, rounded(rawRecommended))`
+- `minPrice = max(minimumSeatPrice, rounded(rawMin))`
+- `maxPrice = max(minimumSeatPrice, rounded(rawMax))`
 
 `GET /draft/pricing/recommended` returns:
 
 - `recommendedPrice` (used as suggested `basePricePerSeat` for the UI)
 - `minPrice`, `maxPrice` (optional guidance range)
-- `currency` (draft value, default `GBP`)
-- `breakdown.fuelCost` rounded to 2 decimals
+- `currency = EUR`; pricing configuration rejects other currencies
+- `breakdown.estimatedRouteCost` rounded to 2 decimals
 - `breakdown.distanceKm` rounded to 1 decimal
 - `breakdown.pricePerKm` rounded to 2 decimals
+- `breakdown.pricingStrategy = DISTANCE_RATE_V1`
 
 ## 3. Stopover Price Calculation
 
@@ -88,35 +108,66 @@ For each selected stopover in the draft:
 - `POST /draft/publish` requires both `totalSeats` and `basePricePerSeat`.
 - Missing values on publish: `CAPACITY_AND_PRICING_REQUIRED` (400).
 
-## 5. What Is Persisted Today
+## 5. Recommendation and validation
+
+There are two distance-based pricing layers in the current system:
+
+1. Publish recommendation in the draft flow
+   - Used by `GET /draft/pricing/recommended`
+   - Produces `minPrice`, `recommendedPrice`, `maxPrice`, and a breakdown for the UI
+   - Uses the pricing module when config exists, or a built-in Baltic fallback when it does not
+
+2. Region pricing validation in the pricing module
+   - Uses pricing configuration with `minRatePerKm`, `recommendedRatePerKm`, `maxRatePerKm`, `minimumSeatPrice`, and a rounding strategy
+   - This is the stricter distance-based rule set used to validate whether a published ride price is acceptable for a region when such config exists
+   - If no pricing config exists for a route region, publish currently allows the ride without blocking on strict validation
+
+Alignment summary:
+
+- Both systems are distance-aware.
+- The publish recommendation translates distance into a suggested seat price.
+- The pricing module validates the selected seat price against an allowed range.
+- In practice, recommendation is guidance, while pricing config validation is enforcement when configured.
+
+## 6. What Is Persisted Today
 
 - On publish, ride row stores `basePricePerSeat`, `currency`, `totalSeats`, and `availableSeats`.
 - Stopover waypoints are published with `pricePerSeat` from the draft map when available.
 - Missing stopover pricing persists as `null`.
 
-## 6. Downstream Booking Price
+## 7. Downstream Booking Price
 
 Current booking logic uses:
 
-- `totalPrice = ride.basePricePerSeat * seatsBooked`
+- `subtotal = ride.basePricePerSeat * seatsBooked`
+- `serviceFee = subtotal * PLATFORM_FEE_PERCENT / 100` when configured, otherwise `0`
+- `luggageFee = 0`; luggage is capacity information and never a surcharge
+- `totalPrice = subtotal + serviceFee`
 
 If a waypoint has `pricePerSeat`, booking can switch to that waypoint price. In current publish flow, waypoint prices are not set, so booking usually uses `basePricePerSeat`.
 
-## 7. Worked Example
+## 8. Worked Example
 
-If selected route distance is `180 km` and `fuelPricePerLiter = 1.50` with `efficiency = 12`:
+If selected route distance is `180 km` and the active config is:
 
-- `fuelCost = 180 * 0.125 = 22.5`
-- `minPrice = round(22.5 * 0.8) = 18`
-- `recommendedPrice = round(22.5 * 1.5) = 34`
-- `maxPrice = round(22.5 * 2.5) = 56`
+- `minRatePerKm = 0.06`
+- `recommendedRatePerKm = 0.08`
+- `maxRatePerKm = 0.12`
+- `minimumSeatPrice = 3`
+- `roundingStrategy = NEAREST_EURO`
+
+Then:
+
+- `rawMin = 180 * 0.06 = 10.8` → `11`
+- `rawRecommended = 180 * 0.08 = 14.4` → `14`
+- `rawMax = 180 * 0.12 = 21.6` → `22`
 
 If driver sets `basePricePerSeat = 40` and a stopover is at `90 km` on a `180 km` route:
 
 - `distanceRatio = 90 / 180 = 0.5`
 - `stopover pricePerSeat = round(40 * 0.5 * 100) / 100 = 20.00`
 
-## 8. Source of Truth in Code
+## 9. Source of Truth in Code
 
 - `src/modules/publish-ride/draft-ride.service.ts`
 - `updateCapacity`, `getRecommendedPrice`, `getStopoversAlongRoute`, `updatePricing`, `publishRide`
@@ -124,7 +175,9 @@ If driver sets `basePricePerSeat = 40` and a stopover is at `90 km` on a `180 km
 - `updateCapacitySchema`, `updatePricingSchema`
 - `src/modules/publish-ride/publish-ride.routes.ts`
 - `GET /draft/pricing/recommended`, `PUT /draft/pricing`
-- `src/services/fuel-price.service.ts`
-- UK automatic fuel price retrieval and cache logic
+- `src/modules/pricing/pricing.calculator.ts`
+- Distance-based allowed-range calculation from pricing config
+- `src/modules/pricing/pricing.service.ts`
+- Config lookup, preview generation, and validation snapshots
 - `src/modules/ride-booking/ride-booking.service.ts`
-- Booking total calculation (`basePricePerSeat * seatsBooked`)
+- Booking total calculation (`subtotal + serviceFee`, with no luggage surcharge)

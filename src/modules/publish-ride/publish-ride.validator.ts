@@ -39,7 +39,7 @@ export const createRideSchema = z.object({
     // Capacity & Pricing
     totalSeats: z.number().int().min(1, 'At least 1 seat required').max(50, 'Maximum 50 seats'),
     basePricePerSeat: z.number().positive('Price must be positive'),
-    currency: z.string().default('EUR'),
+    currency: z.literal('EUR').default('EUR'),
 
     // Optional vehicle
     vehicleId: z.string().uuid().optional(),
@@ -117,6 +117,10 @@ const locationSchema = z.object({
     address: z.string().trim().min(1, 'Address is required'),
     lat: z.number().min(-90).max(90),
     lng: z.number().min(-180).max(180),
+    parentPlaceId: z.string().trim().min(1).optional(),
+    parentAddress: z.string().trim().min(1).optional(),
+    parentLat: z.number().min(-90).max(90).optional(),
+    parentLng: z.number().min(-180).max(180).optional(),
     estimatedArrivalTime: z.string().regex(
         /^([01]\d|2[0-3]):([0-5]\d)$/,
         'Time must be in HH:mm format'
@@ -159,6 +163,7 @@ export const updateCapacitySchema = z.object({
     maxLuggagePerPerson: z.number().int().min(0, 'Luggage count cannot be negative').max(10, 'Maximum 10 bags per person').default(2),
     backSeatOnly: z.boolean().default(false),
     noSmoking: z.boolean().default(false),
+    alcoholFreeRide: z.boolean().default(false),
     noBicycles: z.boolean().default(false),
     childSeatAvailable: z.boolean().default(false),
 });

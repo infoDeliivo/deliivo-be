@@ -35,6 +35,11 @@ jest.mock('../../services/fuel-price.service.js', () => ({
     getFuelPriceForCurrency: mockFuelPriceService.getFuelPriceForCurrency,
 }));
 
+jest.mock('../notification/notification.service.js', () => ({
+    __esModule: true,
+    createNotification: jest.fn().mockResolvedValue(undefined),
+}));
+
 import * as DraftRideService from './draft-ride.service';
 import { RideStatus } from '@prisma/client';
 
@@ -44,7 +49,7 @@ describe('publishRide', () => {
         mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' });
     });
 
-    it('stores stopover pricing on the draft when updatePricing is called', async () => {
+    it('does not persist caller-supplied stopover prices in distance-based pricing mode', async () => {
         const draft = {
             userId: 'driver-1',
             step: 10,
@@ -65,10 +70,7 @@ describe('publishRide', () => {
 
         expect(mockRedis.setex).toHaveBeenCalledTimes(1);
         const savedDraft = JSON.parse(mockRedis.setex.mock.calls[0][2] as string);
-        expect(savedDraft.stopoverPricingByPlaceId).toEqual({
-            'stop-a': 12.5,
-            'stop-b': 20,
-        });
+        expect(savedDraft.stopoverPricingByPlaceId).toBeUndefined();
         expect(savedDraft.basePricePerSeat).toBe(40);
     });
 
@@ -100,7 +102,7 @@ describe('publishRide', () => {
         expect(savedDraft.basePricePerSeat).toBe(45);
     });
 
-    it('persists stopover pricePerSeat from draft pricing by placeId and null when missing', async () => {
+    it('persists distance-derived stopover prices and null when missing', async () => {
         const draft = {
             userId: 'driver-1',
             step: 13,
@@ -121,12 +123,9 @@ describe('publishRide', () => {
             basePricePerSeat: 40,
             currency: 'GBP',
             stopovers: [
-                { placeId: 'stop-a', address: 'Stop A', lat: 12, lng: 22 },
+                { placeId: 'stop-a', address: 'Stop A', lat: 12, lng: 22, recommendedPrice: 18.75 },
                 { placeId: 'stop-b', address: 'Stop B', lat: 13, lng: 23 },
             ],
-            stopoverPricingByPlaceId: {
-                'stop-a': 18.75,
-            },
         };
 
         mockRedis.get.mockResolvedValue(JSON.stringify(draft));

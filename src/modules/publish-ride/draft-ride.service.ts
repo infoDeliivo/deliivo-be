@@ -24,9 +24,9 @@ import {
   StopoverPointGroup,
   RouteLocationSuggestionsResult,
 } from './publish-ride.types.js';
-import { getFuelPriceForCurrency } from '../../services/fuel-price.service.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
-import { validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { calculatePrice, PricingConfigData } from '../pricing/pricing.calculator.js';
 import { createNotification } from '../notification/notification.service.js';
 
 // ============================================================
@@ -40,6 +40,8 @@ const MAX_ORIGIN_PICKUP_POINTS = 3;
 const MAX_DESTINATION_DROPOFF_POINTS = 3;
 const MAX_GROUP_SUGGESTIONS = 3;
 const INTRACITY_ROUTE_THRESHOLD_METERS = 25000;
+const CITY_POINT_RADIUS_METERS = Number(process.env.PUBLISH_CITY_POINT_RADIUS_METERS || '15000');
+const STOPOVER_POINT_RADIUS_METERS = Number(process.env.PUBLISH_STOPOVER_POINT_RADIUS_METERS || '5000');
 
 // ============================================================
 //  CACHE KEY HELPERS
@@ -123,6 +125,7 @@ interface DraftRide {
   maxLuggagePerPerson?: number;
   backSeatOnly?: boolean;
   noSmoking?: boolean;
+  alcoholFreeRide?: boolean;
   noBicycles?: boolean;
   childSeatAvailable?: boolean;
 
@@ -227,6 +230,12 @@ export const updatePickups = async (
   }
 
   const draft = await getDraft(driverId);
+  if (draft.originLat == null || draft.originLng == null) throw new Error('ORIGIN_REQUIRED');
+  const invalidPickup = input.pickups?.find((pickup) => haversineDistance(
+    { lat: draft.originLat!, lng: draft.originLng! },
+    { lat: pickup.lat, lng: pickup.lng },
+  ) > CITY_POINT_RADIUS_METERS);
+  if (invalidPickup) throw new Error('PICKUP_OUTSIDE_CITY_RADIUS');
   draft.pickups = input.pickups;
   draft.step = Math.max(draft.step, 2);
   return saveDraft(draft);
@@ -265,6 +274,12 @@ export const updateDropoffs = async (
   }
 
   const draft = await getDraft(driverId);
+  if (draft.destinationLat == null || draft.destinationLng == null) throw new Error('DESTINATION_REQUIRED');
+  const invalidDropoff = input.dropoffs?.find((dropoff) => haversineDistance(
+    { lat: draft.destinationLat!, lng: draft.destinationLng! },
+    { lat: dropoff.lat, lng: dropoff.lng },
+  ) > CITY_POINT_RADIUS_METERS);
+  if (invalidDropoff) throw new Error('DROPOFF_OUTSIDE_CITY_RADIUS');
   draft.dropoffs = input.dropoffs;
   draft.step = Math.max(draft.step, 5);
   return saveDraft(draft);
@@ -900,6 +915,14 @@ export const updateStopovers = async (
   }
 
   const draft = await getDraft(driverId);
+  const invalidStopover = input.stopovers?.find((stopover) => {
+    if (stopover.parentLat == null || stopover.parentLng == null) return true;
+    return haversineDistance(
+      { lat: stopover.parentLat, lng: stopover.parentLng },
+      { lat: stopover.lat, lng: stopover.lng },
+    ) > STOPOVER_POINT_RADIUS_METERS;
+  });
+  if (invalidStopover) throw new Error('STOPOVER_OUTSIDE_CITY_RADIUS');
   draft.stopovers = input.stopovers;
   draft.step = Math.max(draft.step, 8);
   return saveDraft(draft);
@@ -940,6 +963,7 @@ export const updateCapacity = async (
   draft.maxLuggagePerPerson = input.maxLuggagePerPerson ?? 2;
   draft.backSeatOnly = input.backSeatOnly ?? false;
   draft.noSmoking = input.noSmoking ?? false;
+  draft.alcoholFreeRide = input.alcoholFreeRide ?? false;
   draft.noBicycles = input.noBicycles ?? false;
   draft.childSeatAvailable = input.childSeatAvailable ?? false;
   draft.step = Math.max(draft.step, 10);
@@ -951,7 +975,16 @@ export const updateCapacity = async (
 //  STEP 11: GET RECOMMENDED PRICE
 // ============================================================
 
-const DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER = Number(process.env.FUEL_EFFICIENCY_KM_PER_LITER || 12);
+const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = {
+  id: 'default-baltic-distance-pricing',
+  regionCode: 'BALTIC',
+  currency: 'EUR',
+  minRatePerKm: 0.06,
+  recommendedRatePerKm: 0.08,
+  maxRatePerKm: 0.12,
+  minimumSeatPrice: 3,
+  roundingStrategy: 'NEAREST_EURO',
+};
 
 export const getRecommendedPrice = async (
   driverId: string,
@@ -971,17 +1004,25 @@ export const getRecommendedPrice = async (
     throw new Error('ROUTE_REQUIRED_FOR_PRICING');
   }
 
-  const fuelContext = await getFuelPriceForCurrency(draft.currency || 'EUR');
-  const fuelEfficiency =
-    DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER > 0 ? DEFAULT_FUEL_EFFICIENCY_KM_PER_LITER : 12;
-  const pricePerKm = fuelContext.pricePerLiter / fuelEfficiency;
-
   const distanceKm = draft.routeDistanceMeters / 1000;
-  const fuelCost = distanceKm * pricePerKm;
+  let calculation;
+  let pricingConfigFallback = false;
 
-  const minPrice = Math.round(fuelCost * 0.8);
-  const recommendedPrice = Math.round(fuelCost * 1.5);
-  const maxPrice = Math.round(fuelCost * 2.5);
+  try {
+    calculation = await getPricePreview({ distanceKm });
+  } catch (error: any) {
+    if (error.message !== 'PRICING_CONFIG_NOT_FOUND') {
+      throw error;
+    }
+    calculation = calculatePrice(distanceKm, DEFAULT_DISTANCE_PRICING_CONFIG);
+    pricingConfigFallback = true;
+  }
+
+  const pricePerKm = calculation.recommendedRatePerKm;
+  const estimatedRouteCost = distanceKm * pricePerKm;
+  const minPrice = calculation.minAllowedPricePerSeat;
+  const recommendedPrice = calculation.recommendedPricePerSeat;
+  const maxPrice = calculation.maxAllowedPricePerSeat;
 
   // Calculate per-stopper pricing and arrival times if stopovers exist
   let stopoverPricing:
@@ -1032,19 +1073,18 @@ export const getRecommendedPrice = async (
     recommendedPrice,
     minPrice,
     maxPrice,
-    currency: draft.currency || 'EUR',
+    currency: calculation.currency || draft.currency || 'EUR',
     breakdown: {
-      fuelCost: Math.round(fuelCost * 100) / 100,
+      estimatedRouteCost: Math.round(estimatedRouteCost * 100) / 100,
       distanceKm: Math.round(distanceKm * 10) / 10,
       pricePerKm: Math.round(pricePerKm * 100) / 100,
-      fuelPricePerLiter: Math.round(fuelContext.pricePerLiter * 100) / 100,
-      fuelPriceCurrency: fuelContext.currency,
-      fuelCountryCode: fuelContext.countryCode,
-      fuelSource: fuelContext.sourceLabel,
-      fuelPriceEffectiveDate: fuelContext.effectiveDate,
-      efficiencyKmPerLiter: Math.round(fuelEfficiency * 100) / 100,
-      fuelPriceIsFallback: fuelContext.isFallback,
-      fuelPriceIsCached: fuelContext.isCached,
+      pricingStrategy: 'DISTANCE_RATE_V1',
+      regionCode: calculation.regionCode,
+      minimumSeatPrice: calculation.minimumSeatPrice,
+      recommendedRatePerKm: calculation.recommendedRatePerKm,
+      minRatePerKm: calculation.minRatePerKm,
+      maxRatePerKm: calculation.maxRatePerKm,
+      pricingConfigFallback,
     },
     stopoverPricing,
   };
@@ -1378,6 +1418,7 @@ export const publishRide = async (driverId: string) => {
         maxLuggagePerPerson: draft.maxLuggagePerPerson ?? 2,
         backSeatOnly: draft.backSeatOnly ?? false,
         noSmoking: draft.noSmoking ?? false,
+        alcoholFreeRide: draft.alcoholFreeRide ?? false,
         noBicycles: draft.noBicycles ?? false,
         childSeatAvailable: draft.childSeatAvailable ?? false,
 

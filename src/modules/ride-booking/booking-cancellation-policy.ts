@@ -1,8 +1,11 @@
-const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+
+export const isConfirmedCancellationWindowClosed = (departureAt: Date, now: Date): boolean =>
+    departureAt.getTime() - now.getTime() <= THREE_HOURS_MS;
 
 export const getRiderRefundPercent = (departureAt: Date, now: Date): number => {
     const timeToDepartureMs = departureAt.getTime() - now.getTime();
-    return timeToDepartureMs > TWENTY_FOUR_HOURS_MS ? 50 : 0;
+    return timeToDepartureMs > THREE_HOURS_MS ? 50 : 0;
 };
 
 export const getRiderRefundAmount = (totalPrice: number, percent: number): number => {

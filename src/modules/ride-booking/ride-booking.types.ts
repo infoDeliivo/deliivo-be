@@ -36,6 +36,8 @@ export interface CreateBookingInput {
     seatsBooked: number;
     luggageCount?: number;
     requiresChildSeat?: boolean;
+    travelingWithChildUnderTwo?: boolean;
+    bringingOwnChildSeat?: boolean;
     pickupWaypointId?: string;
     dropoffWaypointId?: string;
     notes?: string;
@@ -154,6 +156,8 @@ export interface PricePreviewInput {
     seatsBooked: number;
     luggageCount?: number;
     requiresChildSeat?: boolean;
+    travelingWithChildUnderTwo?: boolean;
+    bringingOwnChildSeat?: boolean;
     pickupWaypointId?: string;
     dropoffWaypointId?: string;
 }

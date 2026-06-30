@@ -94,6 +94,7 @@ export interface SearchRideResult {
     // Flags
     femaleOnly?: boolean;
     noSmoking?: boolean;
+    alcoholFreeRide?: boolean;
     noBicycles?: boolean;
     childSeatAvailable?: boolean;
 

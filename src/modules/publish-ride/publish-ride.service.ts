@@ -239,10 +239,28 @@ export const getRideById = async (driverId: string, rideId: string) => {
         throw new Error('RIDE_NOT_FOUND');
     }
 
+    const driverRatings = ride.bookings.length > 0
+        ? await prisma.rideRating.findMany({
+            where: {
+                raterId: driverId,
+                bookingId: { in: ride.bookings.map((booking) => booking.id) },
+            },
+            select: {
+                bookingId: true,
+                createdAt: true,
+            },
+        })
+        : [];
+    const ratingByBookingId = new Map(driverRatings.map((rating) => [rating.bookingId, rating]));
+
     // Enhance bookings with decision deadline info and stopover times
     const now = new Date();
     const enhancedBookings = ride.bookings.map((booking: any) => {
         const enhanced: any = { ...booking };
+        const existingDriverRating = ratingByBookingId.get(booking.id);
+
+        enhanced.hasDriverRatedPassenger = Boolean(existingDriverRating);
+        enhanced.driverRatedPassengerAt = existingDriverRating?.createdAt ?? null;
 
         // Add decision deadline info for DRIVER_PENDING bookings
         if (booking.status === 'DRIVER_PENDING' && booking.driverDecisionDeadlineAt) {
@@ -438,6 +456,20 @@ export const startRide = async (driverId: string, rideId: string) => {
 
     if (!ride) {
         throw new Error('RIDE_NOT_FOUND_OR_CANNOT_START');
+    }
+
+    if (process.env.ALLOW_RIDE_SIMULATION !== 'true') {
+        const [hours, minutes] = ride.departureTime.split(':').map(Number);
+        const departureAt = Date.UTC(
+            ride.departureDate.getUTCFullYear(),
+            ride.departureDate.getUTCMonth(),
+            ride.departureDate.getUTCDate(),
+            hours,
+            minutes,
+        );
+        if (Date.now() < departureAt - 10 * 60 * 1000) {
+            throw new Error('RIDE_TOO_EARLY');
+        }
     }
 
     return prisma.ride.update({

@@ -8,12 +8,22 @@ export const createBookingSchema = z.object({
     seatsBooked: z.number().int().min(1, 'At least 1 seat required').max(4, 'Maximum 4 seats per booking'),
     luggageCount: z.number().int().min(0).max(10).default(0),
     requiresChildSeat: z.boolean().optional().default(false),
+    travelingWithChildUnderTwo: z.boolean().optional().default(false),
+    bringingOwnChildSeat: z.boolean().optional().default(false),
     pickupWaypointId: z.string().uuid().optional(),
     dropoffWaypointId: z.string().uuid().optional(),
     notes: z.string().max(300, 'Notes must be 300 characters or less').optional(),
     responseExpiryOption: z.enum([
         'ONE_HOUR', 'THREE_HOURS', 'SIX_HOURS', 'TWELVE_HOURS', 'TWENTY_FOUR_HOURS', 'BEFORE_DEPARTURE',
     ]).optional(),
+}).superRefine((value, ctx) => {
+    if (value.travelingWithChildUnderTwo && !value.bringingOwnChildSeat) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'bringingOwnChildSeat must be true when travelingWithChildUnderTwo is true',
+            path: ['bringingOwnChildSeat'],
+        });
+    }
 });
 
 /* ================= WITHDRAW REASON SCHEMA ================= */
@@ -28,8 +38,18 @@ export const pricePreviewSchema = z.object({
     seatsBooked: z.number().int().min(1, 'At least 1 seat required').max(4, 'Maximum 4 seats per booking'),
     luggageCount: z.number().int().min(0).max(10).default(0),
     requiresChildSeat: z.boolean().optional().default(false),
+    travelingWithChildUnderTwo: z.boolean().optional().default(false),
+    bringingOwnChildSeat: z.boolean().optional().default(false),
     pickupWaypointId: z.string().uuid().optional(),
     dropoffWaypointId: z.string().uuid().optional(),
+}).superRefine((value, ctx) => {
+    if (value.travelingWithChildUnderTwo && !value.bringingOwnChildSeat) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'bringingOwnChildSeat must be true when travelingWithChildUnderTwo is true',
+            path: ['bringingOwnChildSeat'],
+        });
+    }
 });
 
 /* ================= BOOKING ID PARAM SCHEMA ================= */

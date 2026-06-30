@@ -295,13 +295,14 @@ model Ride {
   totalSeats       Int
   availableSeats   Int
   basePricePerSeat Float
-  currency         String @default("GBP")
+  currency         String @default("EUR")
 
   // Luggage & seating preferences
   maxLuggagePerPerson Int     @default(2)
   backSeatOnly        Boolean @default(false)
   femaleOnly          Boolean @default(false)
   noSmoking           Boolean @default(false)
+  alcoholFreeRide     Boolean @default(false)
   noBicycles          Boolean @default(false)
   childSeatAvailable  Boolean @default(false)
 

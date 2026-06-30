@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { optionalProtect, protect } from '../../middlewares/authMiddleware.js';
 import { validate } from '../../middlewares/validate.js';
 import * as controller from './search-ride.controller.js';
 import {
@@ -15,16 +16,18 @@ const router = Router();
 // Advanced search rides
 router.get(
   '/advanced',
+  optionalProtect,
   validate({ query: enhancedSearchRideQuerySchema }),
   controller.searchRidesAdvanced,
 );
 
 // Search rides
-router.get('/', validate({ query: searchRideQuerySchema }), controller.searchRides);
+router.get('/', optionalProtect, validate({ query: searchRideQuerySchema }), controller.searchRides);
 
 // Get recent searches
 router.get(
   '/user/recent',
+  protect,
   validate({ query: recentSearchesQuerySchema }),
   controller.getRecentSearches,
 );
@@ -32,11 +35,12 @@ router.get(
 // Get ride details
 router.get(
   '/:id',
+  optionalProtect,
   validate({ params: rideIdParamSchema, query: rideDetailsQuerySchema }),
   controller.getRideDetails,
 );
 
 // Create ride alert (notify when ride available)
-router.post('/notify', validate({ body: notifyRideSchema }), controller.createRideAlert);
+router.post('/notify', protect, validate({ body: notifyRideSchema }), controller.createRideAlert);
 
 export default router;

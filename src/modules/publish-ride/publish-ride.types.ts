@@ -108,6 +108,7 @@ export interface UpdateCapacityInput {
     maxLuggagePerPerson?: number;
     backSeatOnly?: boolean;
     noSmoking?: boolean;
+    alcoholFreeRide?: boolean;
     noBicycles?: boolean;
     childSeatAvailable?: boolean;
 }
@@ -189,6 +190,10 @@ export interface LocationInput {
     address: string;
     lat: number;
     lng: number;
+    parentPlaceId?: string;
+    parentAddress?: string;
+    parentLat?: number;
+    parentLng?: number;
     estimatedArrivalTime?: string; // HH:mm format
     recommendedPrice?: number;
     minPrice?: number;
@@ -239,17 +244,16 @@ export interface PriceRecommendation {
     maxPrice: number;
     currency: string;
     breakdown: {
-        fuelCost: number;
+        estimatedRouteCost: number;
         distanceKm: number;
         pricePerKm: number;
-        fuelPricePerLiter?: number;
-        fuelPriceCurrency?: string;
-        fuelCountryCode?: string;
-        fuelSource?: string;
-        fuelPriceEffectiveDate?: string | null;
-        efficiencyKmPerLiter?: number;
-        fuelPriceIsFallback?: boolean;
-        fuelPriceIsCached?: boolean;
+        pricingStrategy?: string;
+        regionCode?: string;
+        minimumSeatPrice?: number;
+        recommendedRatePerKm?: number;
+        minRatePerKm?: number;
+        maxRatePerKm?: number;
+        pricingConfigFallback?: boolean;
     };
 }
 

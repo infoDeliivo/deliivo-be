@@ -28,6 +28,7 @@ import {
 import {
     getRiderRefundAmount,
     getRiderRefundPercent,
+    isConfirmedCancellationWindowClosed,
     toMinorCurrencyUnits,
 } from './booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from './booking-payment-mode.js';
@@ -124,7 +125,6 @@ const CANCELLABLE_BOOKING_STATUSES: BookingStatus[] = [
 ];
 
 // Pricing configuration
-const LUGGAGE_FEE_PER_ITEM = 5.00; // £5 per luggage item
 const MAX_SEATS_PER_BOOKING = 4;
 
 /* ================= PRICE CALCULATION UTILITIES ================= */
@@ -135,7 +135,8 @@ const calculateBookingPrice = (
     currency: string = 'EUR'
 ): PriceBreakdown => {
     const subtotal = basePricePerSeat * seatsBooked;
-    const luggageFee = luggageCount * LUGGAGE_FEE_PER_ITEM;
+    // Luggage is a capacity declaration only; it is never a monetary surcharge.
+    const luggageFee = 0;
     const platformFeePct = parseFloat(process.env.PLATFORM_FEE_PERCENT ?? '0');
     const serviceFee = platformFeePct > 0 ? Math.round(subtotal * (platformFeePct / 100) * 100) / 100 : 0;
     const totalPrice = subtotal + luggageFee + serviceFee;
@@ -619,14 +620,20 @@ export const createBooking = async (
         seatsBooked,
         luggageCount = 0,
         requiresChildSeat = false,
+        travelingWithChildUnderTwo = false,
+        bringingOwnChildSeat = false,
         pickupWaypointId,
         dropoffWaypointId,
         notes,
         responseExpiryOption,
     } = input;
+    const childSeatDeclared = travelingWithChildUnderTwo || requiresChildSeat;
+    if (childSeatDeclared && !bringingOwnChildSeat) {
+        throw new Error('CHILD_SEAT_ACK_REQUIRED');
+    }
     const normalizedNotes = [
         notes?.trim() || '',
-        requiresChildSeat ? 'Child seat required for this booking.' : '',
+        childSeatDeclared ? 'Rider is travelling with a child aged 2 or younger and will bring a child seat.' : '',
     ]
         .filter(Boolean)
         .join('\n')
@@ -703,10 +710,6 @@ export const createBooking = async (
             if (passenger?.gender !== 'FEMALE') {
                 throw new Error('FEMALE_ONLY_RIDE');
             }
-        }
-
-        if (requiresChildSeat && !ride.childSeatAvailable) {
-            throw new Error('CHILD_SEAT_REQUIRED');
         }
 
         let pickupRef: SegmentPointRef;
@@ -1254,6 +1257,13 @@ export const cancelBooking = async (
         && booking.driverDecisionDeadlineAt < new Date()
         && booking.status === BookingStatus.DRIVER_PENDING;
 
+    if (
+        booking.status === BookingStatus.CONFIRMED
+        && isConfirmedCancellationWindowClosed(departureAt, new Date())
+    ) {
+        throw new Error('CANCELLATION_WINDOW_CLOSED');
+    }
+
     const isPaymentCaptured = Boolean(booking.paymentCapturedAt && booking.stripePaymentIntentId);
     
     // If deadline expired, give 100% refund regardless of time
@@ -1541,9 +1551,16 @@ export const getBookingPricePreview = async (
         seatsBooked,
         luggageCount = 0,
         requiresChildSeat = false,
+        travelingWithChildUnderTwo = false,
+        bringingOwnChildSeat = false,
         pickupWaypointId,
         dropoffWaypointId,
     } = input;
+    const childSeatDeclared = travelingWithChildUnderTwo || requiresChildSeat;
+
+    if (childSeatDeclared && !bringingOwnChildSeat) {
+        throw new Error('CHILD_SEAT_ACK_REQUIRED');
+    }
 
     const passenger = await prisma.user.findUnique({
         where: { id: passengerId },
@@ -1572,10 +1589,6 @@ export const getBookingPricePreview = async (
 
     if (ride.driverId === passengerId) {
         throw new Error('CANNOT_BOOK_OWN_RIDE');
-    }
-
-    if (requiresChildSeat && !ride.childSeatAvailable) {
-        throw new Error('CHILD_SEAT_REQUIRED');
     }
 
     // Validate seat count (min/max) and availability

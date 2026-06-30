@@ -11,7 +11,7 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:worker\" \"npm run dev:sms-worker\"",
     "test:twilio": "node --loader ts-node/esm src/scripts/test-twilio-integration.ts",
     "db:seed": "node --loader ts-node/esm src/scripts/seed.ts",
-    "build": "tsc && prisma generate",
+    "build": "prisma generate && tsc",
     "openapi:lint": "redocly lint docs/api/openapi/openapi.yaml",
     "openapi:bundle": "redocly bundle docs/api/openapi/openapi.yaml -o docs/api/openapi/dist/openapi.json --ext json",
     "openapi:coverage": "node --loader ts-node/esm src/scripts/check-openapi-coverage.ts",

@@ -279,14 +279,17 @@
     "/api/v1/notifications": {
       "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications"
     },
-    "/api/v1/notifications/read": {
-      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1read"
+    "/api/v1/notifications/mark-read": {
+      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1mark-read"
     },
     "/api/v1/notifications/unread-count": {
       "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1unread-count"
     },
-    "/api/v1/notifications/devices/register": {
-      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1devices~1register"
+    "/api/v1/notifications/device-token": {
+      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1device-token"
+    },
+    "/api/v1/notifications/{notificationId}": {
+      "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1{notificationId}"
     },
     "/api/v1/notifications/devices/{tokenId}": {
       "$ref": "./paths/notifications.yaml#/paths/~1api~1v1~1notifications~1devices~1{tokenId}"

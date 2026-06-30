@@ -40,6 +40,37 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const deleteNotification = async (req: AuthRequest, res: Response) => {
+    try {
+        const notificationId = req.params.notificationId as string;
+        const result = await NotificationService.deleteNotification(req.user.id, notificationId);
+        return sendSuccess(res, {
+            message: 'Notification removed successfully',
+            data: result,
+        });
+    } catch {
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to remove notification',
+        });
+    }
+};
+
+export const clearNotifications = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await NotificationService.clearNotifications(req.user.id);
+        return sendSuccess(res, {
+            message: 'Notifications cleared successfully',
+            data: result,
+        });
+    } catch {
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to clear notifications',
+        });
+    }
+};
+
 /* ================= UNREAD COUNT ================= */
 export const getUnreadCount = async (req: AuthRequest, res: Response) => {
     try {

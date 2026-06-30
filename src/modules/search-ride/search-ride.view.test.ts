@@ -5,6 +5,9 @@ const mockPrisma = {
     vehicle: {
         findFirst: jest.fn(),
     },
+    user: {
+        findUnique: jest.fn(),
+    },
 };
 
 jest.mock('../../config/index.js', () => ({
@@ -19,6 +22,7 @@ describe('getRideViewByToken', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockPrisma.vehicle.findFirst.mockResolvedValue(null);
+        mockPrisma.user.findUnique.mockResolvedValue(null);
     });
 
     it('returns the same B -> C rider-facing view selected from search', async () => {
@@ -43,7 +47,15 @@ describe('getRideViewByToken', () => {
             currency: 'GBP',
             status: 'PUBLISHED',
             notes: null,
-            bookings: [],
+            bookings: [{
+                id: 'booking-1',
+                passengerId: 'passenger-1',
+                seatsBooked: 1,
+                status: 'CONFIRMED',
+                pickupWaypointId: null,
+                dropoffWaypointId: null,
+                passenger: { id: 'passenger-1', name: 'Private Rider', phone: '+3720000000' },
+            }],
             driver: { id: 'driver-1', name: 'Driver', avatarUrl: null },
             waypoints: [
                 {
@@ -84,12 +96,30 @@ describe('getRideViewByToken', () => {
             originAddress: 'B',
             destinationAddress: 'C',
             basePricePerSeat: 10,
+            bookings: [],
         });
+        expect(mockPrisma.ride.findFirst.mock.calls[0][0].where.femaleOnly).toBe(false);
     });
 
     it('rejects an invalid token before fetching ride data', async () => {
         await expect(getRideViewByToken('bad.token')).rejects.toThrow('INVALID_VIEW_TOKEN');
         expect(mockPrisma.ride.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('does not add the women-only exclusion for female viewers', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({ gender: 'FEMALE' });
+        mockPrisma.ride.findFirst.mockResolvedValue(null);
+        const token = encodeViewToken({
+            v: 1,
+            rideId: 'ride-1',
+            mode: 'segment',
+            pickupRef: 'origin',
+            dropRef: 'destination',
+        });
+
+        await getRideViewByToken(token, 'female-viewer');
+
+        expect(mockPrisma.ride.findFirst.mock.calls[0][0].where.femaleOnly).toBeUndefined();
     });
 });
 

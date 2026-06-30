@@ -12,7 +12,7 @@
 #   CMD ["node", "dist/server.js"]          <- API (single process)
 #   CMD ["node", "dist/modules/mail/mail.worker.js"]  <- mail worker
 #
-# Migration is idempotent — it is safe to run on every container start.
+# Migration is idempotent â€” it is safe to run on every container start.
 # If nothing is pending it completes in < 1 second.
 
 set -e

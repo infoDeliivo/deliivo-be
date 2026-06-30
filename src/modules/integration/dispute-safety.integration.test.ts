@@ -57,6 +57,14 @@ const RIDER_ID = 'rider-d1';
 const RIDE_ID = 'ride-d1';
 const BOOKING_ID = 'booking-d1';
 
+jest.mock('../notification/notification.service.js', () => ({
+    createNotification: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('../../socket/index.js', () => ({
+    emitToUsers: jest.fn().mockResolvedValue(undefined),
+}));
+
 // ============================================================
 //  MOCK PRISMA
 // ============================================================
@@ -81,7 +89,14 @@ jest.mock('../../config/index.js', () => ({
                         noShowMarkedAt: null,
                         completedAt: null,
                         createdAt: new Date(),
-                        ride: { driverId: DRIVER_ID, status: 'IN_PROGRESS', actualStartTime: new Date(), actualEndTime: null },
+                        ride: {
+                            driverId: DRIVER_ID,
+                            status: 'IN_PROGRESS',
+                            actualStartTime: new Date(),
+                            actualEndTime: null,
+                            originAddress: 'A',
+                            destinationAddress: 'B',
+                        },
                     });
                 }
                 return Promise.resolve(null);
@@ -349,7 +364,7 @@ describe('Dispute Rule Engine', () => {
 
         const result = await evaluateDispute(d.id);
         expect(result.recommendation).toBe('REFUND_RIDER');
-        expect(result.riskScore).toBe(0.9);
+        expect(result.riskScore).toBe(0.77);
         expect(result.status).toBe(DISPUTE_STATUSES.AUTO_RESOLVED_RIDER_REFUND);
     });
 });

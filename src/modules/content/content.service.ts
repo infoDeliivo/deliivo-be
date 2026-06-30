@@ -124,32 +124,43 @@ async function ensureContentTables() {
 
 export async function listPublishedPosts(locale?: string) {
     const normalizedLocale = locale ? normalizeLocale(locale) : undefined;
-    try {
-        const posts = await prisma.contentPost.findMany({
-            where: {
-                status: 'PUBLISHED',
-                ...(normalizedLocale ? { locale: normalizedLocale } : {}),
-            },
-            orderBy: [
-                { publishedAt: 'desc' },
-                { updatedAt: 'desc' },
-            ],
-        });
+    const loadPosts = async (targetLocale?: string) => prisma.contentPost.findMany({
+        where: {
+            status: 'PUBLISHED',
+            ...(targetLocale ? { locale: targetLocale } : {}),
+        },
+        orderBy: [
+            { publishedAt: 'desc' },
+            { updatedAt: 'desc' },
+        ],
+    });
+    const resolvePosts = async () => {
+        if (!normalizedLocale) {
+            return loadPosts();
+        }
 
+        const localizedPosts = await loadPosts(normalizedLocale);
+        if (localizedPosts.length > 0) {
+            return localizedPosts;
+        }
+
+        if (normalizedLocale !== 'en') {
+            const englishPosts = await loadPosts('en');
+            if (englishPosts.length > 0) {
+                return englishPosts;
+            }
+        }
+
+        return loadPosts();
+    };
+
+    try {
+        const posts = await resolvePosts();
         return posts.map(toContentPost);
     } catch (error) {
         if (isMissingContentTableError(error)) {
             await ensureContentTables();
-            const posts = await prisma.contentPost.findMany({
-                where: {
-                    status: 'PUBLISHED',
-                    ...(normalizedLocale ? { locale: normalizedLocale } : {}),
-                },
-                orderBy: [
-                    { publishedAt: 'desc' },
-                    { updatedAt: 'desc' },
-                ],
-            });
+            const posts = await resolvePosts();
             return posts.map(toContentPost);
         }
         throw error;
@@ -158,26 +169,40 @@ export async function listPublishedPosts(locale?: string) {
 
 export async function getPublishedPostBySlug(slug: string, locale?: string) {
     const normalizedLocale = locale ? normalizeLocale(locale) : undefined;
-    try {
-        const post = await prisma.contentPost.findFirst({
-            where: {
-                slug,
-                status: 'PUBLISHED',
-                ...(normalizedLocale ? { locale: normalizedLocale } : {}),
-            },
-        });
+    const loadPost = async (targetLocale?: string) => prisma.contentPost.findFirst({
+        where: {
+            slug,
+            status: 'PUBLISHED',
+            ...(targetLocale ? { locale: targetLocale } : {}),
+        },
+    });
+    const resolvePost = async () => {
+        if (!normalizedLocale) {
+            return loadPost();
+        }
 
+        const localizedPost = await loadPost(normalizedLocale);
+        if (localizedPost) {
+            return localizedPost;
+        }
+
+        if (normalizedLocale !== 'en') {
+            const englishPost = await loadPost('en');
+            if (englishPost) {
+                return englishPost;
+            }
+        }
+
+        return loadPost();
+    };
+
+    try {
+        const post = await resolvePost();
         return post ? toContentPost(post) : null;
     } catch (error) {
         if (isMissingContentTableError(error)) {
             await ensureContentTables();
-            const post = await prisma.contentPost.findFirst({
-                where: {
-                    slug,
-                    status: 'PUBLISHED',
-                    ...(normalizedLocale ? { locale: normalizedLocale } : {}),
-                },
-            });
+            const post = await resolvePost();
             return post ? toContentPost(post) : null;
         }
         throw error;

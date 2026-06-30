@@ -1,0 +1,2 @@
+ALTER TABLE "Ride"
+ADD COLUMN "alcoholFreeRide" BOOLEAN NOT NULL DEFAULT false;

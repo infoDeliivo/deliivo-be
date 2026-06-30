@@ -207,6 +207,18 @@ const mapRideBookings = (bookings: RideBookingWithRider[]) =>
     passenger: booking.passenger,
   }));
 
+const mapVisibleRideBookings = (
+  bookings: RideBookingWithRider[],
+  driverId: string,
+  viewerId?: string,
+) => {
+  if (!viewerId) return [];
+  const visibleBookings = viewerId === driverId
+    ? bookings
+    : bookings.filter((booking) => booking.passengerId === viewerId);
+  return mapRideBookings(visibleBookings);
+};
+
 const mapRideVehicle = (vehicle: RideVehicleDetails | null) =>
   vehicle
     ? {
@@ -291,8 +303,13 @@ const buildFullRideSnapshot = (ride: RideCoreLike, waypoints?: WaypointInfo[]): 
   waypoints,
 });
 
-const rideDetailsVisibilityWhere = (rideId: string, viewerId?: string): Prisma.RideWhereInput => ({
+const rideDetailsVisibilityWhere = (
+  rideId: string,
+  viewerId?: string,
+  canViewFemaleOnly = false,
+): Prisma.RideWhereInput => ({
   id: rideId,
+  ...(!canViewFemaleOnly ? { femaleOnly: false } : {}),
   OR: [
     { status: RideStatus.PUBLISHED },
     ...(viewerId
@@ -310,6 +327,15 @@ const rideDetailsVisibilityWhere = (rideId: string, viewerId?: string): Prisma.R
       : []),
   ],
 });
+
+const canViewerAccessFemaleOnlyRides = async (viewerId?: string) => {
+  if (!viewerId) return false;
+  const viewer = await prisma.user.findUnique({
+    where: { id: viewerId },
+    select: { gender: true },
+  });
+  return viewer?.gender === 'FEMALE';
+};
 
 /* ================= BASIC SEARCH RIDES ================= */
 export const searchRides = async (
@@ -503,7 +529,7 @@ export const searchRides = async (
             ? (vehicleById.get(ride.vehicleId) ?? null)
             : (fallbackVehicleByDriverId.get(ride.driverId) ?? null),
         ),
-        bookings: mapRideBookings(ride.bookings),
+        bookings: mapVisibleRideBookings(ride.bookings, ride.driverId, excludeDriverId),
         originPlaceId: ride.originPlaceId,
         originAddress: ride.originAddress,
         originLat: ride.originLat,
@@ -523,6 +549,7 @@ export const searchRides = async (
         status: ride.status,
         femaleOnly: ride.femaleOnly,
         noSmoking: ride.noSmoking,
+        alcoholFreeRide: ride.alcoholFreeRide,
         noBicycles: ride.noBicycles,
         childSeatAvailable: ride.childSeatAvailable,
         distanceFromOrigin,
@@ -571,8 +598,9 @@ const getOrderBy = (sortBy: string, sortOrder: string): Prisma.RideOrderByWithRe
 
 /* ================= GET RIDE DETAILS ================= */
 export const getRideDetails = async (rideId: string, viewerId?: string): Promise<RideDetailsResponse | null> => {
+  const canViewFemaleOnly = await canViewerAccessFemaleOnlyRides(viewerId);
   const ride = await prisma.ride.findFirst({
-    where: rideDetailsVisibilityWhere(rideId, viewerId),
+    where: rideDetailsVisibilityWhere(rideId, viewerId, canViewFemaleOnly),
     include: {
       driver: {
         select: {
@@ -643,7 +671,7 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
       avatarUrl: ride.driver.avatarUrl,
     },
     vehicle: mapRideVehicle(vehicle),
-    bookings: mapRideBookings(ride.bookings),
+    bookings: mapVisibleRideBookings(ride.bookings, ride.driverId, viewerId),
     originPlaceId: ride.originPlaceId,
     originAddress: ride.originAddress,
     originLat: ride.originLat,
@@ -665,6 +693,7 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
     notes: ride.notes,
     femaleOnly: ride.femaleOnly,
     noSmoking: ride.noSmoking,
+    alcoholFreeRide: ride.alcoholFreeRide,
     noBicycles: ride.noBicycles,
     childSeatAvailable: ride.childSeatAvailable,
     waypoints,
@@ -680,9 +709,10 @@ export const getRideViewByToken = async (
   viewerId?: string,
 ): Promise<RideDetailsResponse | null> => {
   const payload = decodeViewToken(viewToken);
+  const canViewFemaleOnly = await canViewerAccessFemaleOnlyRides(viewerId);
 
   const ride = await prisma.ride.findFirst({
-    where: rideDetailsVisibilityWhere(payload.rideId, viewerId),
+    where: rideDetailsVisibilityWhere(payload.rideId, viewerId, canViewFemaleOnly),
     include: {
       driver: {
         select: {
@@ -772,7 +802,7 @@ export const getRideViewByToken = async (
     driverId: ride.driverId,
     driver: ride.driver,
     vehicle: mapRideVehicle(vehicle),
-    bookings: mapRideBookings(ride.bookings),
+    bookings: mapVisibleRideBookings(ride.bookings, ride.driverId, viewerId),
     originPlaceId: riderView.originPlaceId,
     originAddress: riderView.originAddress,
     originLat: riderView.originLat,
@@ -792,6 +822,11 @@ export const getRideViewByToken = async (
     currency: ride.currency,
     status: ride.status,
     notes: ride.notes,
+    femaleOnly: ride.femaleOnly,
+    noSmoking: ride.noSmoking,
+    alcoholFreeRide: ride.alcoholFreeRide,
+    noBicycles: ride.noBicycles,
+    childSeatAvailable: ride.childSeatAvailable,
     waypoints,
     isSegmentView: true,
     segmentId: viewToken,
@@ -876,6 +911,7 @@ export const searchRidesAdvanced = async (
   const {
     departureDate,
     maxPrice,
+    femaleOnly,
     sortBy = 'departure',
     sortOrder = 'asc',
     userRoutePolyline,
@@ -948,7 +984,9 @@ export const searchRidesAdvanced = async (
     : null;
   const isAdvViewerFemale = advViewerGender === 'FEMALE';
 
-  if (!isAdvViewerFemale) {
+  if (isAdvViewerFemale && femaleOnly) {
+    whereClause.femaleOnly = true;
+  } else if (!isAdvViewerFemale) {
     whereClause.femaleOnly = false;
   }
 
@@ -1193,7 +1231,7 @@ export const searchRidesAdvanced = async (
           ? (vehicleById.get(ride.vehicleId) ?? null)
           : (fallbackVehicleByDriverId.get(ride.driverId) ?? null),
       ),
-      bookings: mapRideBookings(ride.bookings),
+      bookings: mapVisibleRideBookings(ride.bookings, ride.driverId, excludeDriverId),
       originPlaceId: riderView?.originPlaceId ?? ride.originPlaceId,
       originAddress: riderView?.originAddress ?? ride.originAddress,
       originLat: riderView?.originLat ?? ride.originLat,
@@ -1213,6 +1251,7 @@ export const searchRidesAdvanced = async (
       status: ride.status,
       femaleOnly: ride.femaleOnly,
       noSmoking: ride.noSmoking,
+      alcoholFreeRide: ride.alcoholFreeRide,
       noBicycles: ride.noBicycles,
       childSeatAvailable: ride.childSeatAvailable,
       distanceFromOrigin: haversine(riderOrigin, { lat: ride.originLat, lng: ride.originLng }),

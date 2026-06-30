@@ -52,9 +52,20 @@
             "$ref": "../components/parameters/common.yaml#/LimitQuery"
           }
         ]
+      },
+      "delete": {
+        "operationId": "notificationsClearAll",
+        "summary": "Clear all notifications for the current user",
+        "tags": ["Notifications"],
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Notifications cleared" },
+          "401": { "$ref": "../components/responses/errors.yaml#/Unauthorized" },
+          "500": { "$ref": "../components/responses/errors.yaml#/ServerError" }
+        }
       }
     },
-    "/api/v1/notifications/read": {
+    "/api/v1/notifications/mark-read": {
       "post": {
         "operationId": "notificationsPostRead",
         "summary": "POST notifications/read",
@@ -170,7 +181,7 @@
         }
       }
     },
-    "/api/v1/notifications/devices/register": {
+    "/api/v1/notifications/device-token": {
       "post": {
         "operationId": "notificationsPostDevicesRegister",
         "summary": "POST notifications/devices/register",
@@ -236,6 +247,28 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/v1/notifications/{notificationId}": {
+      "delete": {
+        "operationId": "notificationsDeleteOne",
+        "summary": "Remove one notification owned by the current user",
+        "tags": ["Notifications"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "notificationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Notification removed" },
+          "400": { "$ref": "../components/responses/errors.yaml#/BadRequest" },
+          "401": { "$ref": "../components/responses/errors.yaml#/Unauthorized" },
+          "500": { "$ref": "../components/responses/errors.yaml#/ServerError" }
         }
       }
     },

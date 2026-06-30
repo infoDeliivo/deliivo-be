@@ -206,10 +206,10 @@ export const startRide = async (driverId: string, rideId: string, input: RideEve
     }
 
     const allowRideSimulation = process.env.ALLOW_RIDE_SIMULATION === 'true';
-    const isProd = process.env.NODE_ENV === 'production';
-    if (isProd && !allowRideSimulation) {
+    if (!allowRideSimulation) {
         const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
-        if (Date.now() < departureAt.getTime() && !(isManualOverrideEnabled() && input.overrideReason?.trim())) {
+        const earliestStartAt = departureAt.getTime() - 10 * 60 * 1000;
+        if (Date.now() < earliestStartAt) {
             throw new Error('RIDE_TOO_EARLY');
         }
     }
@@ -1125,7 +1125,7 @@ export const getLatestLocation = async (rideId: string) => {
 
 export const syncOfflineActions = async (
     actorId: string,
-    actions: Array<{ actionId: string; eventType: string; rideId: string; bookingId?: string; lat?: number; lng?: number; clientTimestamp: string }>
+    actions: Array<{ actionId: string; eventType: string; rideId: string; bookingId?: string; lat?: number; lng?: number; clientTimestamp: string; overrideReason?: string }>
 ) => {
     const results: Array<{ actionId: string; status: 'processed' | 'duplicate' | 'error'; error?: string }> = [];
 
@@ -1140,17 +1140,109 @@ export const syncOfflineActions = async (
         }
 
         try {
-            await prisma.rideEvent.create({
+            const ride = await prisma.ride.findUnique({ where: { id: action.rideId }, select: { driverId: true } });
+            const booking = action.bookingId
+                ? await prisma.rideBooking.findUnique({ where: { id: action.bookingId }, select: { passengerId: true, rideId: true } })
+                : null;
+            if (!ride || (booking && booking.rideId !== action.rideId)) throw new Error('RIDE_OR_BOOKING_NOT_FOUND');
+            const actorType = ride.driverId === actorId ? 'DRIVER' : booking?.passengerId === actorId ? 'RIDER' : null;
+            if (!actorType) throw new Error('FORBIDDEN_ACTOR');
+
+            if (!action.eventType.startsWith('MANUAL_')) {
+                await prisma.rideEvent.create({
+                    data: {
+                        rideId: action.rideId,
+                        bookingId: action.bookingId ?? null,
+                        actionId: action.actionId,
+                        eventType: action.eventType,
+                        actorType,
+                        actorId,
+                        lat: action.lat ?? null,
+                        lng: action.lng ?? null,
+                        clientTimestamp: new Date(action.clientTimestamp),
+                    },
+                });
+                results.push({ actionId: action.actionId, status: 'processed' });
+                continue;
+            }
+
+            const overrideReason = action.overrideReason || 'Manual recovery requested';
+
+            const eventInput: RideEventInput = {
+                actionId: action.actionId,
+                clientTimestamp: action.clientTimestamp,
+                lat: action.lat,
+                lng: action.lng,
+                overrideReason,
+            };
+            let autoRepaired = false;
+            let recoveryError: string | null = null;
+
+            try {
+                if (action.eventType === 'MANUAL_START_RIDE' && actorType === 'DRIVER') {
+                    await startRide(actorId, action.rideId, eventInput);
+                    autoRepaired = true;
+                } else if (action.eventType === 'MANUAL_FINISH_RIDE' && actorType === 'DRIVER') {
+                    await finishRide(actorId, action.rideId, eventInput);
+                    autoRepaired = true;
+                } else if (action.eventType === 'MANUAL_DRIVER_ARRIVED' && actorType === 'DRIVER' && action.bookingId) {
+                    await driverArrived(actorId, { ...eventInput, bookingId: action.bookingId });
+                    autoRepaired = true;
+                } else if (action.eventType === 'MANUAL_PICKUP_APPROVAL' && actorType === 'DRIVER' && action.bookingId) {
+                    await verifyPickupAndBoard(actorId, action.bookingId, '000000', eventInput);
+                    autoRepaired = true;
+                } else if (action.eventType === 'MANUAL_CONFIRM_DROPOFF' && actorType === 'DRIVER' && action.bookingId) {
+                    await confirmDropoff(actorId, { ...eventInput, bookingId: action.bookingId });
+                    autoRepaired = true;
+                }
+            } catch (error) {
+                recoveryError = error instanceof Error ? error.message : String(error);
+            }
+
+            if (!autoRepaired) {
+                await prisma.rideEvent.create({
+                    data: {
+                        rideId: action.rideId,
+                        bookingId: action.bookingId ?? null,
+                        actionId: action.actionId,
+                        eventType: action.eventType,
+                        actorType,
+                        actorId,
+                        lat: action.lat ?? null,
+                        lng: action.lng ?? null,
+                        clientTimestamp: new Date(action.clientTimestamp),
+                        validationStatus: 'WARNING',
+                        metadataJson: {
+                            source: 'OFFLINE_MANUAL_RECOVERY',
+                            overrideReason,
+                            requiresReconciliation: true,
+                            recoveryError,
+                        },
+                    },
+                });
+            }
+            await prisma.reconciliationIssue.create({
                 data: {
-                    rideId: action.rideId,
                     bookingId: action.bookingId ?? null,
-                    actionId: action.actionId,
-                    eventType: action.eventType,
-                    actorType: 'DRIVER',
-                    actorId,
-                    lat: action.lat ?? null,
-                    lng: action.lng ?? null,
-                    clientTimestamp: new Date(action.clientTimestamp),
+                    issueType: 'OFFLINE_MANUAL_RECOVERY',
+                    severity: autoRepaired ? 'LOW' : 'HIGH',
+                    description: `${actorType} queued ${action.eventType} while the normal server path was unavailable.`,
+                    internalState: autoRepaired ? 'AUTO_RECONCILED' : 'PENDING_RECONCILIATION',
+                    autoRepaired,
+                    repairedAt: autoRepaired ? new Date() : null,
+                    resolvedAt: autoRepaired ? new Date() : null,
+                    resolution: autoRepaired ? 'Queued recovery action was applied automatically.' : null,
+                    metadataJson: {
+                        actionId: action.actionId,
+                        rideId: action.rideId,
+                        bookingId: action.bookingId ?? null,
+                        actorId,
+                        actorType,
+                        eventType: action.eventType,
+                        overrideReason,
+                        clientTimestamp: action.clientTimestamp,
+                        recoveryError,
+                    },
                 },
             });
             results.push({ actionId: action.actionId, status: 'processed' });

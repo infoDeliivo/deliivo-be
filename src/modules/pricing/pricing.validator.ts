@@ -18,7 +18,7 @@ export const pricingConfigIdSchema = z.object({
 
 const pricingConfigBaseSchema = z.object({
     regionCode: z.string().trim().min(2).max(32),
-    currency: z.string().trim().min(3).max(3),
+    currency: z.literal('EUR'),
     minRatePerKm: z.number().positive(),
     recommendedRatePerKm: z.number().positive(),
     maxRatePerKm: z.number().positive(),
