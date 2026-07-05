@@ -8,9 +8,46 @@ Status key:
 - `[x]` completed
 - `[!]` blocked or needs product clarification
 
-Last updated: 2026-06-30
+Last updated: 2026-07-03
+
+## Updated Workbook Review (2026-07-03)
+
+Source: `WebAap Testing.xlsx` from Downloads. The workbook now includes Rohan and Iti review sheets in addition to Rajesh, Akash, and Puja.
+
+### Confirmed pending
+
+- `[ ]` Preserve the publish wizard state when the driver leaves the flow to add or manage a vehicle, then restore the same step after returning.
+- `[ ]` Redirect already-authenticated users away from sign-in and sign-up pages, including browser back navigation.
+- `[ ]` Remove the duplicate publish progress indicator and retain one clear stepper.
+- `[ ]` Review the desktop publish layout so route fields and map use horizontal space without changing the compact mobile flow.
+- `[ ]` Replace footer social text abbreviations with accessible icons and use the configured Deliivo URLs for every network.
+- `[ ]` Simplify guest navigation so account-only destinations such as notifications and your rides are not presented as public links.
+
+### Runtime verification required
+
+- `[/]` Reproduce the reported repeated calls to bookings, published rides, notifications, unread count, and profile APIs against the current build. Notification fallback polling is currently 20 seconds, not one second, but reconnect/focus/socket events may still cause bursts.
+- `[ ]` Re-test vehicle image upload against deployed storage and API configuration.
+- `[ ]` Re-test driver public profile ratings, preferences, and translated labels using a real driver/rider pair.
+- `[ ]` Audit translated copy and shared headers on auth, blog, rides, publish, vehicle, and notification routes.
+
+### Product or design decision required
+
+- `[!]` Adding a full ride-search form to the homepage conflicts with the earlier decision to remove the "Find a ride fast" card. Reconsider only with explicit approval.
+- `[!]` Do not add the redesign's driver counts, ratings, completion rates, city counts, or response-time claims unless production data supports them.
+- `[!]` Treat the proposed homepage illustration, section ordering, shorter benefit copy, and dual rider/driver CTA as design options rather than defects.
+- `[!]` Do not perform a wholesale migration to Shadcn/UI, Redux, React Hook Form, Zod, TanStack Query, or Axios solely from workbook feedback. Address measured validation and request-lifecycle problems directly.
+
+### Existing decisions retained
+
+- `[x]` Keep pickup/drop-off selections bounded as previously agreed instead of allowing unlimited points.
+- `[x]` Keep DOB required because age eligibility is enforced; do not make it optional to match stale workbook copy.
+- `[x]` Keep guest ride alerts hidden for now.
+- `[x]` Keep the profile social section removed; social links belong in the footer.
+- `[x]` Keep the three-hour cancellation policy and women-only eligibility rules already implemented.
 
 ## Completed
+
+- `[x]` Unstarted rides now move to `READY_TO_START` at departure and close after the two-hour grace period: unbooked rides become `EXPIRED`, while rides with active bookings become `CANCELLED` with refund metadata and reconciliation records.
 
 - `[x]` Sign-up phone flow now requires country code.
 - `[x]` Guest users can browse ride listings before login.

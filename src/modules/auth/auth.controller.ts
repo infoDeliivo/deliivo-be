@@ -11,6 +11,7 @@ import {
   logoutService,
   loginService,
   requestOtpService,
+  normalizeAuthIdentifier,
 } from './auth.service.js';
 import { sendMail } from '../mail/mail.service.js';
 import { signupOtpTemplate, loginOtpTemplate, resetOtpTemplate } from '../mail/mail.templates.js';
@@ -59,14 +60,15 @@ export const signup = async (req: Request, res: Response) => {
       email?: string;
       phone?: string;
     };
-    const identifier = method === 'email' ? email : phone;
+    const rawIdentifier = method === 'email' ? email : phone;
 
-    if (!identifier) {
+    if (!rawIdentifier) {
       return sendError(res, {
         message: 'Identifier is required',
         status: HttpStatus.BAD_REQUEST,
       });
     }
+    const identifier = normalizeAuthIdentifier(method, rawIdentifier);
 
     const result = await signupService(method, identifier);
     if (result.success === false) {
@@ -122,11 +124,12 @@ export const signup = async (req: Request, res: Response) => {
 };
 export const requestOtp = async (req: Request, res: Response) => {
   try {
-    const { method, identifier, purpose } = req.body as {
+    const { method, identifier: rawIdentifier, purpose } = req.body as {
       method: 'email' | 'phone';
       identifier: string;
       purpose: OtpPurpose;
     };
+    const identifier = normalizeAuthIdentifier(method, rawIdentifier);
 
     const { user, success } = await requestOtpService(identifier, purpose, method);
     if (!success) {
@@ -175,12 +178,13 @@ export const requestOtp = async (req: Request, res: Response) => {
 export const verifyOtpCont = async (req: Request, res: Response) => {
   try {
     
-    const { identifier, code, purpose, method } = req.body as {
+    const { identifier: rawIdentifier, code, purpose, method } = req.body as {
       identifier: string;
       code: string;
       purpose: OtpPurpose;
       method: 'email' | 'phone';
     };
+    const identifier = normalizeAuthIdentifier(method, rawIdentifier);
 
     const verifyResult = await verifyOtp(identifier, purpose, code, method);
 
@@ -234,13 +238,14 @@ export const verifyOtpCont = async (req: Request, res: Response) => {
 };
 export const login = async (req: Request, res: Response) => {
   try {
-    const { method, identifier } = req.body as {
+    const { method, identifier: rawIdentifier } = req.body as {
       method: 'email' | 'phone';
       identifier: string;
     };
     if (method !== 'email' && method !== 'phone') {
       return res.status(400).json({ message: 'Invalid login request' });
     }
+    const identifier = normalizeAuthIdentifier(method, rawIdentifier);
 
     const { user } = await loginService(method, identifier);
     if (!user) {
@@ -313,11 +318,12 @@ export const refreshToken = async (req: Request, res: Response) => {
 
 export const resendOtpCont = async (req: Request, res: Response) => {
   try {
-    const { identifier, purpose, method } = req.body as {
+    const { identifier: rawIdentifier, purpose, method } = req.body as {
       identifier: string;
       purpose: OtpPurpose;
       method: 'email' | 'phone';
     };
+    const identifier = normalizeAuthIdentifier(method, rawIdentifier);
     const resendOtpResult = await resendOtp(identifier, purpose, method);
     if (!resendOtpResult.success) {
       let errorMessage: string;

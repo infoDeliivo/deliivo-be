@@ -60,14 +60,13 @@ export const geolocationSchema = z.object({
 
 export const autocompleteSchema = z.object({
   input: z.string().min(1, 'Input is required'),
-  location: z
-    .object({
-      lat: z.number().min(-90).max(90),
-      lng: z.number().min(-180).max(180),
-    })
-    .optional(),
-  radius: z.number().min(1).max(50000).optional(),
+  lat: z.coerce.number().min(-90).max(90).optional(),
+  lng: z.coerce.number().min(-180).max(180).optional(),
+  radius: z.coerce.number().min(1).max(50000).optional(),
   types: z.string().optional(),
+}).refine((value) => (value.lat === undefined) === (value.lng === undefined), {
+  message: 'lat and lng must be provided together',
+  path: ['lat'],
 });
 
 /**

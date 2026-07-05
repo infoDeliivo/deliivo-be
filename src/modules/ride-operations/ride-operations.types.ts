@@ -3,13 +3,14 @@ import { RideStatus, BookingStatus } from '@prisma/client';
 // Valid ride state transitions
 export const RIDE_TRANSITIONS: Record<RideStatus, RideStatus[]> = {
     DRAFT: ['PUBLISHED'],
-    PUBLISHED: ['SCHEDULED', 'READY_TO_START', 'CANCELLED'],
-    SCHEDULED: ['READY_TO_START', 'CANCELLED'],
-    READY_TO_START: ['IN_PROGRESS', 'CANCELLED'],
+    PUBLISHED: ['SCHEDULED', 'READY_TO_START', 'CANCELLED', 'EXPIRED'],
+    SCHEDULED: ['READY_TO_START', 'CANCELLED', 'EXPIRED'],
+    READY_TO_START: ['IN_PROGRESS', 'CANCELLED', 'EXPIRED'],
     IN_PROGRESS: ['COMPLETION_PENDING', 'CANCELLED', 'DISPUTED'],
     COMPLETION_PENDING: ['COMPLETED', 'DISPUTED'],
     COMPLETED: ['DISPUTED'],
     CANCELLED: [],
+    EXPIRED: [],
     DISPUTED: [],
 };
 

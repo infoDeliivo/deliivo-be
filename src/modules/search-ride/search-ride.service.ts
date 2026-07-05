@@ -38,6 +38,28 @@ const EXACT_ORIGIN_DEST_BONUS = 100;
 const PICKUP_AT_ORIGIN_BONUS = 20;
 const DROP_AT_DEST_BONUS = 20;
 const ALT_ROUTE_PENALTY = 30;
+const departurePeriodFilter = (period?: SearchRideQuery['departurePeriod']): Prisma.StringFilter | undefined => {
+  if (period === 'morning') return { gte: '05:00', lt: '12:00' };
+  if (period === 'afternoon') return { gte: '12:00', lt: '17:00' };
+  if (period === 'evening') return { gte: '17:00', lte: '23:59' };
+  return undefined;
+};
+const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date => {
+  const [hours = 0, minutes = 0] = departureTime.split(':').map(Number);
+  return new Date(Date.UTC(
+    departureDate.getUTCFullYear(),
+    departureDate.getUTCMonth(),
+    departureDate.getUTCDate(),
+    hours,
+    minutes,
+  ));
+};
+
+export const isFutureRideDeparture = (
+  departureDate: Date,
+  departureTime: string,
+  now = new Date(),
+): boolean => combineDepartureDateTimeUtc(departureDate, departureTime).getTime() > now.getTime();
 const activeBookingStatuses = [
   'PAYMENT_PENDING',
   'DRIVER_PENDING',
@@ -345,6 +367,8 @@ export const searchRides = async (
   const {
     departureDate,
     departureTime,
+    departurePeriod,
+    seatsRequired = 1,
     maxPrice,
     femaleOnly,
     sortBy = 'departure',
@@ -359,6 +383,8 @@ export const searchRides = async (
   const page = Number(query.page) || 1;
   const limit = Number(query.limit) || 10;
   const radiusKm = Number(query.radiusKm) || RADIUS_KM;
+  const requiredSeats = Number(seatsRequired) || 1;
+  const normalizedMaxPrice = maxPrice ? Number(maxPrice) : undefined;
   const skip = (page - 1) * limit;
 
   // Get bounding boxes for origin and destination
@@ -366,12 +392,14 @@ export const searchRides = async (
   const destBB = getBoundingBox(destinationLat, destinationLng, radiusKm);
 
   // Build where clause with bounding box optimization
+  const todayUtc = new Date();
+  todayUtc.setUTCHours(0, 0, 0, 0);
   const whereClause: Prisma.RideWhereInput = {
     status: RideStatus.PUBLISHED,
-    availableSeats: { gt: 0 },
-    departureDate: {
-      equals: new Date(new Date(departureDate).toISOString().split('T')[0] + 'T00:00:00.000Z'),
-    },
+    availableSeats: { gte: requiredSeats },
+    departureDate: departureDate
+      ? { equals: new Date(new Date(departureDate).toISOString().split('T')[0] + 'T00:00:00.000Z') }
+      : { gte: todayUtc },
     // Bounding box filter for origin
     originLat: { gte: originBB.minLat, lte: originBB.maxLat },
     originLng: { gte: originBB.minLng, lte: originBB.maxLng },
@@ -379,6 +407,8 @@ export const searchRides = async (
     destinationLat: { gte: destBB.minLat, lte: destBB.maxLat },
     destinationLng: { gte: destBB.minLng, lte: destBB.maxLng },
   };
+  if (departureTime) whereClause.departureTime = departureTime;
+  else if (departurePeriod) whereClause.departureTime = departurePeriodFilter(departurePeriod);
 
   if (excludeDriverId) {
     whereClause.driverId = { not: excludeDriverId };
@@ -392,8 +422,8 @@ export const searchRides = async (
   }
 
   // Add price filter if specified
-  if (maxPrice) {
-    whereClause.basePricePerSeat = { lte: maxPrice };
+  if (normalizedMaxPrice) {
+    whereClause.basePricePerSeat = { lte: normalizedMaxPrice };
   }
 
   // Female-only visibility: only female riders see femaleOnly rides
@@ -421,6 +451,7 @@ export const searchRides = async (
             id: true,
             name: true,
             avatarUrl: true,
+            isVerified: true,
           },
         },
         bookings: bookingWithRiderInclude,
@@ -431,7 +462,7 @@ export const searchRides = async (
     prisma.ride.count({ where: whereClause }),
   ]);
 
-  const rides = allRides;
+  const rides = allRides.filter((ride) => isFutureRideDeparture(ride.departureDate, ride.departureTime));
 
   const vehicleIds = Array.from(
     new Set(
@@ -519,6 +550,7 @@ export const searchRides = async (
           id: ride.driver.id,
           name: ride.driver.name,
           avatarUrl: ride.driver.avatarUrl,
+          isVerified: ride.driver.isVerified,
           rating: trustStats?.rating,
           ratingCount: trustStats?.ratingCount,
           successfulPublishedRides: trustStats?.successfulPublishedRides,
@@ -910,6 +942,8 @@ export const searchRidesAdvanced = async (
 ): Promise<EnhancedSearchRideResponse> => {
   const {
     departureDate,
+    departurePeriod,
+    seatsRequired = 1,
     maxPrice,
     femaleOnly,
     sortBy = 'departure',
@@ -925,6 +959,8 @@ export const searchRidesAdvanced = async (
   const page = Number(query.page) || 1;
   const limit = Number(query.limit) || 10;
   const radiusKm = Number(query.radiusKm) || RADIUS_KM;
+  const requiredSeats = Number(seatsRequired) || 1;
+  const normalizedMaxPrice = maxPrice ? Number(maxPrice) : undefined;
   const skip = (page - 1) * limit;
 
   const riderOrigin: LatLng = { lat: originLat, lng: originLng };
@@ -939,14 +975,16 @@ export const searchRidesAdvanced = async (
   const destBB = getBoundingBox(destinationLat, destinationLng, expandedRadius);
   const mergedBB = mergeBoundingBoxes([originBB, destBB]);
 
-  // For @db.Date columns, use exact date match at UTC midnight
-  const dateStr = new Date(departureDate).toISOString().split('T')[0];
-  const searchDate = new Date(dateStr + 'T00:00:00.000Z');
+  const todayUtc = new Date();
+  todayUtc.setUTCHours(0, 0, 0, 0);
+  const searchDate = departureDate
+    ? new Date(new Date(departureDate).toISOString().split('T')[0] + 'T00:00:00.000Z')
+    : null;
 
   const whereClause: Prisma.RideWhereInput = {
     status: RideStatus.PUBLISHED,
-    availableSeats: { gt: 0 }, // seats must be available
-    departureDate: { equals: searchDate },
+    availableSeats: { gte: requiredSeats },
+    departureDate: searchDate ? { equals: searchDate } : { gte: todayUtc },
     OR: [
       {
         originLat: { gte: mergedBB.minLat, lte: mergedBB.maxLat },
@@ -966,6 +1004,7 @@ export const searchRidesAdvanced = async (
       },
     ],
   };
+  if (departurePeriod) whereClause.departureTime = departurePeriodFilter(departurePeriod);
 
   if (excludeDriverId) {
     whereClause.driverId = { not: excludeDriverId };
@@ -990,7 +1029,7 @@ export const searchRidesAdvanced = async (
     whereClause.femaleOnly = false;
   }
 
-  const candidateRides = await prisma.ride.findMany({
+  const candidateRides = (await prisma.ride.findMany({
     where: whereClause,
     include: {
       driver: {
@@ -998,6 +1037,7 @@ export const searchRidesAdvanced = async (
           id: true,
           name: true,
           avatarUrl: true,
+          isVerified: true,
         },
       },
       waypoints: {
@@ -1006,7 +1046,7 @@ export const searchRidesAdvanced = async (
       bookings: bookingWithRiderInclude,
     },
     take: 200, // Cap for performance
-  });
+  })).filter((ride) => isFutureRideDeparture(ride.departureDate, ride.departureTime));
 
   const vehicleIds = Array.from(
     new Set(
@@ -1204,7 +1244,7 @@ export const searchRidesAdvanced = async (
       : null;
 
     const riderFacingPrice = riderView?.basePricePerSeat ?? ride.basePricePerSeat;
-    if (maxPrice && riderFacingPrice > maxPrice) {
+    if (normalizedMaxPrice && riderFacingPrice > normalizedMaxPrice) {
       continue;
     }
 
@@ -1221,6 +1261,7 @@ export const searchRidesAdvanced = async (
         id: ride.driver.id,
         name: ride.driver.name,
         avatarUrl: ride.driver.avatarUrl,
+        isVerified: ride.driver.isVerified,
         rating: trustStats?.rating,
         ratingCount: trustStats?.ratingCount,
         successfulPublishedRides: trustStats?.successfulPublishedRides,

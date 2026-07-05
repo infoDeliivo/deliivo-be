@@ -1,7 +1,7 @@
 // @ts-ignore - bullmq types not resolved by moduleResolution:"Node"; runtime works fine
 import { Queue, Worker } from 'bullmq';
 import { BookingStatus, RideStatus } from '@prisma/client';
-import { logInfo } from '../utils/logger.js';
+import { logError, logInfo } from '../utils/logger.js';
 import { bullRedis } from './redisConnection.js';
 import { prisma } from '../config/index.js';
 import { createNotification } from '../modules/notification/notification.service.js';
@@ -12,9 +12,14 @@ const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTE
 const OVERDUE_END_GRACE_MINUTES = Number(process.env.RIDE_OVERDUE_END_GRACE_MINUTES || '30');
 
 const maintenanceQueue = new Queue(QUEUE_NAME, { connection: bullRedis });
+const scheduleMaintenanceJob = (name: string, data: Record<string, never>, options: Record<string, unknown>) => {
+    void maintenanceQueue.add(name, data, options).catch((error: unknown) => {
+        logError(`Failed to schedule maintenance job: ${name}`, error);
+    });
+};
 
 // Schedule the nightly job once - BullMQ deduplicates by jobId
-maintenanceQueue.add(
+scheduleMaintenanceJob(
     'nightly-cleanup',
     {},
     {
@@ -26,7 +31,7 @@ maintenanceQueue.add(
 );
 
 // Hourly reconciliation job
-maintenanceQueue.add(
+scheduleMaintenanceJob(
     'hourly-reconciliation',
     {},
     {
@@ -38,7 +43,7 @@ maintenanceQueue.add(
 );
 
 // Daily reconciliation job (stale escrow + ledger checks)
-maintenanceQueue.add(
+scheduleMaintenanceJob(
     'daily-reconciliation',
     {},
     {
@@ -50,7 +55,7 @@ maintenanceQueue.add(
 );
 
 // Payout eligibility checker (48h dispute window, runs every 4 hours)
-maintenanceQueue.add(
+scheduleMaintenanceJob(
     'payout-eligibility',
     {},
     {
@@ -62,7 +67,7 @@ maintenanceQueue.add(
 );
 
 // Ride-overdue checker: promotes overdue rides and cleans up rides that never started
-maintenanceQueue.add(
+scheduleMaintenanceJob(
     'ride-overdue-check',
     {},
     {
@@ -73,7 +78,7 @@ maintenanceQueue.add(
     }
 );
 
-maintenanceQueue.add(
+scheduleMaintenanceJob(
     'payment-outbox',
     {},
     {
@@ -182,7 +187,7 @@ const hasOpenRideIssue = async (issueType: string, rideId: string) =>
         },
     });
 
-const autoCancelOverdueRide = async (
+const closeOverdueUnstartedRide = async (
     ride: {
         id: string;
         driverId: string;
@@ -205,10 +210,10 @@ const autoCancelOverdueRide = async (
     departureAt: Date
 ) => {
     const activeBookings = ride.bookings.filter((booking) => ACTIVE_BOOKING_STATUSES.includes(booking.status));
-    if (activeBookings.length === 0) return { cancelled: false, bookingsCancelled: 0 };
+    const terminalRideStatus = activeBookings.length > 0 ? RideStatus.CANCELLED : RideStatus.EXPIRED;
 
     const cancelledAt = new Date();
-    let rideCancelled = false;
+    let rideClosed = false;
 
     await prisma.$transaction(async (tx) => {
         const rideUpdate = await tx.ride.updateMany({
@@ -217,14 +222,16 @@ const autoCancelOverdueRide = async (
                 status: { in: [RideStatus.PUBLISHED, RideStatus.SCHEDULED, RideStatus.READY_TO_START] },
                 actualStartTime: null,
             },
-            data: { status: RideStatus.CANCELLED },
+            data: { status: terminalRideStatus },
         });
 
         if (rideUpdate.count === 0) {
             return;
         }
 
-        rideCancelled = true;
+        rideClosed = true;
+
+        if (activeBookings.length === 0) return;
 
         await tx.rideBooking.updateMany({
             where: {
@@ -257,7 +264,38 @@ const autoCancelOverdueRide = async (
         }
     });
 
-    if (!rideCancelled) return { cancelled: false, bookingsCancelled: 0 };
+    if (!rideClosed) return { closed: false, status: terminalRideStatus, bookingsCancelled: 0 };
+
+    if (activeBookings.length === 0) {
+        await createNotification({
+            userId: ride.driverId,
+            type: 'ride.overdue.expired',
+            title: 'Ride expired',
+            body: 'This ride was not started within two hours of departure and has been moved to your ride history.',
+            data: {
+                rideId: ride.id,
+                deepLink: `app://rides/${ride.id}`,
+                departureAt: departureAt.toISOString(),
+                state: 'EXPIRED',
+            },
+        });
+
+        await prisma.reconciliationIssue.create({
+            data: {
+                issueType: 'OVERDUE_RIDE_EXPIRED',
+                severity: 'LOW',
+                description: `Ride ${ride.id} was never started and expired after ${departureAt.toISOString()}.`,
+                internalState: 'RIDE_EXPIRED',
+                metadataJson: {
+                    rideId: ride.id,
+                    departureAt: departureAt.toISOString(),
+                    activeBookings: 0,
+                },
+            },
+        });
+
+        return { closed: true, status: terminalRideStatus, bookingsCancelled: 0 };
+    }
 
     await notifyRideStakeholders({
         rideId: ride.id,
@@ -288,10 +326,10 @@ const autoCancelOverdueRide = async (
         },
     });
 
-    return { cancelled: true, bookingsCancelled: activeBookings.length };
+    return { closed: true, status: terminalRideStatus, bookingsCancelled: activeBookings.length };
 };
 
-const runRideOverdueCheck = async () => {
+export const runRideOverdueCheck = async () => {
     const now = new Date();
     const rides = await prisma.ride.findMany({
         where: {
@@ -326,7 +364,7 @@ const runRideOverdueCheck = async () => {
     });
 
     let promoted = 0;
-    let autoCancelled = 0;
+    let autoClosed = 0;
     let completionAlerts = 0;
 
     for (const ride of rides) {
@@ -402,9 +440,9 @@ const runRideOverdueCheck = async () => {
             now >= autoCancelAt &&
             ride.actualStartTime == null
         ) {
-            const result = await autoCancelOverdueRide(ride as any, departureAt);
-            if (result.cancelled) {
-                autoCancelled++;
+            const result = await closeOverdueUnstartedRide(ride as any, departureAt);
+            if (result.closed) {
+                autoClosed++;
             }
             continue;
         }
@@ -455,7 +493,7 @@ const runRideOverdueCheck = async () => {
     logInfo('Ride overdue check complete', {
         scanned: rides.length,
         promoted,
-        autoCancelled,
+        autoClosed,
         completionAlerts,
     });
 };
@@ -529,3 +567,11 @@ export const maintenanceWorker = new Worker(
     },
     { connection: bullRedis, concurrency: 1 }
 );
+
+maintenanceWorker.on('failed', (job: any, error: Error) => {
+    logError(`Maintenance job failed: ${job?.name || 'unknown'}`, error, { jobId: job?.id });
+});
+
+maintenanceWorker.on('error', (error: Error) => {
+    logError('Maintenance worker error', error);
+});

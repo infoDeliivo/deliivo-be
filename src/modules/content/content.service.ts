@@ -384,3 +384,22 @@ export async function deletePost(postId: string, actorId: string) {
     await writeAudit('DELETE', payload, actorId);
     return { id: postId, deleted: true };
 }
+
+export async function subscribeToNewsletter(email: string, locale = 'en', source = 'blog') {
+    const normalizedEmail = email.trim().toLowerCase();
+    return prisma.newsletterSubscriber.upsert({
+        where: { email: normalizedEmail },
+        create: {
+            email: normalizedEmail,
+            locale: locale.trim().toLowerCase().slice(0, 10) || 'en',
+            source: source.trim().slice(0, 50) || 'blog',
+        },
+        update: {
+            locale: locale.trim().toLowerCase().slice(0, 10) || 'en',
+            source: source.trim().slice(0, 50) || 'blog',
+            consentedAt: new Date(),
+            unsubscribedAt: null,
+        },
+        select: { email: true, consentedAt: true },
+    });
+}

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { sendError, sendSuccess, HttpStatus } from '../../utils/index.js';
-import { deletePost, getPublishedPostBySlug, listAllPosts, listContentAudit, listPublishedPosts, upsertPost } from './content.service.js';
+import { deletePost, getPublishedPostBySlug, listAllPosts, listContentAudit, listPublishedPosts, subscribeToNewsletter, upsertPost } from './content.service.js';
 import { AuthRequest } from '../../types/auth.js';
 
 export const listPublished = async (req: Request, res: Response) => {
@@ -21,6 +21,20 @@ export const getPublishedBySlug = async (req: Request, res: Response) => {
         return sendSuccess(res, { message: 'Published post fetched', data: post });
     } catch {
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch published post' });
+    }
+};
+
+export const subscribeNewsletter = async (req: Request, res: Response) => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'A valid email address is required' });
+    }
+
+    try {
+        const subscriber = await subscribeToNewsletter(email, String(req.body?.locale || 'en'), 'blog');
+        return sendSuccess(res, { status: HttpStatus.CREATED, message: 'Newsletter subscription saved', data: subscriber });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Unable to save newsletter subscription' });
     }
 };
 

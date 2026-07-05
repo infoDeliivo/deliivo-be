@@ -11,8 +11,9 @@ export interface SearchRideQuery {
     destinationLng: number;
 
     // Date and time filters
-    departureDate: Date;
+    departureDate?: Date;
     departureTime?: string; // Optional: HH:mm format
+    departurePeriod?: 'morning' | 'afternoon' | 'evening';
 
     // Seat requirements
     seatsRequired?: number;
@@ -41,6 +42,7 @@ export interface SearchRideResult {
         id: string;
         name: string | null;
         avatarUrl: string | null;
+        isVerified?: boolean;
         rating?: number;
         ratingCount?: number;
         successfulPublishedRides?: number;

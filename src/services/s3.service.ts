@@ -25,15 +25,23 @@ export interface S3UploadOptions {
 const uploadToLocal = async (options: S3UploadOptions): Promise<S3UploadResult> => {
     const { folder, file } = options;
     try {
+        const configuredBaseUrl = process.env.UPLOAD_PUBLIC_BASE_URL?.replace(/\/$/, '');
+        if (process.env.NODE_ENV === 'production' && !configuredBaseUrl) {
+            return {
+                success: false,
+                error: 'File storage is not configured. Configure R2/S3 or UPLOAD_PUBLIC_BASE_URL.',
+            };
+        }
         const fileExtension = file.originalname.split(".").pop();
-        const key = `uploads/${folder}/${uuidv4()}.${fileExtension}`;
-        const dir = join(process.cwd(), 'uploads', folder);
+        const ownerPrefix = options.ownerId ? `${options.ownerId}/` : '';
+        const key = `uploads/${folder}/${ownerPrefix}${uuidv4()}.${fileExtension}`;
+        const dir = join(process.cwd(), 'uploads', folder, ownerPrefix);
         await mkdir(dir, { recursive: true });
         const filePath = join(process.cwd(), key);
         await writeFile(filePath, file.buffer);
 
         const port = process.env.PORT || '3000';
-        const url = `http://localhost:${port}/${key}`;
+        const url = configuredBaseUrl ? `${configuredBaseUrl}/${key}` : `http://localhost:${port}/${key}`;
 
         logInfo(`Local upload: ${key}`);
         return { success: true, url, key };

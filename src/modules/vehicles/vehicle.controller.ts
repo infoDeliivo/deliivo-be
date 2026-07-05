@@ -7,6 +7,7 @@ import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
 import { uploadToS3 } from '../../services/s3.service.js';
 import { getCache, setCache, deleteCache, cacheKeys } from '../../services/cache.service.js';
+import { DocumentType } from '@prisma/client';
 
 /* ================= CREATE / UPDATE VEHICLE ================= */
 export const createVehicle = async (req: AuthRequest, res: Response) => {
@@ -105,7 +106,7 @@ export const uploadImage = async (req: AuthRequest, res: Response) => {
     }
 
     const vehicleId = req.params.id as string;
-    const uploadResult = await uploadToS3({ folder: 'vehicle', file: req.file });
+    const uploadResult = await uploadToS3({ folder: 'vehicle', file: req.file, ownerId: req.user.id });
 
     if (!uploadResult.success) {
       return sendError(res, {
@@ -159,6 +160,7 @@ export const uploadVehicleImageOnly = async (req: AuthRequest, res: Response) =>
     const uploadResult = await uploadToS3({
       folder: 'vehicle',
       file: req.file,
+      ownerId: req.user.id,
     });
 
     if (!uploadResult.success) {
@@ -316,10 +318,10 @@ export const uploadDraftDocument = async (req: AuthRequest, res: Response) => {
     }
 
     const { documentType } = req.body;
-    if (!documentType) {
+    if (!documentType || !Object.values(DocumentType).includes(documentType as DocumentType)) {
       return sendError(res, {
         status: HttpStatus.BAD_REQUEST,
-        message: 'documentType is required (VEHICLE_IMAGE, VEHICLE_DOCUMENT, DRIVING_LICENSE, INSURANCE_DOCUMENT)',
+        message: 'A valid documentType is required',
       });
     }
 
@@ -327,6 +329,7 @@ export const uploadDraftDocument = async (req: AuthRequest, res: Response) => {
     const uploadResult = await uploadToS3({
       folder: 'vehicle',
       file: req.file,
+      ownerId: req.user.id,
     });
 
     if (!uploadResult.success) {
@@ -340,7 +343,7 @@ export const uploadDraftDocument = async (req: AuthRequest, res: Response) => {
     const draft = await DraftVehicleService.addDocument(
       req.user.id,
       uploadResult.url!,
-      documentType,
+      documentType as DocumentType,
     );
 
     return sendSuccess(res, {

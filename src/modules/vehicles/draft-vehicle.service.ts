@@ -171,11 +171,11 @@ export const saveVehicle = async (userId: string) => {
         throw new Error('MAX_VEHICLE_LIMIT_REACHED');
     }
 
-    // Use first VEHICLE_IMAGE as the main imageUrl, fallback to first doc
+    // Supporting identity/insurance documents must never become rider-visible photos.
     const vehicleImage = draft.documents?.find(
         (d) => d.documentType === 'VEHICLE_IMAGE',
     );
-    const mainImageUrl = vehicleImage?.imageUrl || draft.documents?.[0]?.imageUrl || null;
+    const mainImageUrl = vehicleImage?.imageUrl || null;
 
     // ---- Create in DB (vehicle + documents in a transaction) ---- //
     const vehicle = await prisma.vehicle.create({

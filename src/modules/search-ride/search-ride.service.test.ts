@@ -22,10 +22,29 @@ jest.mock('../../config/index.js', () => ({
     prisma: mockPrisma,
 }));
 
-import { searchRidesAdvanced } from './search-ride.service';
+import { isFutureRideDeparture, searchRidesAdvanced } from './search-ride.service';
 import { decodeViewToken } from './view-token.utils';
 
+describe('search departure eligibility', () => {
+    it('excludes a ride after its scheduled departure time', () => {
+        const date = new Date('2026-07-03T00:00:00.000Z');
+        const now = new Date('2026-07-03T10:01:00.000Z');
+
+        expect(isFutureRideDeparture(date, '10:00', now)).toBe(false);
+        expect(isFutureRideDeparture(date, '10:30', now)).toBe(true);
+    });
+});
+
 describe('searchRidesAdvanced segment shaping', () => {
+    beforeAll(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-03-01T00:00:00.000Z'));
+    });
+
+    afterAll(() => {
+        jest.useRealTimers();
+    });
+
     beforeEach(() => {
         jest.clearAllMocks();
         mockPrisma.vehicle.findMany.mockResolvedValue([]);
@@ -33,6 +52,26 @@ describe('searchRidesAdvanced segment shaping', () => {
         mockPrisma.user.findUnique.mockResolvedValue(null);
         mockPrisma.userRatingStats.findMany.mockResolvedValue([]);
         mockPrisma.rideBooking.groupBy.mockResolvedValue([]);
+    });
+
+    it('searches all upcoming rides when departure date is omitted', async () => {
+        mockPrisma.ride.findMany.mockResolvedValue([]);
+
+        await searchRidesAdvanced({
+            originLat: 1,
+            originLng: 1,
+            destinationLat: 2,
+            destinationLng: 2,
+            page: 1,
+            limit: 10,
+            radiusKm: 5,
+        });
+
+        expect(mockPrisma.ride.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                departureDate: { gte: new Date('2026-03-01T00:00:00.000Z') },
+            }),
+        }));
     });
 
     it('returns matched segment addresses, segment fare, bookingContext, and segmentId', async () => {
@@ -293,5 +332,26 @@ describe('searchRidesAdvanced segment shaping', () => {
         }, 'female-viewer');
 
         expect(mockPrisma.ride.findMany.mock.calls[0][0].where.femaleOnly).toBe(true);
+    });
+
+    it('applies the selected time-of-day window to candidate rides', async () => {
+        mockPrisma.ride.findMany.mockResolvedValue([]);
+
+        await searchRidesAdvanced({
+            originLat: 1,
+            originLng: 1,
+            destinationLat: 2,
+            destinationLng: 2,
+            departureDate: new Date('2026-03-30T00:00:00.000Z'),
+            departurePeriod: 'morning',
+            page: 1,
+            limit: 10,
+            radiusKm: 5,
+        });
+
+        expect(mockPrisma.ride.findMany.mock.calls[0][0].where.departureTime).toEqual({
+            gte: '05:00',
+            lt: '12:00',
+        });
     });
 });

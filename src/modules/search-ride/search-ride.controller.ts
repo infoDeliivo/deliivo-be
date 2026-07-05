@@ -9,13 +9,20 @@ import { SearchRideQuery, EnhancedSearchRideQuery } from './search-ride.types.js
 // Cache key helpers
 const cacheKeys = {
     searchResults: (query: SearchRideQuery, viewerId?: string) =>
-        `search:v2:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${query.maxPrice || ''}:${query.femaleOnly || ''}:${viewerId || 'anon'}`,
+        `search:v3:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${query.departureTime || ''}:${query.departurePeriod || ''}:${query.seatsRequired || 1}:${query.maxPrice || ''}:${query.femaleOnly || ''}:${query.sortBy || 'departure'}:${query.sortOrder || 'asc'}:${query.radiusKm || 10}:${query.page || 1}:${query.limit || 10}:${viewerId || 'anon'}`,
     rideDetails: (id: string, segmentId?: string, viewerId?: string) =>
         `ride:details:${id}:${segmentId || 'full'}:${viewerId || 'anon'}:v3`,
 };
 
 // Cache TTL in seconds
 const CACHE_TTL = 60; // 1 minute for search results
+const isTodayUtc = (date?: Date): boolean => {
+    if (!date) return false;
+    const now = new Date();
+    return date.getUTCFullYear() === now.getUTCFullYear()
+        && date.getUTCMonth() === now.getUTCMonth()
+        && date.getUTCDate() === now.getUTCDate();
+};
 
 /* ================= SEARCH RIDES ================= */
 export const searchRides = async (req: AuthRequest, res: Response) => {
@@ -32,7 +39,8 @@ export const searchRides = async (req: AuthRequest, res: Response) => {
         const cacheKey = cacheKeys.searchResults(query, viewerId);
 
         // Try cache first for identical searches
-        const cachedResult = await getCache(cacheKey);
+        const useCache = Boolean(query.departureDate) && !isTodayUtc(query.departureDate);
+        const cachedResult = useCache ? await getCache(cacheKey) : null;
         if (cachedResult) {
             return sendSuccess(res, {
                 message: 'Rides fetched successfully',
@@ -43,7 +51,7 @@ export const searchRides = async (req: AuthRequest, res: Response) => {
         const result = await SearchRideService.searchRides(query, viewerId);
 
         // Cache the result
-        await setCache(cacheKey, result, CACHE_TTL);
+        if (useCache) await setCache(cacheKey, result, CACHE_TTL);
 
         return sendSuccess(res, {
             message: 'Rides fetched successfully',
@@ -210,7 +218,7 @@ export const createRideAlert = async (req: AuthRequest, res: Response) => {
 
 /* ================= ADVANCED SEARCH RIDES (4-CONDITION) ================= */
 const advancedCacheKey = (query: EnhancedSearchRideQuery) =>
-    `search:advanced:v2:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${query.radiusKm || 5}:${query.minSimilarity || 0.75}`;
+    `search:advanced:v3:${query.originLat}:${query.originLng}:${query.destinationLat}:${query.destinationLng}:${query.departureDate}:${query.departurePeriod || ''}:${query.seatsRequired || 1}:${query.maxPrice || ''}:${query.femaleOnly || ''}:${query.sortBy || 'departure'}:${query.sortOrder || 'asc'}:${query.radiusKm || 5}:${query.minSimilarity || 0.75}:${query.includeAlternates ?? true}:${query.page || 1}:${query.limit || 10}`;
 
 export const searchRidesAdvanced = async (req: AuthRequest, res: Response) => {
     try {
@@ -226,7 +234,8 @@ export const searchRidesAdvanced = async (req: AuthRequest, res: Response) => {
         const cacheKey = `${advancedCacheKey(query)}:${viewerId || 'anon'}`;
 
         // Try cache first
-        const cachedResult = await getCache(cacheKey);
+        const useCache = Boolean(query.departureDate) && !isTodayUtc(query.departureDate);
+        const cachedResult = useCache ? await getCache(cacheKey) : null;
         if (cachedResult) {
             return sendSuccess(res, {
                 message: 'Rides fetched successfully (cached)',
@@ -237,7 +246,7 @@ export const searchRidesAdvanced = async (req: AuthRequest, res: Response) => {
         const result = await SearchRideService.searchRidesAdvanced(query, viewerId);
 
         // Cache the result for 60 seconds
-        await setCache(cacheKey, result, CACHE_TTL);
+        if (useCache) await setCache(cacheKey, result, CACHE_TTL);
 
         return sendSuccess(res, {
             message: 'Rides fetched successfully',

@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { isAtLeastAge, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
 
+const personNameSchema = z
+  .string()
+  .trim()
+  .min(2, 'Name must be at least 2 characters')
+  .max(50, 'Name must be at most 50 characters')
+  .regex(/^(?=.*\p{L})[\p{L}\p{M} .'-]+$/u, 'Name must contain letters and cannot be numeric only');
+
 const dobSchema = z
   .string()
   .refine((val) => !isNaN(Date.parse(val)), 'Date of birth must be a valid date')
@@ -26,10 +33,7 @@ export const updateProfileSchema = z.object({
 });
 
 export const updateProfileSchemaOnBoarding = z.object({
-  name: z
-    .string()
-    .min(2, 'Name must be at least 2 characters')
-    .max(50, 'Name must be at most 50 characters'),
+  name: personNameSchema,
 
   salutation: z.enum(['MR', 'MS', 'MRS', 'MX', 'OTHER']),
   gender: z.enum(['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY']),
@@ -51,7 +55,7 @@ export const avatarUploadSchema = z
 // Full profile update schema with travel preferences
 export const fullProfileUpdateSchema = z.object({
   // Basic info
-  name: z.string().min(2).max(50).optional(),
+  name: personNameSchema.optional(),
   nickName: z
     .string()
     .min(3)

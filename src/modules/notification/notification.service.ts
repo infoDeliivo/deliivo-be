@@ -9,7 +9,7 @@ import { RideStatus } from '@prisma/client';
 // Redis key for unread count cache (60s TTL)
 const unreadKey = (userId: string) => `unread:${userId}`;
 const OVERDUE_UNSTARTED_RIDE_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
-const TERMINAL_RIDE_STATUSES = new Set<RideStatus>([RideStatus.COMPLETED, RideStatus.CANCELLED]);
+const TERMINAL_RIDE_STATUSES = new Set<RideStatus>([RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED]);
 const UNSTARTED_RIDE_STATUSES = new Set<RideStatus>([
     RideStatus.PUBLISHED,
     RideStatus.SCHEDULED,

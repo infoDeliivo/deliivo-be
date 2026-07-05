@@ -3,12 +3,23 @@ import { generateTokens, verifyRefreshToken } from '../token/tokens.service.js';
 import { Role } from '../user/user.constants.js';
 import { logError } from '../../utils/logger.js';
 
+export const normalizeAuthIdentifier = (method: string, identifier: string) =>
+  method === 'email' ? identifier.trim().toLowerCase() : identifier.trim();
+
+const identifierWhere = (method: string, identifier: string) => {
+  const normalized = normalizeAuthIdentifier(method, identifier);
+  return method === 'email'
+    ? { email: { equals: normalized, mode: 'insensitive' as const } }
+    : { phone: normalized };
+};
+
 /** 
  * Signup Service
  */
 export const signupService = async (method: string, identifier: string) => {
+  const normalized = normalizeAuthIdentifier(method, identifier);
   const user = await prisma.user.findFirst({
-    where: { [method]: identifier },
+    where: identifierWhere(method, normalized),
   });
 
   // User exists & already verified → block signup
@@ -20,7 +31,7 @@ export const signupService = async (method: string, identifier: string) => {
   if (!user) {
     const newUser = await prisma.user.create({
       data: {
-        [method]: identifier,
+        [method]: normalized,
         onboardingStatus: 'PENDING',
         isVerified: false,
       },
@@ -51,8 +62,9 @@ export const verifyOtpService = async (
   method: string,
 ) => {
   try {
+    const normalized = normalizeAuthIdentifier(method, identifier);
     const user = await prisma.user.findFirst({
-      where: { [method]: identifier },
+      where: identifierWhere(method, normalized),
     });
 
     if (!user) {
@@ -156,8 +168,9 @@ export const requestOtpService = async (
   purpose: 'signup' | 'login' | 'reset_password',
   method: string,
 ) => {
+  const normalized = normalizeAuthIdentifier(method, identifier);
   const user = await prisma.user.findFirst({
-    where: { [method]: identifier },
+    where: identifierWhere(method, normalized),
   });
 
   // Signup → block if verified user already exists
@@ -201,8 +214,9 @@ export const logoutService = async (refreshToken: string) => {
  * Login Service
  */
 export const loginService = async (method: string, identifier: string) => {
+  const normalized = normalizeAuthIdentifier(method, identifier);
   const user = await prisma.user.findFirst({
-    where: { [method]: identifier },
+    where: identifierWhere(method, normalized),
   });
 
   if (!user || !user.isVerified) {

@@ -18,7 +18,10 @@ export const googleHttp = {
 
     if (payload.location) {
       params.location = `${payload.location.lat},${payload.location.lng}`;
-      if (payload.radius) params.radius = payload.radius;
+      if (payload.radius) {
+        params.radius = payload.radius;
+        params.strictbounds = true;
+      }
     }
 
     if (payload.types) {

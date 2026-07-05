@@ -18,11 +18,12 @@ export const searchRideQuerySchema = z.object({
             return date >= today;
         },
         { message: 'Departure date cannot be in the past' }
-    ),
+    ).optional(),
     departureTime: z.string().regex(
         /^([01]\d|2[0-3]):([0-5]\d)$/,
         'Time must be in HH:mm format'
     ).optional(),
+    departurePeriod: z.enum(['morning', 'afternoon', 'evening']).optional(),
 
     // Seat requirements
     seatsRequired: z.coerce.number().int().min(1).max(10).optional(),
