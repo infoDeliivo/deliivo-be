@@ -1,0 +1,5 @@
+2026/07/06-08:24:27.874 1cd0 Creating DB D:\projects\carpooling-be\.tmp-edge-language-check\Default\EdgeCoupons/coupons_data.db since it was missing.
+2026/07/06-08:24:27.905 1cd0 Reusing MANIFEST D:\projects\carpooling-be\.tmp-edge-language-check\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
+2026/07/06-08:24:28.341 49a0 Level-0 table #5: started
+2026/07/06-08:24:28.346 49a0 Level-0 table #5: 682901 bytes OK
+2026/07/06-08:24:28.349 49a0 Delete type=0 #3

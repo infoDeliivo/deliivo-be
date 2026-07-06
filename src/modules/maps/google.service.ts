@@ -49,21 +49,34 @@ const MOCK_PLACES = [
 ];
 
 export const googleService = {
-  async autocomplete(input: string, location?: { lat: number; lng: number }, radius?: number, types?: string) {
+  async autocomplete(
+    input: string,
+    location?: { lat: number; lng: number },
+    radius?: number,
+    types?: string,
+    strictBounds?: boolean,
+  ) {
     if (isMockMode()) {
       const lower = input.toLowerCase();
       const filtered = MOCK_PLACES.filter(p => p.description.toLowerCase().includes(lower));
+      if (location && strictBounds === false) {
+        filtered.sort((a, b) => {
+          const distanceA = (a.lat - location.lat) ** 2 + (a.lng - location.lng) ** 2;
+          const distanceB = (b.lat - location.lat) ** 2 + (b.lng - location.lng) ** 2;
+          return distanceA - distanceB;
+        });
+      }
       return filtered.map(p => ({ description: p.description, place_id: p.place_id }));
     }
 
-    const cacheKey = `autocomplete:${input}:${location ? `${location.lat},${location.lng}` : 'none'}:${radius || 50000}:${types || 'all'}`;
+    const cacheKey = `autocomplete:v2:baltic:${input}:${location ? `${location.lat},${location.lng}` : 'none'}:${radius || 50000}:${types || 'all'}:${strictBounds ?? 'default'}`;
 
     // Try to get from cache
     const cached = await redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
     // Fetch from Google API
-    const response: any = await googleHttp.autocomplete({ input, location, radius, types });
+    const response: any = await googleHttp.autocomplete({ input, location, radius, types, strictBounds });
 
     const predictions = response.predictions;
 
@@ -80,10 +93,16 @@ export const googleService = {
     if (isMockMode()) {
       const place = MOCK_PLACES.find(p => p.place_id === placeId);
       if (place) {
+        const countryCode = place.description.endsWith(', Estonia')
+          ? 'EE'
+          : place.description.endsWith(', Latvia')
+            ? 'LV'
+            : 'LT';
         return {
           name: place.description.split(',')[0],
           formatted_address: place.description,
           geometry: { location: { lat: place.lat, lng: place.lng } },
+          address_components: [{ short_name: countryCode, long_name: place.description.split(', ')[1], types: ['country'] }],
         };
       }
       // Unknown placeId in mock — return generic
@@ -91,10 +110,11 @@ export const googleService = {
         name: 'Unknown Place',
         formatted_address: 'Mock Address, UK',
         geometry: { location: { lat: 51.5, lng: -0.1 } },
+        address_components: [{ short_name: 'GB', long_name: 'United Kingdom', types: ['country'] }],
       };
     }
 
-    const cacheKey = `placeDetails:${placeId}`;
+    const cacheKey = `placeDetails:v2:${placeId}`;
 
     const cached = await redis.get(cacheKey);
     if (cached) return JSON.parse(cached);

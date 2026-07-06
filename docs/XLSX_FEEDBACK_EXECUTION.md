@@ -13,7 +13,7 @@ Status key:
 - `Decision`: product choice required before implementation
 - `Rejected`: conflicts with an existing product decision or lacks supporting product capability/data
 
-Last updated: 2026-07-03
+Last updated: 2026-07-06
 
 ## Batch 1 - Implemented
 
@@ -67,8 +67,10 @@ Last updated: 2026-07-03
 - `Done` `BLOG-03`, `BLOG-10` through `BLOG-12`: category counts, popular posts, topic suggestion, and newsletter subscription were implemented as approved.
 - `Done` `THEME-01`: public pages retain the orange brand while using the approved restrained neutral background treatment.
 
-## Next Audit Batch
+## Remaining Work
 
-- Complete status mapping for every remaining catalogue ID.
-- Verify search time filtering, guest ride-detail auth boundary, DOB persistence, vehicle upload, public profile data, and notification cleanup with focused tests/runtime checks.
-- Implement remaining confirmed defects that do not depend on the decisions above.
+- Remove the duplicate `Your Rides` footer destination.
+- Improve recovery copy for expired or incomplete publish drafts.
+- Finish the EN/ET/RU copy and custom-header visual audit.
+- Decide whether separate Insurance and Safety pages are required.
+- Verify Railway/Vercel sockets, deployed object storage, public driver profiles, and admin monitoring/content in production.

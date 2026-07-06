@@ -8,7 +8,7 @@ Status key:
 - `[x]` completed
 - `[!]` blocked or needs product clarification
 
-Last updated: 2026-07-03
+Last updated: 2026-07-06
 
 ## Updated Workbook Review (2026-07-03)
 
@@ -16,25 +16,24 @@ Source: `WebAap Testing.xlsx` from Downloads. The workbook now includes Rohan an
 
 ### Confirmed pending
 
-- `[ ]` Preserve the publish wizard state when the driver leaves the flow to add or manage a vehicle, then restore the same step after returning.
-- `[ ]` Redirect already-authenticated users away from sign-in and sign-up pages, including browser back navigation.
-- `[ ]` Remove the duplicate publish progress indicator and retain one clear stepper.
-- `[ ]` Review the desktop publish layout so route fields and map use horizontal space without changing the compact mobile flow.
-- `[ ]` Replace footer social text abbreviations with accessible icons and use the configured Deliivo URLs for every network.
-- `[ ]` Simplify guest navigation so account-only destinations such as notifications and your rides are not presented as public links.
+- `[ ]` Remove the duplicate `Your Rides` destination from one footer column.
+- `[ ]` Improve recovery copy for expired or incomplete publish drafts.
+- `[ ]` Complete the EN/ET/RU copy and custom-header audit across named routes.
+- `[!]` Decide whether separate Insurance and Safety pages are required.
 
 ### Runtime verification required
 
-- `[/]` Reproduce the reported repeated calls to bookings, published rides, notifications, unread count, and profile APIs against the current build. Notification fallback polling is currently 20 seconds, not one second, but reconnect/focus/socket events may still cause bursts.
+- `[/]` Re-test Railway/Vercel Socket.IO updates with production origins and websocket transport; request deduplication and reduced fallback polling are implemented.
 - `[ ]` Re-test vehicle image upload against deployed storage and API configuration.
 - `[ ]` Re-test driver public profile ratings, preferences, and translated labels using a real driver/rider pair.
 - `[ ]` Audit translated copy and shared headers on auth, blog, rides, publish, vehicle, and notification routes.
+- `[ ]` Re-test admin monitoring and content publishing in production.
 
 ### Product or design decision required
 
-- `[!]` Adding a full ride-search form to the homepage conflicts with the earlier decision to remove the "Find a ride fast" card. Reconsider only with explicit approval.
-- `[!]` Do not add the redesign's driver counts, ratings, completion rates, city counts, or response-time claims unless production data supports them.
-- `[!]` Treat the proposed homepage illustration, section ordering, shorter benefit copy, and dual rider/driver CTA as design options rather than defects.
+- `[x]` The approved integrated homepage search is implemented without restoring the old standalone "Find a ride fast" card.
+- `[x]` Unsupported driver counts, ratings, completion rates, city counts, and response-time claims are omitted.
+- `[x]` The approved homepage illustration, section ordering, shorter benefit copy, and dual rider/driver CTA are implemented.
 - `[!]` Do not perform a wholesale migration to Shadcn/UI, Redux, React Hook Form, Zod, TanStack Query, or Axios solely from workbook feedback. Address measured validation and request-lifecycle problems directly.
 
 ### Existing decisions retained
@@ -47,6 +46,16 @@ Source: `WebAap Testing.xlsx` from Downloads. The workbook now includes Rohan an
 
 ## Completed
 
+- `[x]` Language selection uses a polished full-name dropdown and persists through `/en`, `/ee`, and `/ru` URL prefixes.
+- `[x]` Homepage social-proof statistics ribbon was removed because the values were not production-backed.
+- `[x]` Footer logo now has sufficient contrast on the dark background.
+- `[x]` Route and stopover publish steps use an Estonia-centered map on the right, with top-aligned headings and top-left Back navigation.
+- `[x]` Ride search date is optional; origin/destination-only searches return future bookable rides.
+- `[x]` Signed-in header is limited to Search a ride, Offer a ride, Your rides, and Notifications; informational links remain in the footer.
+- `[x]` Public destination autocomplete is Baltic-only and biased relative to the selected origin without excluding valid intercity destinations.
+- `[x]` Ride publication is restricted to origins and destinations verified in Estonia, Latvia, or Lithuania, with backend revalidation before final publication.
+- `[x]` Stopover suggestions wrap without horizontal scrolling; every published ride requires at least one pickup and one drop-off point, while stopovers remain optional.
+- `[x]` Pickup, drop-off and stopover points are validated against the selected route and rendered through route-line anchors without changing their saved meeting addresses.
 - `[x]` Unstarted rides now move to `READY_TO_START` at departure and close after the two-hour grace period: unbooked rides become `EXPIRED`, while rides with active bookings become `CANCELLED` with refund metadata and reconciliation records.
 
 - `[x]` Sign-up phone flow now requires country code.

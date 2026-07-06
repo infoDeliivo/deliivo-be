@@ -63,6 +63,7 @@ export const autocompleteSchema = z.object({
   lat: z.coerce.number().min(-90).max(90).optional(),
   lng: z.coerce.number().min(-180).max(180).optional(),
   radius: z.coerce.number().min(1).max(50000).optional(),
+  strictBounds: z.enum(['true', 'false']).optional(),
   types: z.string().optional(),
 }).refine((value) => (value.lat === undefined) === (value.lng === undefined), {
   message: 'lat and lng must be provided together',

@@ -1,6 +1,6 @@
 # XLSX Feedback Status by Reviewer
 
-Reviewed directly from the downloaded workbooks on 2026-07-05:
+Reviewed directly from the downloaded workbooks and reconciled with the current code on 2026-07-06:
 
 - `WebAap Testing.xlsx`
 - `deliivoweb-test-cases.xlsx`
@@ -12,6 +12,14 @@ Status meanings:
 - `Decision applied`: intentionally implemented differently following the agreed product decision.
 - `Runtime`: code is fixed, but deployed end-to-end verification remains.
 - `Rejected`: intentionally not planned.
+
+Current totals across all `68` populated feedback rows:
+
+- `49 Done`
+- `5 Partial`
+- `2 Runtime verification`
+- `8 Decision applied`
+- `4 Rejected`
 
 ## Rajesh
 
@@ -38,15 +46,15 @@ Status meanings:
 | R6 | Unsuitable sign-in image | Done | Sign-in uses Baltic carpooling artwork on desktop and mobile. |
 | R7 | Homepage search width and suggested copy | Done | Covered by the new Iti-aligned homepage. |
 | R8 | More interactive vehicle page | Done | Vehicle setup has structured Plate, Details and Documents steps with explanation and Back/Next controls. |
-| R9 | Guest ride discovery and richer results UX | Partial | Guest discovery, filters, verification, ratings, route, vehicle, seats, duration and fare are implemented. Unsupported instant-booking/top-driver/arrival-time claims are not shown. Guest detail access remains public by product decision. |
+| R9 | Guest ride discovery and richer results UX | Decision applied | Guest discovery, filters, verification, ratings, route, vehicle, seats, duration and fare are implemented. Unsupported instant-booking/top-driver/arrival-time claims are intentionally not shown, and guest detail access remains public. |
 | R10 | Notification-page redesign | Decision applied | Simple item cards, refresh, read/delete/clear actions and empty state are retained. Heavy category/sidebar/browser-preference design is intentionally omitted. |
-| R15 | Language switching and missing headers across named pages | Partial | Blog, vehicle and notifications have shared navigation. A complete EN/ET/RU visual audit remains; Your Rides and Publish use custom page headers rather than the shared Navbar. |
+| R15 | Language switching and missing headers across named pages | Partial | Language selection is redesigned and persisted in `/en`, `/ee` and `/ru` URLs. Blog, vehicle and notifications have shared navigation; a final EN/ET/RU copy and custom-header visual audit remains. |
 | R16 | Vehicle image upload error | Runtime | Validation, document privacy and storage handling are fixed. Railway must be tested with real R2/S3 configuration. |
-| R17 | Driver ratings, coding tags, preferences and translation | Partial | Data rendering and translated preference labels are fixed. A real driver/rider production verification remains. |
+| R17 | Driver ratings, coding tags, preferences and translation | Runtime | Data rendering and translated preference labels are fixed. A real driver/rider production verification remains. |
 | R18 | Improve Blog page | Done | Featured article, compact cards, metadata, categories, popular posts and minimalist treatment are implemented. |
 | R19 | Article header, top image and author | Done | Article detail has site header, hero visual, metadata, author section and related articles. |
 | R20 | Footer social icons and links | Done | Facebook, Instagram, X, TikTok and LinkedIn use accessible icons and configured URLs. |
-| R21 | Footer logo blends into dark background | Partial | Logo sizing improved, but a dedicated light/white wordmark is still needed for ideal contrast. |
+| R21 | Footer logo blends into dark background | Done | The dark footer now uses the orange mark with a readable white Deliivo wordmark. |
 | R22 | Duplicate footer menu entries | Partial | Most duplicates were removed; `Your Rides` still appears in both driver and passenger columns. |
 | R23 | Homepage slogan recommendation | Done | The approved Baltic/local-travel direction is reflected in the hero copy. |
 
@@ -82,11 +90,11 @@ Status meanings:
 | R2 | Hero lacks complete search experience | Done | Hero includes From, To, Date, Passengers and Search. |
 | R4 | Add emotional Baltic route/travel illustration | Done | A Baltic skyline, road, vehicle and route-pin visual is used. |
 | R5 | Rework public navigation and guest visibility | Done | Search, Offer, How it works, Blog and Support are public; account-only links are hidden from guests. |
-| R6 | Improve information hierarchy and trust | Partial | Trust strip, concise How it works, routes and benefits are implemented. Unsupported social-proof metrics are intentionally omitted, and the exact screenshot order is adapted rather than copied literally. |
+| R6 | Improve information hierarchy and trust | Decision applied | Concise How it works, routes and benefits are implemented. The unsupported social-proof metrics ribbon was removed rather than presenting unverified claims. |
 | R7 | Shorten How Deliivo works | Done | Rider and driver flows use three compact icon/title/one-sentence steps. |
 | R8 | Stronger benefit-led propositions | Decision applied | Verified drivers, women-only, transparent pricing, tracking, payments and 24/7 support are shown. The unsupported `70% less` claim is omitted. |
 | R9 | Dual rider/driver CTA | Done | Search rides and Offer a ride actions are both present in a compact CTA. |
-| R10 | Footer logo and expanded footer/app destinations | Partial | Legal/support/social links exist. White footer wordmark remains; app badges are rejected because no mobile apps exist, and Insurance/Safety destinations are not implemented. |
+| R10 | Footer logo and expanded footer/app destinations | Partial | The footer wordmark, legal/support/social links are complete. App badges remain rejected because no mobile apps exist; requested Insurance/Safety destinations are not implemented. |
 | R14 | Full homepage redesign reference | Done | The major visual structure and responsive direction were implemented and browser-checked. |
 
 ## Utkarsh
@@ -97,11 +105,11 @@ The sheet contains only its header and no feedback rows.
 
 | Source | Feedback | Status | Current result / remaining work |
 |---|---|---|---|
-| R2 | Location suggestions include unrelated countries | Partial | Publish pickup/stopover/drop-off searches are radius-biased and validated. Public search destination autocomplete is not yet strictly constrained relative to the selected origin. |
+| R2 | Location suggestions include unrelated countries | Done | Public autocomplete is constrained to Estonia, Latvia and Lithuania; destination suggestions are biased from the selected origin without blocking valid intercity routes. Publish point searches retain strict radius validation. |
 | R3 | Search controls misaligned | Done | Controls now share labels, heights and baseline alignment. |
 | R4 | Seat selector should be searchable/editable | Decision applied | Product decision keeps a simple selector, expanded to 1-10 seats. |
 | R5 | Signup theme inconsistent | Done | Signup uses the restrained authentication design. |
-| R6 | Footer logo contrast | Partial | Dedicated white/light footer wordmark remains. |
+| R6 | Footer logo contrast | Done | The footer uses an orange mark with a readable white Deliivo wordmark. |
 | R7 | Case-sensitive email login | Done | Email normalization and case-insensitive existing-user lookup are implemented across auth flows. |
 | R8 | Vehicle registration missing before publishing | Done | Publish surfaces vehicle setup and backend blocks final publication without a vehicle. |
 | R9 | Add pickup appears above selected points | Done | Add action follows the selected list. |
@@ -117,9 +125,8 @@ The sheet contains only its header and no feedback rows.
 
 ## Remaining Execution Priority
 
-1. Fix footer white/light logo and remove the remaining duplicate footer destination.
+1. Remove the remaining duplicate footer destination.
 2. Complete the named-page EN/ET/RU and header audit.
 3. Improve publish draft/session-expiry recovery messages.
-4. Constrain public destination autocomplete relative to the selected origin where appropriate.
+4. Decide whether separate Insurance/Safety pages are required.
 5. Verify Railway R2/S3 uploads, Railway/Vercel sockets, public driver profiles and admin monitoring/content in production.
-

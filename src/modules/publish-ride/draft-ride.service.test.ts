@@ -20,6 +20,10 @@ const mockFuelPriceService = {
     getFuelPriceForCurrency: jest.fn(),
 };
 
+const mockGoogleService = {
+    placeDetails: jest.fn(),
+};
+
 jest.mock('../../cache/redis.js', () => ({
     __esModule: true,
     default: mockRedis,
@@ -40,13 +44,58 @@ jest.mock('../notification/notification.service.js', () => ({
     createNotification: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../maps/google.service.js', () => ({
+    __esModule: true,
+    googleService: mockGoogleService,
+}));
+
 import * as DraftRideService from './draft-ride.service';
 import { RideStatus } from '@prisma/client';
+import polyline from '@mapbox/polyline';
 
 describe('publishRide', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' });
+        mockGoogleService.placeDetails.mockResolvedValue({
+            address_components: [{ short_name: 'EE', types: ['country'] }],
+        });
+    });
+
+    it('rejects a draft origin outside Estonia, Latvia, and Lithuania', async () => {
+        mockGoogleService.placeDetails.mockResolvedValue({
+            address_components: [{ short_name: 'DE', types: ['country'] }],
+        });
+
+        await expect(DraftRideService.createWithOrigin('driver-1', {
+            originPlaceId: 'place-berlin',
+            originAddress: 'Berlin, Germany',
+            originLat: 52.52,
+            originLng: 13.405,
+        })).rejects.toThrow('LOCATION_OUTSIDE_BALTICS');
+
+        expect(mockRedis.del).not.toHaveBeenCalled();
+    });
+
+    it('requires at least one pickup and one drop-off before publishing', async () => {
+        mockRedis.get.mockResolvedValue(JSON.stringify({
+            userId: 'driver-1',
+            step: 13,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originPlaceId: 'place-tallinn',
+            destinationPlaceId: 'place-tartu',
+            routePolyline: 'encoded-route',
+            routeIsPublishable: true,
+            departureDate: '2026-08-01T00:00:00.000Z',
+            departureTime: '10:00',
+            totalSeats: 3,
+            basePricePerSeat: 12,
+            pickups: [],
+            dropoffs: [],
+        }));
+
+        await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('MEETING_POINTS_REQUIRED');
     });
 
     it('does not persist caller-supplied stopover prices in distance-based pricing mode', async () => {
@@ -103,6 +152,7 @@ describe('publishRide', () => {
     });
 
     it('persists distance-derived stopover prices and null when missing', async () => {
+        const routePolyline = polyline.encode([[10, 20], [11, 21]]);
         const draft = {
             userId: 'driver-1',
             step: 13,
@@ -116,15 +166,21 @@ describe('publishRide', () => {
             destinationAddress: 'Destination',
             destinationLat: 11,
             destinationLng: 21,
-            routePolyline: 'encoded-polyline',
+            routePolyline,
             departureDate: new Date('2026-04-01T00:00:00.000Z').toISOString(),
             departureTime: '09:30',
             totalSeats: 3,
             basePricePerSeat: 40,
             currency: 'GBP',
+            pickups: [
+                { placeId: 'pickup-a', address: 'Pickup A', lat: 10, lng: 20 },
+            ],
+            dropoffs: [
+                { placeId: 'dropoff-a', address: 'Drop-off A', lat: 11, lng: 21 },
+            ],
             stopovers: [
-                { placeId: 'stop-a', address: 'Stop A', lat: 12, lng: 22, recommendedPrice: 18.75 },
-                { placeId: 'stop-b', address: 'Stop B', lat: 13, lng: 23 },
+                { placeId: 'stop-a', address: 'Stop A', lat: 10.3, lng: 20.3, recommendedPrice: 18.75 },
+                { placeId: 'stop-b', address: 'Stop B', lat: 10.6, lng: 20.6 },
             ],
         };
 
@@ -190,7 +246,7 @@ describe('publishRide', () => {
             destinationAddress: 'Destination',
             destinationLat: 11,
             destinationLng: 21,
-            routePolyline: 'encoded-polyline',
+            routePolyline: polyline.encode([[10, 20], [11, 21]]),
             departureDate: new Date('2026-04-01T00:00:00.000Z').toISOString(),
             departureTime: '09:30',
             totalSeats: 3,

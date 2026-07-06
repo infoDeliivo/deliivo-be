@@ -10,17 +10,19 @@ export const googleHttp = {
     location?: { lat: number; lng: number };
     radius?: number;
     types?: string;
+    strictBounds?: boolean;
   }): Promise<ApiResponse<any>> {
     const params: any = {
       input: payload.input,
       key: process.env.GOOGLE_MAPS_API_KEY,
+      components: 'country:ee|country:lv|country:lt',
     };
 
     if (payload.location) {
       params.location = `${payload.location.lat},${payload.location.lng}`;
       if (payload.radius) {
         params.radius = payload.radius;
-        params.strictbounds = true;
+        if (payload.strictBounds !== false) params.strictbounds = true;
       }
     }
 
@@ -47,7 +49,7 @@ export const googleHttp = {
       params: {
         place_id: placeId,
         key: process.env.GOOGLE_MAPS_API_KEY,
-        fields: 'name,formatted_address,geometry',
+        fields: 'name,formatted_address,geometry,address_components',
       },
     });
   },

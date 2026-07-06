@@ -29,9 +29,14 @@ export const createWithOrigin = async (req: AuthRequest, res: Response) => {
             data: formatDraftResponse(draft),
         });
     } catch (error: any) {
+        const locationError = error.message === 'LOCATION_OUTSIDE_BALTICS'
+            ? 'Only locations in Estonia, Latvia, or Lithuania can be used to publish rides'
+            : error.message === 'LOCATION_COUNTRY_UNVERIFIED'
+                ? 'Unable to verify the origin country. Select a suggested location and try again'
+                : null;
         return sendError(res, {
-            status: HttpStatus.INTERNAL_ERROR,
-            message: error.message || 'Failed to create draft',
+            status: locationError ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_ERROR,
+            message: locationError || error.message || 'Failed to create draft',
         });
     }
 };
@@ -58,6 +63,9 @@ export const updatePickups = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'PICKUP_OUTSIDE_CITY_RADIUS') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Pickup point must be within the allowed radius of the origin city';
+        } else if (error.message === 'MEETING_POINT_OUTSIDE_ROUTE') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Meeting points must be within the allowed distance of the selected route';
         }
 
         return sendError(res, {
@@ -77,14 +85,19 @@ export const updateDestination = async (req: AuthRequest, res: Response) => {
             data: formatDraftResponse(draft),
         });
     } catch (error: any) {
+        const locationError = error.message === 'LOCATION_OUTSIDE_BALTICS'
+            ? 'Only locations in Estonia, Latvia, or Lithuania can be used to publish rides'
+            : error.message === 'LOCATION_COUNTRY_UNVERIFIED'
+                ? 'Unable to verify the destination country. Select a suggested location and try again'
+                : null;
         const status = error.message === 'DRAFT_NOT_FOUND'
             ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
+            : locationError ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_ERROR;
         return sendError(res, {
             status,
             message: error.message === 'DRAFT_NOT_FOUND'
                 ? 'Draft not found'
-                : 'Failed to update destination',
+                : locationError || 'Failed to update destination',
         });
     }
 };
@@ -111,6 +124,9 @@ export const updateDropoffs = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'DROPOFF_OUTSIDE_CITY_RADIUS') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Drop-off point must be within the allowed radius of the destination city';
+        } else if (error.message === 'MEETING_POINT_OUTSIDE_ROUTE') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Meeting points must be within the allowed distance of the selected route';
         }
 
         return sendError(res, {
@@ -233,6 +249,9 @@ export const updateStopovers = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'STOPOVER_OUTSIDE_CITY_RADIUS') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Stopover point must be within the allowed radius of its selected stopover city';
+        } else if (error.message === 'MEETING_POINT_OUTSIDE_ROUTE') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Meeting points must be within the allowed distance of the selected route';
         }
 
         return sendError(res, {
@@ -432,6 +451,18 @@ export const publishRide = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'VEHICLE_NOT_VERIFIED') {
             status = HttpStatus.FORBIDDEN;
             message = 'Your vehicle must be verified before publishing a ride';
+        } else if (error.message === 'LOCATION_OUTSIDE_BALTICS') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Only locations in Estonia, Latvia, or Lithuania can be used to publish rides';
+        } else if (error.message === 'LOCATION_COUNTRY_UNVERIFIED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Unable to verify the route countries. Select suggested locations and try again';
+        } else if (error.message === 'MEETING_POINTS_REQUIRED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Add at least one pickup point and one drop-off point before publishing';
+        } else if (error.message === 'MEETING_POINT_OUTSIDE_ROUTE') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Meeting points must be within the allowed distance of the selected route';
         }
 
         return sendError(res, { status, message });

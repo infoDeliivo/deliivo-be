@@ -28,6 +28,7 @@ import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
 import { getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
 import { calculatePrice, PricingConfigData } from '../pricing/pricing.calculator.js';
 import { createNotification } from '../notification/notification.service.js';
+import { googleService } from '../maps/google.service.js';
 
 // ============================================================
 //  CONSTANTS
@@ -42,6 +43,24 @@ const MAX_GROUP_SUGGESTIONS = 3;
 const INTRACITY_ROUTE_THRESHOLD_METERS = 25000;
 const CITY_POINT_RADIUS_METERS = Number(process.env.PUBLISH_CITY_POINT_RADIUS_METERS || '15000');
 const STOPOVER_POINT_RADIUS_METERS = Number(process.env.PUBLISH_STOPOVER_POINT_RADIUS_METERS || '5000');
+const ROUTE_POINT_RADIUS_METERS = Number(process.env.PUBLISH_ROUTE_POINT_RADIUS_METERS || '10000');
+const BALTIC_COUNTRY_CODES = new Set(['EE', 'LV', 'LT']);
+
+const validateBalticPlace = async (placeId: string) => {
+  let details: any;
+  try {
+    details = await googleService.placeDetails(placeId);
+  } catch {
+    throw new Error('LOCATION_COUNTRY_UNVERIFIED');
+  }
+
+  const countryCode = details?.address_components
+    ?.find((component: any) => component.types?.includes('country'))
+    ?.short_name?.toUpperCase();
+
+  if (!countryCode) throw new Error('LOCATION_COUNTRY_UNVERIFIED');
+  if (!BALTIC_COUNTRY_CODES.has(countryCode)) throw new Error('LOCATION_OUTSIDE_BALTICS');
+};
 
 // ============================================================
 //  CACHE KEY HELPERS
@@ -198,6 +217,8 @@ export const createWithOrigin = async (
   driverId: string,
   input: CreateOriginInput,
 ): Promise<DraftRide> => {
+  await validateBalticPlace(input.originPlaceId);
+
   // Delete any existing draft for this user
   await redis.del(draftKey(driverId));
   await redis.del(routesCacheKey(driverId));
@@ -236,6 +257,9 @@ export const updatePickups = async (
     { lat: pickup.lat, lng: pickup.lng },
   ) > CITY_POINT_RADIUS_METERS);
   if (invalidPickup) throw new Error('PICKUP_OUTSIDE_CITY_RADIUS');
+  if (draft.routePolyline && input.pickups?.some((pickup) => (
+    distanceFromRouteMeters({ lat: pickup.lat, lng: pickup.lng }, draft.routePolyline!) > ROUTE_POINT_RADIUS_METERS
+  ))) throw new Error('MEETING_POINT_OUTSIDE_ROUTE');
   draft.pickups = input.pickups;
   draft.step = Math.max(draft.step, 2);
   return saveDraft(draft);
@@ -249,6 +273,8 @@ export const updateDestination = async (
   driverId: string,
   input: UpdateDestinationInput,
 ): Promise<DraftRide> => {
+  await validateBalticPlace(input.destinationPlaceId);
+
   const draft = await getDraft(driverId);
   draft.destinationPlaceId = input.destinationPlaceId;
   draft.destinationAddress = input.destinationAddress;
@@ -280,6 +306,9 @@ export const updateDropoffs = async (
     { lat: dropoff.lat, lng: dropoff.lng },
   ) > CITY_POINT_RADIUS_METERS);
   if (invalidDropoff) throw new Error('DROPOFF_OUTSIDE_CITY_RADIUS');
+  if (draft.routePolyline && input.dropoffs?.some((dropoff) => (
+    distanceFromRouteMeters({ lat: dropoff.lat, lng: dropoff.lng }, draft.routePolyline!) > ROUTE_POINT_RADIUS_METERS
+  ))) throw new Error('MEETING_POINT_OUTSIDE_ROUTE');
   draft.dropoffs = input.dropoffs;
   draft.step = Math.max(draft.step, 5);
   return saveDraft(draft);
@@ -552,6 +581,36 @@ function haversineDistance(
     Math.cos(toRad(p1.lat)) * Math.cos(toRad(p2.lat)) * Math.sin(dLng / 2) ** 2;
 
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function distanceFromRouteMeters(
+  point: { lat: number; lng: number },
+  encodedPolyline: string,
+): number {
+  const path = decodePolyline(encodedPolyline);
+  let minimumDistance = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const start = path[index];
+    const end = path[index + 1];
+    const meanLatitude = ((start.lat + end.lat + point.lat) / 3) * Math.PI / 180;
+    const longitudeScale = Math.cos(meanLatitude);
+    const segmentX = (end.lng - start.lng) * longitudeScale;
+    const segmentY = end.lat - start.lat;
+    const pointX = (point.lng - start.lng) * longitudeScale;
+    const pointY = point.lat - start.lat;
+    const segmentLengthSquared = segmentX ** 2 + segmentY ** 2;
+    const ratio = segmentLengthSquared === 0
+      ? 0
+      : Math.max(0, Math.min(1, (pointX * segmentX + pointY * segmentY) / segmentLengthSquared));
+    const projection = {
+      lat: start.lat + ratio * (end.lat - start.lat),
+      lng: start.lng + ratio * (end.lng - start.lng),
+    };
+    minimumDistance = Math.min(minimumDistance, haversineDistance(point, projection));
+  }
+
+  return minimumDistance;
 }
 
 /**
@@ -923,6 +982,9 @@ export const updateStopovers = async (
     ) > STOPOVER_POINT_RADIUS_METERS;
   });
   if (invalidStopover) throw new Error('STOPOVER_OUTSIDE_CITY_RADIUS');
+  if (draft.routePolyline && input.stopovers?.some((stopover) => (
+    distanceFromRouteMeters({ lat: stopover.lat, lng: stopover.lng }, draft.routePolyline!) > ROUTE_POINT_RADIUS_METERS
+  ))) throw new Error('MEETING_POINT_OUTSIDE_ROUTE');
   draft.stopovers = input.stopovers;
   draft.step = Math.max(draft.step, 8);
   return saveDraft(draft);
@@ -1350,6 +1412,11 @@ export const publishRide = async (driverId: string) => {
     throw new Error('CAPACITY_AND_PRICING_REQUIRED');
   }
 
+  await Promise.all([
+    validateBalticPlace(draft.originPlaceId),
+    validateBalticPlace(draft.destinationPlaceId),
+  ]);
+
     // Validate driver has accepted ToS and has verified DL
     const driver = await prisma.user.findUnique({
         where: { id: driverId },
@@ -1371,6 +1438,17 @@ export const publishRide = async (driverId: string) => {
 
     if (draft.routeIsPublishable === false) {
         throw new Error(draft.routeBlockedReason || ROUTE_BLOCKED_REASON);
+    }
+
+    if (!draft.pickups?.length || !draft.dropoffs?.length) {
+        throw new Error('MEETING_POINTS_REQUIRED');
+    }
+
+    const meetingPoints = [...draft.pickups, ...draft.dropoffs, ...(draft.stopovers || [])];
+    if (meetingPoints.some((point) => (
+      distanceFromRouteMeters({ lat: point.lat, lng: point.lng }, draft.routePolyline!) > ROUTE_POINT_RADIUS_METERS
+    ))) {
+      throw new Error('MEETING_POINT_OUTSIDE_ROUTE');
     }
 
   // Validate user has a verified vehicle
