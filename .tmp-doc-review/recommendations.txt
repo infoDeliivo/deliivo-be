@@ -1,0 +1,87 @@
+Deliivo Website – Baltic SEO Requirements
+1. Multilingual URL Structure (Required)
+Website should use language-based URLs.
+Structure:
+https://deliivo.com/en/
+https://deliivo.com/ee/
+https://deliivo.com/lv/
+https://deliivo.com/lt/
+https://deliivo.com/ru/
+Language dropdown should update URL accordingly.
+Examples:
+/en/
+/ee/
+/lv/
+/lt/
+/ru/
+URL prefixes should remain consistent across all pages.
+Examples:
+/ee/blog/
+/lv/blog/
+/lt/blog/
+/ru/blog/
+/ee/routes
+/lv/routes
+/lt/routes
+2. Hreflang Implementation (Required)
+Add hreflang on all pages.
+Example:
+<link rel="alternate" hreflang="en" href="https://deliivo.com/en/" />
+<link rel="alternate" hreflang="et" href="https://deliivo.com/ee/" />
+<link rel="alternate" hreflang="lv" href="https://deliivo.com/lv/" />
+<link rel="alternate" hreflang="lt" href="https://deliivo.com/lt/" />
+<link rel="alternate" hreflang="ru" href="https://deliivo.com/ru/" />
+<link rel="alternate" hreflang="x-default"
+href="https://deliivo.com/" />
+Important:
+/ee → URL
+et → hreflang
+Every page should include self canonical.
+Example:
+<link rel="canonical"
+href="https://deliivo.com/ee/" />
+3. Blog Section (Required)
+Create dedicated blog section for all languages. ( Blog Same rhenge sab bass language change ho jyegi blog ki or URL change ho jyegi)
+Structure:
+/ee/blog/
+/lv/blog/
+/lt/blog/
+/ru/blog/
+Blog pages should support:
+SEO title
+Meta description
+Internal linking
+Breadcrumb
+Schema
+Author
+Publish date
+4. Google Analytics (GA4)
+<!-- Google tag (gtag.js) --> <script async src="https://www.googletagmanager.com/gtag/js?id=G-MSG1B1Y353"></script> <script> window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', 'G-MSG1B1Y353'); </script>
+ Instructions:
+5. Google Search Console
+<meta name="google-site-verification" content="SU-QN9TplRKM9Kn7lq1H07KiKc93qQZfRhMDveuw1H4" />
+Instructions:
+6. Sitemap
+Create sitemap structure.
+/sitemap.xml
+/sitemap-pages.xml
+/sitemap-blog.xml
+Include all language URLs.
+7. Technical SEO
+Required:
+SSR / prerender
+robots.txt
+canonical
+hreflang
+structured data
+Open Graph
+WebP images
+lazy loading
+mobile optimization
+Core Web Vitals optimization
+8. Baltic SEO Expansion
+Create some landing pages.
+Examples:
+/ee/tallinn-to-tartu
+/lv/riga-to-liepaja
+/lt/vilnius-to-kaunas
