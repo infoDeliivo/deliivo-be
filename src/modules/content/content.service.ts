@@ -99,6 +99,7 @@ async function createContentTables() {
         );
     `);
     await prisma.$executeRawUnsafe(`ALTER TABLE "ContentPost" ADD COLUMN IF NOT EXISTS "coverImageUrl" TEXT;`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "ContentPost" DROP CONSTRAINT IF EXISTS "ContentPost_slug_key";`);
     await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "ContentPost_slug_key";`);
     await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "ContentPost_slug_locale_key" ON "ContentPost" ("slug", "locale");`);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ContentPost_status_locale_publishedAt_idx" ON "ContentPost" ("status", "locale", "publishedAt");`);
