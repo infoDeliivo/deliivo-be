@@ -11,6 +11,7 @@ COPY prisma ./prisma/
 COPY prisma.config.ts ./
 COPY scripts ./scripts/
 RUN npm ci
+RUN sh -n scripts/docker-entrypoint.sh
 
 # Build
 COPY tsconfig.json ./
@@ -22,6 +23,9 @@ RUN npm run build
 FROM node:20-alpine AS production
 
 WORKDIR /app
+
+# One-time runtime recovery for the known failed production migration.
+ENV PRISMA_RECOVERABLE_MIGRATION=20260707113000_localize_content_slugs
 
 COPY --from=base /app/package.json /app/package-lock.json ./
 COPY --from=base /app/node_modules ./node_modules/
