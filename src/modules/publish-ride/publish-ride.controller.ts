@@ -300,11 +300,15 @@ export const updateSchedule = async (req: AuthRequest, res: Response) => {
     } catch (error: any) {
         const status = error.message === 'DRAFT_NOT_FOUND'
             ? HttpStatus.NOT_FOUND
-            : HttpStatus.INTERNAL_ERROR;
+            : error.message === 'DEPARTURE_TOO_SOON'
+                ? HttpStatus.BAD_REQUEST
+                : HttpStatus.INTERNAL_ERROR;
         return sendError(res, {
             status,
             message: error.message === 'DRAFT_NOT_FOUND'
                 ? 'Draft not found'
+                : error.message === 'DEPARTURE_TOO_SOON'
+                    ? 'Departure must be at least 3 hours from now'
                 : 'Failed to update schedule',
         });
     }
@@ -430,6 +434,9 @@ export const publishRide = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'SCHEDULE_REQUIRED') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Schedule is required before publishing';
+        } else if (error.message === 'DEPARTURE_TOO_SOON') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Departure must be at least 3 hours from now';
         } else if (error.message === 'CAPACITY_AND_PRICING_REQUIRED') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Seats and pricing are required before publishing';

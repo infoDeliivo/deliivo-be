@@ -2,9 +2,57 @@ import { prisma } from '../../config/index.js';
 import { generateTokens, verifyRefreshToken } from '../token/tokens.service.js';
 import { Role } from '../user/user.constants.js';
 import { logError } from '../../utils/logger.js';
+import { OAuth2Client } from 'google-auth-library';
+
+const googleClient = new OAuth2Client();
 
 export const normalizeAuthIdentifier = (method: string, identifier: string) =>
   method === 'email' ? identifier.trim().toLowerCase() : identifier.trim();
+
+export const googleAuthService = async (idToken: string) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) throw new Error('GOOGLE_AUTH_NOT_CONFIGURED');
+
+  const ticket = await googleClient.verifyIdToken({ idToken, audience: clientId });
+  const payload = ticket.getPayload();
+  if (!payload?.email || payload.email_verified !== true) {
+    throw new Error('GOOGLE_EMAIL_NOT_VERIFIED');
+  }
+
+  const email = normalizeAuthIdentifier('email', payload.email);
+  let user = await prisma.user.findUnique({ where: { email } });
+  if (user?.isBanned) throw new Error('USER_BANNED');
+
+  if (!user) {
+    user = await prisma.user.create({
+      data: {
+        email,
+        name: payload.name?.trim() || null,
+        avatarUrl: payload.picture || null,
+        emailVerified: true,
+        isVerified: true,
+        onboardingStatus: 'PENDING',
+      },
+    });
+  } else {
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerified: true,
+        isVerified: true,
+        ...(!user.name && payload.name ? { name: payload.name.trim() } : {}),
+        ...(!user.avatarUrl && payload.picture ? { avatarUrl: payload.picture } : {}),
+      },
+    });
+  }
+
+  const tokens = await generateTokens({ id: user.id, role: user.role ?? Role.USER });
+  return {
+    tokens,
+    user,
+    next: user.onboardingStatus === 'COMPLETED' ? 'home' as const : 'onboarding' as const,
+  };
+};
 
 const identifierWhere = (method: string, identifier: string) => {
   const normalized = normalizeAuthIdentifier(method, identifier);

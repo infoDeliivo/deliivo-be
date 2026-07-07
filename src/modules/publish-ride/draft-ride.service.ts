@@ -29,6 +29,7 @@ import { getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.
 import { calculatePrice, PricingConfigData } from '../pricing/pricing.calculator.js';
 import { createNotification } from '../notification/notification.service.js';
 import { googleService } from '../maps/google.service.js';
+import { isPublishDepartureTooSoon } from './publish-schedule.js';
 
 // ============================================================
 //  CONSTANTS
@@ -998,6 +999,9 @@ export const updateSchedule = async (
   driverId: string,
   input: UpdateScheduleInput,
 ): Promise<DraftRide> => {
+  if (isPublishDepartureTooSoon(new Date(input.departureDate), input.departureTime)) {
+    throw new Error('DEPARTURE_TOO_SOON');
+  }
   const draft = await getDraft(driverId);
   draft.departureDate = new Date(input.departureDate).toISOString();
   draft.departureTime = input.departureTime;
@@ -1407,6 +1411,9 @@ export const publishRide = async (driverId: string) => {
   }
   if (!draft.departureDate || !draft.departureTime) {
     throw new Error('SCHEDULE_REQUIRED');
+  }
+  if (isPublishDepartureTooSoon(new Date(draft.departureDate), draft.departureTime)) {
+    throw new Error('DEPARTURE_TOO_SOON');
   }
   if (!draft.totalSeats || !draft.basePricePerSeat) {
     throw new Error('CAPACITY_AND_PRICING_REQUIRED');

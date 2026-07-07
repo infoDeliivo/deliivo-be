@@ -75,3 +75,7 @@ export const acceptTosSchema = z.object({
   tosVersion: z.string().min(1),
   privacyVersion: z.string().min(1),
 });
+
+export const googleAuthSchema = z.object({
+  idToken: z.string().min(100, 'Google ID token is required'),
+});

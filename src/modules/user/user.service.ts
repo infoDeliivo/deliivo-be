@@ -116,9 +116,7 @@ export const getFullProfileService = async (
     };
 
     // Transform travel preference
-    const travelPreference: TravelPreferenceData | null = userWithRelations.travelPreference &&
-      userWithRelations.travelPreference.chattiness !== null &&
-      userWithRelations.travelPreference.pets !== null
+    const travelPreference: TravelPreferenceData | null = userWithRelations.travelPreference
       ? {
         id: userWithRelations.travelPreference.id,
         chattiness: userWithRelations.travelPreference.chattiness,

@@ -42,6 +42,7 @@ import {
 } from '../payments/payment.service.js';
 import { emitToUsers } from '../../socket/index.js';
 import { calculateAgeYears, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
+import { isBookingWindowClosed } from './booking-window.js';
 
 type RideWaypointDetails = {
     id: string;
@@ -665,6 +666,11 @@ export const createBooking = async (
             throw new Error('RIDE_NOT_FOUND');
         }
 
+        const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
+        if (isBookingWindowClosed(departureAt, now)) {
+            throw new Error('BOOKING_WINDOW_CLOSED');
+        }
+
         if (ride.driverId === passengerId) {
             throw new Error('CANNOT_BOOK_OWN_RIDE');
         }
@@ -810,7 +816,6 @@ export const createBooking = async (
         );
 
         // Calculate rider-selected deadline
-        const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
         const { deadlineAt: driverDecisionDeadlineAt, expiryHours } = bypassBookingPaymentMode
             ? calculateDeadline(responseExpiryOption, departureAt, now)
             : { deadlineAt: new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS), expiryHours: Math.round(DRIVER_DECISION_WINDOW_MS / (60 * 60 * 1000)) };

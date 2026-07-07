@@ -12,6 +12,7 @@ import {
   loginService,
   requestOtpService,
   normalizeAuthIdentifier,
+  googleAuthService,
 } from './auth.service.js';
 import { sendMail } from '../mail/mail.service.js';
 import { signupOtpTemplate, loginOtpTemplate, resetOtpTemplate } from '../mail/mail.templates.js';
@@ -51,6 +52,32 @@ const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
     mailTemplate: resetOtpTemplate(code),
     smsTemplate: resetOtpSmsTemplate(code),
   };
+};
+
+export const googleAuth = async (req: Request, res: Response) => {
+  try {
+    const result = await googleAuthService(req.body.idToken);
+    return sendSuccess(res, {
+      message: 'Google authentication successful',
+      data: {
+        ...result.tokens,
+        next: result.next,
+        user: {
+          id: result.user.id,
+          email: result.user.email,
+          role: result.user.role,
+        },
+      },
+    });
+  } catch (error: any) {
+    if (error.message === 'GOOGLE_AUTH_NOT_CONFIGURED') {
+      return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Google authentication is not configured' });
+    }
+    if (error.message === 'USER_BANNED') {
+      return sendError(res, { status: HttpStatus.FORBIDDEN, message: 'Your account has been suspended' });
+    }
+    return sendError(res, { status: HttpStatus.UNAUTHORIZED, message: 'Google authentication failed' });
+  }
 };
 
 export const signup = async (req: Request, res: Response) => {

@@ -101,7 +101,11 @@ export const uploadToS3 = async (options: S3UploadOptions): Promise<S3UploadResu
     } catch (error) {
         logError('S3 upload error', error);
 
-        const errorMessage = error instanceof Error ? error.message : "Unknown S3 upload error";
+        const storageError = error as { name?: string; Code?: string; code?: string; message?: string };
+        const errorCode = storageError.name || storageError.Code || storageError.code;
+        const errorMessage = errorCode === 'NoSuchBucket'
+            ? `Configured ${isR2 ? 'R2' : 'S3'} bucket "${bucketName}" does not exist. Check the bucket name and storage credentials.`
+            : (error instanceof Error ? error.message : "Unknown S3 upload error");
 
         return {
             success: false,

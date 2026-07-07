@@ -90,6 +90,7 @@ Thumbs.db
 # ========================
 tmp/
 temp/
+.xlsx-review*/
 
 /src/generated/prisma
 carpooling-37720-firebase-adminsdk-*.json

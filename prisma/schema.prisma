@@ -538,6 +538,7 @@ model ContentPost {
   title       String
   excerpt     String
   body        String
+  coverImageUrl String?
   category    String
   status      String   @default("DRAFT")
   publishedAt DateTime?

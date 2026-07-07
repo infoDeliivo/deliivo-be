@@ -1,0 +1,1 @@
+ALTER TABLE "ContentPost" ADD COLUMN IF NOT EXISTS "coverImageUrl" TEXT;

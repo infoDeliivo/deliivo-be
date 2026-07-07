@@ -1,5 +1,21 @@
 import { RideStatus, WaypointType } from '@prisma/client';
 import { z } from 'zod';
+import { isPublishDepartureTooSoon } from './publish-schedule.js';
+
+const departureDateSchema = z.coerce.date();
+
+const validatePublishSchedule = (
+    value: { departureDate: Date; departureTime: string },
+    context: z.RefinementCtx,
+) => {
+    if (isPublishDepartureTooSoon(value.departureDate, value.departureTime)) {
+        context.addIssue({
+            code: 'custom',
+            path: ['departureTime'],
+            message: 'Departure must be at least 3 hours from now',
+        });
+    }
+};
 
 /* ================= WAYPOINT SCHEMA ================= */
 export const waypointSchema = z.object({
@@ -27,10 +43,7 @@ export const createRideSchema = z.object({
     destinationLng: z.number().min(-180).max(180),
 
     // Schedule
-    departureDate: z.coerce.date().refine(
-        (date) => date > new Date(),
-        { message: 'Departure date must be in the future' }
-    ),
+    departureDate: departureDateSchema,
     departureTime: z.string().regex(
         /^([01]\d|2[0-3]):([0-5]\d)$/,
         'Time must be in HH:mm format'
@@ -54,7 +67,7 @@ export const createRideSchema = z.object({
 
     // Optional notes
     notes: z.string().max(500, 'Notes must be 500 characters or less').optional(),
-});
+}).superRefine(validatePublishSchedule);
 
 /* ================= UPDATE WAYPOINTS SCHEMA ================= */
 export const updateWaypointsSchema = z.object({
@@ -147,15 +160,12 @@ export const updateDestinationSchema = z.object({
 
 /* ================= STEP 3: UPDATE SCHEDULE (Date/Time) ================= */
 export const updateScheduleSchema = z.object({
-    departureDate: z.coerce.date().refine(
-        (date) => date > new Date(),
-        { message: 'Departure date must be in the future' }
-    ),
+    departureDate: departureDateSchema,
     departureTime: z.string().regex(
         /^([01]\d|2[0-3]):([0-5]\d)$/,
         'Time must be in HH:mm format'
     ),
-});
+}).superRefine(validatePublishSchedule);
 
 /* ================= STEP 4: UPDATE CAPACITY (Seats/Price) ================= */
 export const updateCapacitySchema = z.object({

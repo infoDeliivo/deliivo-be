@@ -11,6 +11,7 @@ export interface ContentPost {
     title: string;
     excerpt: string;
     body: string;
+    coverImageUrl: string | null;
     category: ContentPostCategory;
     status: ContentPostStatus;
     publishedAt: string | null;
@@ -50,6 +51,7 @@ function toContentPost(row: {
     title: string;
     excerpt: string;
     body: string;
+    coverImageUrl: string | null;
     category: string;
     status: string;
     publishedAt: Date | null;
@@ -84,6 +86,7 @@ async function createContentTables() {
             "title" TEXT NOT NULL,
             "excerpt" TEXT NOT NULL,
             "body" TEXT NOT NULL,
+            "coverImageUrl" TEXT,
             "category" TEXT NOT NULL,
             "status" TEXT NOT NULL DEFAULT 'DRAFT',
             "publishedAt" TIMESTAMP(3),
@@ -95,6 +98,7 @@ async function createContentTables() {
             "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
     `);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "ContentPost" ADD COLUMN IF NOT EXISTS "coverImageUrl" TEXT;`);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ContentPost_status_locale_publishedAt_idx" ON "ContentPost" ("status", "locale", "publishedAt");`);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ContentPost_updatedAt_idx" ON "ContentPost" ("updatedAt");`);
 
@@ -332,6 +336,7 @@ export async function upsertPost(
                 title: input.title,
                 excerpt: input.excerpt,
                 body: input.body,
+                coverImageUrl: input.coverImageUrl?.trim() || null,
                 category: input.category,
                 status: nextStatus,
                 publishedAt: nextPublishedAt,
@@ -357,6 +362,7 @@ export async function upsertPost(
             title: input.title,
             excerpt: input.excerpt,
             body: input.body,
+            coverImageUrl: input.coverImageUrl?.trim() || null,
             category: input.category,
             status,
             publishedAt: status === 'PUBLISHED' ? now : null,
