@@ -169,6 +169,12 @@ services:
         NEXT_PUBLIC_SUPPORT_EMAIL: ${NEXT_PUBLIC_SUPPORT_EMAIL:-support@deliivo.com}
         NEXT_PUBLIC_LEGAL_EMAIL: ${NEXT_PUBLIC_LEGAL_EMAIL:-legal@deliivo.com}
         NEXT_PUBLIC_PRIVACY_EMAIL: ${NEXT_PUBLIC_PRIVACY_EMAIL:-privacy@deliivo.com}
+        NEXT_PUBLIC_INSTAGRAM_URL: ${NEXT_PUBLIC_INSTAGRAM_URL:-https://www.instagram.com/deliivoapp}
+        NEXT_PUBLIC_FACEBOOK_URL: ${NEXT_PUBLIC_FACEBOOK_URL:-https://www.facebook.com/deliivoapp}
+        NEXT_PUBLIC_X_URL: ${NEXT_PUBLIC_X_URL:-https://x.com/Deliivoapp}
+        NEXT_PUBLIC_TIKTOK_URL: ${NEXT_PUBLIC_TIKTOK_URL:-https://www.tiktok.com/@deliivo.app}
+        NEXT_PUBLIC_LINKEDIN_URL: ${NEXT_PUBLIC_LINKEDIN_URL:-https://www.linkedin.com/company/deliivo}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-https://deliivo-webapp.vercel.app}
     restart: unless-stopped
     env_file:
       - .env

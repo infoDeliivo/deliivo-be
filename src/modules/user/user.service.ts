@@ -1,6 +1,7 @@
 import { prisma } from '../../config/index.js';
 import * as enums from './user.constants.js';
 import { logError } from '../../utils/logger.js';
+import { parseDateOnlyAsUtc } from '../../utils/age.js';
 import type {
   FullProfileResponse,
   UserBasicInfo,
@@ -187,6 +188,10 @@ export const updateFullProfileService = async (
 ): Promise<ServiceResult<FullProfileResponse>> => {
   try {
     const { travelPreference, ...basicData } = payload;
+    const parsedDob = basicData.dob !== undefined ? parseDateOnlyAsUtc(basicData.dob) : undefined;
+    if (basicData.dob !== undefined && !parsedDob) {
+      return { success: false, reason: 'INVALID_DATE_OF_BIRTH' };
+    }
 
     // Check for duplicate nickName if provided
     if (basicData.nickName) {
@@ -210,7 +215,7 @@ export const updateFullProfileService = async (
       if (basicData.nickName !== undefined) userUpdateData.nickName = basicData.nickName;
       if (basicData.salutation !== undefined) userUpdateData.salutation = basicData.salutation;
       if (basicData.gender !== undefined) userUpdateData.gender = basicData.gender;
-      if (basicData.dob !== undefined) userUpdateData.dob = new Date(basicData.dob);
+      if (parsedDob !== undefined) userUpdateData.dob = parsedDob;
 
       // Update user if there are fields to update
       if (Object.keys(userUpdateData).length > 0) {
@@ -280,13 +285,18 @@ export const completeOnBoardingStep1Service = async (
       return { success: false, reason: 'Onboarding already completed' };
     }
 
+    const dob = parseDateOnlyAsUtc(data.dob);
+    if (!dob) {
+      return { success: false, user: null, reason: 'Invalid date of birth' };
+    }
+
     const user = await prisma.user.update({
       where: { id: userId },
       data: {
         name: data.name,
         salutation: data.salutation,
         gender: data.gender,
-        dob: new Date(data.dob),
+        dob,
         onboardingStatus: 'COMPLETED',
       },
     });

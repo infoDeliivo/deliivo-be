@@ -534,7 +534,7 @@ model DriverPenaltyEvent {
 
 model ContentPost {
   id          String   @id
-  slug        String   @unique
+  slug        String
   title       String
   excerpt     String
   body        String
@@ -551,6 +551,7 @@ model ContentPost {
 
   @@index([status, locale, publishedAt])
   @@index([updatedAt])
+  @@unique([slug, locale])
 }
 
 model ContentPostAudit {

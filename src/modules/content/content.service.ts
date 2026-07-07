@@ -82,7 +82,7 @@ async function createContentTables() {
     await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS "ContentPost" (
             "id" TEXT PRIMARY KEY,
-            "slug" TEXT NOT NULL UNIQUE,
+            "slug" TEXT NOT NULL,
             "title" TEXT NOT NULL,
             "excerpt" TEXT NOT NULL,
             "body" TEXT NOT NULL,
@@ -99,6 +99,8 @@ async function createContentTables() {
         );
     `);
     await prisma.$executeRawUnsafe(`ALTER TABLE "ContentPost" ADD COLUMN IF NOT EXISTS "coverImageUrl" TEXT;`);
+    await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "ContentPost_slug_key";`);
+    await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "ContentPost_slug_locale_key" ON "ContentPost" ("slug", "locale");`);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ContentPost_status_locale_publishedAt_idx" ON "ContentPost" ("status", "locale", "publishedAt");`);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ContentPost_updatedAt_idx" ON "ContentPost" ("updatedAt");`);
 
@@ -148,14 +150,7 @@ export async function listPublishedPosts(locale?: string) {
             return localizedPosts;
         }
 
-        if (normalizedLocale !== 'en') {
-            const englishPosts = await loadPosts('en');
-            if (englishPosts.length > 0) {
-                return englishPosts;
-            }
-        }
-
-        return loadPosts();
+        return localizedPosts;
     };
 
     try {
@@ -190,14 +185,7 @@ export async function getPublishedPostBySlug(slug: string, locale?: string) {
             return localizedPost;
         }
 
-        if (normalizedLocale !== 'en') {
-            const englishPost = await loadPost('en');
-            if (englishPost) {
-                return englishPost;
-            }
-        }
-
-        return loadPost();
+        return localizedPost;
     };
 
     try {
@@ -321,7 +309,7 @@ export async function upsertPost(
         if (!existing) throw new Error('POST_NOT_FOUND');
 
         const duplicate = await prisma.contentPost.findFirst({
-            where: { slug, id: { not: input.id } },
+            where: { slug, locale, id: { not: input.id } },
             select: { id: true },
         });
         if (duplicate) throw new Error('SLUG_EXISTS');
@@ -351,7 +339,7 @@ export async function upsertPost(
         return payload;
     }
 
-    const duplicate = await prisma.contentPost.findUnique({ where: { slug } });
+    const duplicate = await prisma.contentPost.findUnique({ where: { slug_locale: { slug, locale } } });
     if (duplicate) throw new Error('SLUG_EXISTS');
 
     const status: ContentPostStatus = (input.status || 'DRAFT') as ContentPostStatus;
