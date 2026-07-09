@@ -2,7 +2,6 @@ import { Response } from 'express';
 import * as ChatService from './chat.service.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
-import { uploadToS3 } from '../../services/s3.service.js';
 import type { ImagePayload, LocationPayload } from './chat.types.js';
 
 /* ================= LIST CONVERSATIONS ================= */
@@ -91,29 +90,19 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
 /* ================= SEND IMAGE ================= */
 export const sendImage = async (req: AuthRequest, res: Response) => {
     try {
-        // Validate file exists (multer should have populated req.file)
-        if (!req.file) {
-            return sendError(res, {
-                status: HttpStatus.BAD_REQUEST,
-                message: 'Image file is required',
-            });
-        }
-
-        // Upload image to S3
-        const uploadResult = await uploadToS3({ folder: 'chat', file: req.file });
-
-        if (!uploadResult.success || !uploadResult.url) {
-            return sendError(res, {
-                status: HttpStatus.INTERNAL_ERROR,
-                message: uploadResult.error || 'Failed to upload image',
-            });
-        }
+        // Image already uploaded via the presigned flow (target=chat_image); the body
+        // carries the confirmed public URL.
+        const { imageUrl, mimeType, fileSize } = req.body as {
+            imageUrl: string;
+            mimeType?: string;
+            fileSize?: number;
+        };
 
         // Build image payload
         const imagePayload: ImagePayload = {
-            imageUrl: uploadResult.url,
-            mimeType: req.file.mimetype,
-            fileSize: req.file.size,
+            imageUrl,
+            mimeType,
+            fileSize,
         };
 
         // Send message with IMAGE type

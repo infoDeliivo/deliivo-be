@@ -210,17 +210,28 @@
         "requestBody": {
           "required": true,
           "content": {
-            "multipart/form-data": {
+            "application/json": {
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "image"
+                  "imageUrl",
+                  "documentType"
                 ],
                 "properties": {
-                  "image": {
+                  "imageUrl": {
                     "type": "string",
-                    "format": "binary"
+                    "format": "uri",
+                    "description": "Public URL returned by POST /uploads/confirm (target=vehicle_draft_document)."
+                  },
+                  "documentType": {
+                    "type": "string",
+                    "enum": [
+                      "VEHICLE_IMAGE",
+                      "VEHICLE_DOCUMENT",
+                      "DRIVING_LICENSE",
+                      "INSURANCE_DOCUMENT"
+                    ]
                   }
                 }
               }

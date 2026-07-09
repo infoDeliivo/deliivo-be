@@ -14,9 +14,9 @@ const METHODS: HttpMethod[] = ['get', 'post', 'put', 'patch', 'delete'];
 // Endpoints intentionally hidden from public Swagger docs.
 const OPENAPI_HIDDEN_ENDPOINTS = new Set<string>([
   'POST /api/v1/vehicles',
-  'POST /api/v1/vehicles/upload',
   'PUT /api/v1/vehicles/{id}/update-details',
-  'POST /api/v1/vehicles/{id}/image',
+  // Dev-only local PUT receiver (used when no bucket is configured); not part of the public API.
+  'PUT /api/v1/uploads/local/{token}',
 ]);
 
 const ROOT = process.cwd();

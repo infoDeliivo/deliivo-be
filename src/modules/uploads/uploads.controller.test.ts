@@ -1,0 +1,203 @@
+// Mocks (names prefixed with `mock` so jest.mock factories may reference them).
+const mockHeadObject = jest.fn();
+const mockPromoteObject = jest.fn();
+const mockDeleteObject = jest.fn();
+const mockBuildPublicUrl = jest.fn((key: string) => `https://cdn.test/${key}`);
+const mockUpdateAvatarService = jest.fn();
+const mockUpdateVehicle = jest.fn();
+const mockAddVehicleDocument = jest.fn();
+const mockUserOwnsVehicle = jest.fn();
+const mockDeleteCache = jest.fn();
+const mockClearAvatarService = jest.fn();
+const mockClearVehicleImage = jest.fn();
+const mockDeleteVehicleDocument = jest.fn();
+
+jest.mock('../../services/s3.service.js', () => ({
+    getPresignedUploadUrl: jest.fn(),
+    getPresignedDownloadUrl: jest.fn(),
+    headObject: mockHeadObject,
+    promoteObject: mockPromoteObject,
+    deleteObject: mockDeleteObject,
+    buildPublicUrl: mockBuildPublicUrl,
+    TMP_PREFIX: 'tmp',
+    PERMANENT_PREFIX: 'uploads',
+}));
+jest.mock('../../services/cache.service.js', () => ({
+    deleteCache: mockDeleteCache,
+    cacheKeys: {
+        user: (id: string) => `user:${id}`,
+        userProfile: (id: string) => `userProfile:${id}`,
+        publicProfile: (id: string) => `publicProfile:${id}`,
+        vehicle: (id: string) => `vehicle:${id}`,
+        userVehicles: (id: string) => `userVehicles:${id}`,
+    },
+}));
+jest.mock('../vehicles/vehicle.service.js', () => ({
+    userOwnsVehicle: mockUserOwnsVehicle,
+    updateVehicle: mockUpdateVehicle,
+    addVehicleDocument: mockAddVehicleDocument,
+    findVehicleDocumentByKey: jest.fn(),
+    clearVehicleImage: mockClearVehicleImage,
+    deleteVehicleDocument: mockDeleteVehicleDocument,
+}));
+jest.mock('../user/user.service.js', () => ({
+    updateAvatarService: mockUpdateAvatarService,
+    clearAvatarService: mockClearAvatarService,
+}));
+
+import { confirmUpload, deleteUpload } from './uploads.controller.js';
+
+type JsonResponse = { status: number; body: unknown };
+const makeRes = () => {
+    const out: JsonResponse = { status: 0, body: null };
+    const res = {
+        locals: {} as Record<string, unknown>,
+        status(code: number) {
+            out.status = code;
+            return res;
+        },
+        json(payload: unknown) {
+            out.body = payload;
+            return res;
+        },
+    };
+    return { res, out };
+};
+
+beforeEach(() => {
+    jest.clearAllMocks();
+    mockHeadObject.mockResolvedValue({ exists: true, contentType: 'image/png', contentLength: 1000 });
+    mockPromoteObject.mockImplementation(async (_tmp: string, perm: string) => perm);
+    mockBuildPublicUrl.mockImplementation((key: string) => `https://cdn.test/${key}`);
+});
+
+describe('confirmUpload — avatar replace deletes the previous object', () => {
+    it('deletes the previous key when it differs from the new one', async () => {
+        mockUpdateAvatarService.mockResolvedValue({ success: true, previousKey: 'uploads/avatar/u1/old.png' });
+        const { res, out } = makeRes();
+        await confirmUpload(
+            { user: { id: 'u1' }, body: { target: 'avatar', key: 'tmp/avatar/u1/new.png' } } as never,
+            res as never,
+        );
+        expect(mockPromoteObject).toHaveBeenCalledWith('tmp/avatar/u1/new.png', 'uploads/avatar/u1/new.png');
+        expect(mockDeleteObject).toHaveBeenCalledWith('uploads/avatar/u1/old.png');
+        expect(out.body).toMatchObject({ success: true });
+    });
+
+    it('does not delete when there was no previous key', async () => {
+        mockUpdateAvatarService.mockResolvedValue({ success: true, previousKey: undefined });
+        const { res } = makeRes();
+        await confirmUpload(
+            { user: { id: 'u1' }, body: { target: 'avatar', key: 'tmp/avatar/u1/new.png' } } as never,
+            res as never,
+        );
+        expect(mockDeleteObject).not.toHaveBeenCalled();
+    });
+
+    it('does not delete when the previous key equals the new key', async () => {
+        mockUpdateAvatarService.mockResolvedValue({ success: true, previousKey: 'uploads/avatar/u1/new.png' });
+        const { res } = makeRes();
+        await confirmUpload(
+            { user: { id: 'u1' }, body: { target: 'avatar', key: 'tmp/avatar/u1/new.png' } } as never,
+            res as never,
+        );
+        expect(mockDeleteObject).not.toHaveBeenCalled();
+    });
+});
+
+describe('confirmUpload — vehicle_image replace deletes the previous object', () => {
+    it('deletes the previous image key', async () => {
+        mockUserOwnsVehicle.mockResolvedValue(true);
+        mockUpdateVehicle.mockResolvedValue({ success: true, previousImageKey: 'uploads/vehicle/u1/old.png' });
+        const { res } = makeRes();
+        await confirmUpload(
+            {
+                user: { id: 'u1' },
+                body: { target: 'vehicle_image', key: 'tmp/vehicle/u1/new.png', vehicleId: 'v1' },
+            } as never,
+            res as never,
+        );
+        expect(mockDeleteObject).toHaveBeenCalledWith('uploads/vehicle/u1/old.png');
+    });
+});
+
+describe('confirmUpload — one-shot public targets return {url,key} without an owner write', () => {
+    it.each(['chat_image', 'vehicle_draft_document'] as const)('%s', async (target) => {
+        const folder = target === 'chat_image' ? 'chat' : 'vehicle';
+        const { res, out } = makeRes();
+        await confirmUpload(
+            { user: { id: 'u1' }, body: { target, key: `tmp/${folder}/u1/x.png` } } as never,
+            res as never,
+        );
+        expect(mockUpdateAvatarService).not.toHaveBeenCalled();
+        expect(mockUpdateVehicle).not.toHaveBeenCalled();
+        expect(mockAddVehicleDocument).not.toHaveBeenCalled();
+        expect(mockDeleteObject).not.toHaveBeenCalled();
+        expect(out.body).toMatchObject({
+            success: true,
+            data: { key: expect.stringContaining('uploads/'), url: expect.stringContaining('https://cdn.test/') },
+        });
+    });
+});
+
+describe('deleteUpload', () => {
+    it('avatar: clears the record and deletes the object', async () => {
+        mockClearAvatarService.mockResolvedValue({ success: true, previousKey: 'uploads/avatar/u1/a.png' });
+        const { res, out } = makeRes();
+        await deleteUpload({ user: { id: 'u1' }, query: { target: 'avatar' } } as never, res as never);
+        expect(mockClearAvatarService).toHaveBeenCalledWith('u1');
+        expect(mockDeleteObject).toHaveBeenCalledWith('uploads/avatar/u1/a.png');
+        expect(out.body).toMatchObject({ success: true });
+    });
+
+    it('avatar: no object delete when there was no key', async () => {
+        mockClearAvatarService.mockResolvedValue({ success: true, previousKey: undefined });
+        const { res } = makeRes();
+        await deleteUpload({ user: { id: 'u1' }, query: { target: 'avatar' } } as never, res as never);
+        expect(mockDeleteObject).not.toHaveBeenCalled();
+    });
+
+    it('vehicle_image: clears the record and deletes the object', async () => {
+        mockClearVehicleImage.mockResolvedValue({ success: true, previousImageKey: 'uploads/vehicle/u1/v.png' });
+        const { res } = makeRes();
+        await deleteUpload(
+            { user: { id: 'u1' }, query: { target: 'vehicle_image', vehicleId: 'v1' } } as never,
+            res as never,
+        );
+        expect(mockClearVehicleImage).toHaveBeenCalledWith('u1', 'v1');
+        expect(mockDeleteObject).toHaveBeenCalledWith('uploads/vehicle/u1/v.png');
+    });
+
+    it('vehicle_document: deletes the row and its object', async () => {
+        mockDeleteVehicleDocument.mockResolvedValue({ id: 'doc1', imageKey: 'uploads/vehicle-documents/u1/d.png' });
+        const { res, out } = makeRes();
+        await deleteUpload(
+            {
+                user: { id: 'u1' },
+                query: { target: 'vehicle_document', vehicleId: 'v1', key: 'uploads/vehicle-documents/u1/d.png' },
+            } as never,
+            res as never,
+        );
+        expect(mockDeleteObject).toHaveBeenCalledWith('uploads/vehicle-documents/u1/d.png');
+        expect(out.body).toMatchObject({ success: true });
+    });
+
+    it('vehicle_document: 404 when the key is not found', async () => {
+        mockDeleteVehicleDocument.mockResolvedValue(null);
+        const { res, out } = makeRes();
+        await deleteUpload(
+            { user: { id: 'u1' }, query: { target: 'vehicle_document', vehicleId: 'v1', key: 'nope' } } as never,
+            res as never,
+        );
+        expect(out.status).toBe(404);
+        expect(mockDeleteObject).not.toHaveBeenCalled();
+    });
+
+    it('object-delete failure does not fail the request (best-effort)', async () => {
+        mockClearAvatarService.mockResolvedValue({ success: true, previousKey: 'uploads/avatar/u1/a.png' });
+        mockDeleteObject.mockRejectedValueOnce(new Error('bucket down'));
+        const { res, out } = makeRes();
+        await deleteUpload({ user: { id: 'u1' }, query: { target: 'avatar' } } as never, res as never);
+        expect(out.body).toMatchObject({ success: true });
+    });
+});

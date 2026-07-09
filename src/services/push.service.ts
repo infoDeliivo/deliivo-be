@@ -1,120 +1,13 @@
 import admin from 'firebase-admin';
-import fs from 'fs';
-import path from 'path';
 import { prisma } from '../config/index.js';
 import logger from '../utils/logger.js';
+import { ensureFirebaseApp } from '../config/firebase.config.js';
 
 // ============ FIREBASE INITIALIZATION ============
+// Credential loading + init is shared with the storage service; see firebase.config.ts.
 
-let firebaseInitialized = false;
-type ServiceAccountConfig = {
-    serviceAccount: admin.ServiceAccount;
-    source: string;
-};
-
-const tryParseServiceAccount = (raw: string, source: string): ServiceAccountConfig | null => {
-    try {
-        return {
-            serviceAccount: JSON.parse(raw) as admin.ServiceAccount,
-            source,
-        };
-    } catch (error) {
-        logger.warn(`Ignoring invalid ${source}: ${(error as Error).message}`);
-        return null;
-    }
-};
-
-const resolveExistingFilePath = (envVarName: 'FIREBASE_SERVICE_ACCOUNT_PATH' | 'GOOGLE_APPLICATION_CREDENTIALS'): string | null => {
-    const filePath = process.env[envVarName];
-    if (!filePath) return null;
-
-    const resolvedPath = path.resolve(filePath);
-    if (!fs.existsSync(resolvedPath)) {
-        logger.warn(`${envVarName} points to a missing file at ${resolvedPath}; skipping file-based Firebase auth.`);
-        return null;
-    }
-
-    return resolvedPath;
-};
-
-/**
- * Initialize Firebase Admin SDK from a JSON env var, base64 env var,
- * legacy base64 env var, local file path, or GOOGLE_APPLICATION_CREDENTIALS.
- */
-const loadServiceAccount = (): ServiceAccountConfig | null => {
-    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-    if (serviceAccountJson) {
-        return tryParseServiceAccount(serviceAccountJson, 'FIREBASE_SERVICE_ACCOUNT_JSON');
-    }
-
-    const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
-    if (serviceAccountBase64) {
-        return tryParseServiceAccount(
-            Buffer.from(serviceAccountBase64, 'base64').toString('utf-8'),
-            'FIREBASE_SERVICE_ACCOUNT_BASE64',
-        );
-    }
-
-    const legacyServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
-    if (legacyServiceAccount) {
-        return (
-            tryParseServiceAccount(
-                Buffer.from(legacyServiceAccount, 'base64').toString('utf-8'),
-                'FIREBASE_SERVICE_ACCOUNT (legacy base64)',
-            ) || tryParseServiceAccount(legacyServiceAccount, 'FIREBASE_SERVICE_ACCOUNT (legacy JSON)')
-        );
-    }
-
-    const resolvedPath = resolveExistingFilePath('FIREBASE_SERVICE_ACCOUNT_PATH');
-    if (resolvedPath) {
-        try {
-            return {
-                serviceAccount: JSON.parse(fs.readFileSync(resolvedPath, 'utf-8')) as admin.ServiceAccount,
-                source: `FIREBASE_SERVICE_ACCOUNT_PATH (${resolvedPath})`,
-            };
-        } catch (error) {
-            logger.warn(`Ignoring invalid FIREBASE_SERVICE_ACCOUNT_PATH file at ${resolvedPath}: ${(error as Error).message}`);
-        }
-    }
-
-    return null;
-};
-
-const initFirebase = () => {
-    if (firebaseInitialized) return;
-
-    try {
-        const serviceAccountConfig = loadServiceAccount();
-
-        if (serviceAccountConfig) {
-            admin.initializeApp({
-                credential: admin.credential.cert(serviceAccountConfig.serviceAccount),
-            });
-            logger.info(`Firebase Admin SDK initialized using ${serviceAccountConfig.source}`);
-        } else {
-            const googleApplicationCredentialsPath = resolveExistingFilePath('GOOGLE_APPLICATION_CREDENTIALS');
-            if (!googleApplicationCredentialsPath) {
-                logger.warn(
-                    'Firebase not configured; push notifications disabled. Set FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_SERVICE_ACCOUNT_BASE64, FIREBASE_SERVICE_ACCOUNT (legacy), FIREBASE_SERVICE_ACCOUNT_PATH, or GOOGLE_APPLICATION_CREDENTIALS.',
-                );
-                return;
-            }
-
-            process.env.GOOGLE_APPLICATION_CREDENTIALS = googleApplicationCredentialsPath;
-            admin.initializeApp({
-                credential: admin.credential.applicationDefault(),
-            });
-            logger.info(`Firebase Admin SDK initialized using GOOGLE_APPLICATION_CREDENTIALS (${googleApplicationCredentialsPath})`);
-        }
-
-        firebaseInitialized = true;
-    } catch (error) {
-        logger.error('Firebase initialization error:', error);
-    }
-};
-
-// Initialize on module load
-initFirebase();
+// Initialize on module load. Null means no credentials configured → push no-ops.
+const firebaseInitialized = ensureFirebaseApp() !== null;
 
 // ============ PUSH NOTIFICATION ============
 

@@ -76,20 +76,6 @@ export const updateYearSchema = z
   .strict();
 
 /**
- * Image upload validation (S3 / Multer)
- */
-export const imageUploadSchema = z
-  .object({
-    fieldname: z.literal('image'),
-    originalname: z.string(),
-    encoding: z.string(),
-    mimetype: z.enum(['image/jpeg', 'image/png', 'image/webp']),
-    buffer: z.instanceof(Buffer),
-    size: z.number().max(5 * 1024 * 1024),
-  })
-  .strict();
-
-/**
  * Get vehicles list query parameters
  */
 export const getVehiclesQuerySchema = z.object({

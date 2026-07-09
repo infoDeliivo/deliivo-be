@@ -1,7 +1,6 @@
 import express from 'express';
 import * as userController from './user.controller.js';
 import { validate } from '../../middlewares/index.js';
-import { uploadSingleImage } from '../../middlewares/upload.middleware.js';
 import * as schemas from './user.validators.js';
 import { z } from 'zod';
 
@@ -32,13 +31,8 @@ router.post(
   userController.completeOnBoardingStep1 as unknown as express.RequestHandler,
 );
 
-// Upload avatar
-router.post(
-  '/me/avatar',
-  uploadSingleImage,
-  validate({ file: schemas.avatarUploadSchema }),
-  userController.uploadAvatar as unknown as express.RequestHandler,
-);
+// Avatar upload now uses the presigned flow: POST /api/v1/uploads/presign then
+// POST /api/v1/uploads/confirm with target=avatar.
 
 // GDPR: data export and account deletion (must be before /:userId routes)
 router.get('/me/data-export', userController.dataExport as unknown as express.RequestHandler);

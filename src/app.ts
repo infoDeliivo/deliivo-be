@@ -36,6 +36,8 @@ import {
   safetyRouter,
   contentRouter,
   adminContentRouter,
+  uploadsRouter,
+  uploadsLocalRouter,
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
@@ -153,6 +155,9 @@ app.use('/api/v1/bookings', protect, bookingOperationsRouter);
 app.use('/api/v1/driver/bookings', protect, driverBookingRouter);
 app.use('/api/v1/rides', protect, rideOperationsRouter);
 app.use('/api/v1/vehicles', protect, vehiclesRouter);
+// Local-dev direct-upload receiver: raw body, token-authenticated (no `protect`).
+app.use('/api/v1/uploads/local', express.raw({ type: '*/*', limit: '6mb' }), uploadsLocalRouter);
+app.use('/api/v1/uploads', protect, uploadsRouter);
 app.use('/api/v1/travel-preferences', protect, travelPreferenceRouter);
 app.use('/api/v1/maps', mapRouter);
 app.use('/api/v1/chat', protect, chatRouter);

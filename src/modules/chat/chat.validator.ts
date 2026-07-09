@@ -40,6 +40,11 @@ export const sendImageSchema = z.object({
     receiverId: z.string().uuid('Invalid receiver ID'),
     clientMsgId: z.string().min(1, 'Client message ID is required').max(100),
     text: z.string().max(5000, 'Caption too long').optional(),
+    // Image is uploaded via the presigned flow (target=chat_image); the confirmed
+    // public URL is passed here rather than a multipart file.
+    imageUrl: z.string().url('A valid imageUrl is required'),
+    mimeType: z.string().max(100).optional(),
+    fileSize: z.number().int().nonnegative().optional(),
 });
 
 export const sendLocationSchema = z.object({

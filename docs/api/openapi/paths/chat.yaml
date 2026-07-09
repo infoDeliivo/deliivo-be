@@ -294,14 +294,14 @@
         "requestBody": {
           "required": true,
           "content": {
-            "multipart/form-data": {
+            "application/json": {
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
                   "receiverId",
                   "clientMsgId",
-                  "image"
+                  "imageUrl"
                 ],
                 "properties": {
                   "receiverId": {
@@ -314,9 +314,16 @@
                   "text": {
                     "type": "string"
                   },
-                  "image": {
+                  "imageUrl": {
                     "type": "string",
-                    "format": "binary"
+                    "format": "uri",
+                    "description": "Public URL returned by POST /uploads/confirm (target=chat_image)."
+                  },
+                  "mimeType": {
+                    "type": "string"
+                  },
+                  "fileSize": {
+                    "type": "integer"
                   }
                 }
               }

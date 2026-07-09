@@ -1,1 +1,0 @@
-ssh -i "utkarshVM.pem" ubuntu@ec2-56-228-28-210.eu-north-1.compute.amazonaws.com

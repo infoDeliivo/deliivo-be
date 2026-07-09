@@ -353,6 +353,8 @@ export const updateAvatarService = async (userId: string, avatarUrl: string, ava
       return { success: false, reason: 'User not found' };
     }
 
+    const previousKey = user.avatarKey ?? undefined;
+
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { avatarUrl, avatarKey },
@@ -365,9 +367,33 @@ export const updateAvatarService = async (userId: string, avatarUrl: string, ava
       },
     });
 
-    return { success: true, user: updatedUser };
+    return { success: true, user: updatedUser, previousKey };
   } catch (error) {
     logError('updateAvatarService error', error);
+    return { success: false, reason: 'Internal server error' };
+  }
+};
+
+// ====================== CLEAR AVATAR SERVICE ======================
+/** Remove the user's avatar: clears avatarUrl/avatarKey. Returns the previous key to reap. */
+export const clearAvatarService = async (userId: string) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+
+    if (!user) {
+      return { success: false, reason: 'User not found' };
+    }
+
+    const previousKey = user.avatarKey ?? undefined;
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl: null, avatarKey: null },
+    });
+
+    return { success: true, previousKey };
+  } catch (error) {
+    logError('clearAvatarService error', error);
     return { success: false, reason: 'Internal server error' };
   }
 };
