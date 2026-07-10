@@ -2,11 +2,10 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { configDotenv } from "dotenv";
 configDotenv({ quiet: true });
 
-export type StorageProvider = 's3' | 'r2' | 'railway' | 'local' | 'firebase';
+export type StorageProvider = 's3' | 'r2' | 'railway' | 'firebase';
 
 export interface StorageTarget {
     provider: StorageProvider;
-    isLocal: boolean;
     endpoint?: string;
     region: string;
     bucketName?: string;
@@ -29,14 +28,13 @@ export const resolveStorageTarget = (): StorageTarget => {
         .toLowerCase()
         .trim();
     let provider: StorageProvider =
-        raw === 'aws' ? 's3' : (['s3', 'r2', 'railway', 'local', 'firebase'].includes(raw) ? (raw as StorageProvider) : '' as StorageProvider);
+        raw === 'aws' ? 's3' : (['s3', 'r2', 'railway', 'firebase'].includes(raw) ? (raw as StorageProvider) : '' as StorageProvider);
     if (!provider) provider = 'railway';
 
     switch (provider) {
         case 's3':
             return {
                 provider,
-                isLocal: false,
                 region: process.env.AWS_REGION || 'us-east-1',
                 bucketName: process.env.AWS_S3_BUCKET_NAME,
                 forcePathStyle: false,
@@ -49,7 +47,6 @@ export const resolveStorageTarget = (): StorageTarget => {
         case 'r2':
             return {
                 provider,
-                isLocal: false,
                 region: 'auto',
                 endpoint: process.env.R2_ENDPOINT,
                 bucketName: process.env.R2_BUCKET_NAME,
@@ -65,7 +62,6 @@ export const resolveStorageTarget = (): StorageTarget => {
             // is unused for this provider (see s3.service.ts firebase branches).
             return {
                 provider,
-                isLocal: false,
                 region: 'auto',
                 bucketName: process.env.FIREBASE_STORAGE_BUCKET,
                 forcePathStyle: false,
@@ -75,7 +71,6 @@ export const resolveStorageTarget = (): StorageTarget => {
         case 'railway':
             return {
                 provider,
-                isLocal: false,
                 region: process.env.RAILWAY_BUCKET_REGION || 'auto',
                 endpoint: process.env.RAILWAY_BUCKET_ENDPOINT,
                 bucketName: process.env.RAILWAY_BUCKET_NAME,
@@ -86,15 +81,8 @@ export const resolveStorageTarget = (): StorageTarget => {
                 },
                 publicBaseUrl: process.env.RAILWAY_BUCKET_PUBLIC_BASE_URL,
             };
-        case 'local':
         default:
-            return {
-                provider: 'local',
-                isLocal: true,
-                region: 'auto',
-                forcePathStyle: true,
-                credentials: { accessKeyId: '', secretAccessKey: '' },
-            };
+            throw new Error(`Unsupported STORAGE_PROVIDER: '${provider}'`);
     }
 };
 

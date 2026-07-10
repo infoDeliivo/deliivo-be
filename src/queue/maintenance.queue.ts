@@ -525,7 +525,7 @@ const TMP_SWEEP_MAX_AGE_MS = Number(process.env.UPLOAD_TMP_EXPIRY_DAYS || '1') *
  */
 export const runTmpUploadSweep = async () => {
     const target = resolveStorageTarget();
-    if (!target.isLocal && target.bucketName) {
+    if (target.bucketName) {
         // Bucket mode: a lifecycle rule expires tmp/ objects; nothing on local disk.
         return { swept: 0, skipped: true };
     }

@@ -25,7 +25,6 @@ import { reconciliationRouter } from './reconciliation/reconciliation.routes.js'
 import safetyRouter from './safety/safety.routes.js';
 import { contentRouter, adminContentRouter } from './content/content.routes.js';
 import uploadsRouter from './uploads/uploads.routes.js';
-import uploadsLocalRouter from './uploads/uploads.local.routes.js';
 
 export {
     authRouter,
@@ -60,5 +59,4 @@ export {
     contentRouter,
     adminContentRouter,
     uploadsRouter,
-    uploadsLocalRouter,
 };

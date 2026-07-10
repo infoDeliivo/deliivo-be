@@ -15,8 +15,6 @@ const METHODS: HttpMethod[] = ['get', 'post', 'put', 'patch', 'delete'];
 const OPENAPI_HIDDEN_ENDPOINTS = new Set<string>([
   'POST /api/v1/vehicles',
   'PUT /api/v1/vehicles/{id}/update-details',
-  // Dev-only local PUT receiver (used when no bucket is configured); not part of the public API.
-  'PUT /api/v1/uploads/local/{token}',
 ]);
 
 const ROOT = process.cwd();

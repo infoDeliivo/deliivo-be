@@ -1,13 +1,9 @@
-import { writeFile, mkdir, stat } from 'fs/promises';
-import { join, dirname } from 'path';
 import {
     getPresignedUploadUrl,
     buildPublicUrl,
-    deleteObject,
     TMP_PREFIX,
     PERMANENT_PREFIX,
 } from '../../services/s3.service.js';
-import { createLocalUploadToken, verifyLocalUploadToken } from '../../services/upload-token.js';
 
 const ENV = { ...process.env };
 afterEach(() => {
@@ -15,11 +11,13 @@ afterEach(() => {
 });
 
 describe('presigned upload key handling', () => {
-    beforeEach(() => {
-        process.env.STORAGE_PROVIDER = 'local';
-    });
+    it('stages uploads under tmp/<folder>/<ownerId>/ and returns a presigned URL', async () => {
+        process.env.STORAGE_PROVIDER = 'railway';
+        process.env.RAILWAY_BUCKET_ENDPOINT = 'https://bucket.railway.app';
+        process.env.RAILWAY_BUCKET_NAME = 'deliivo';
+        process.env.RAILWAY_BUCKET_ACCESS_KEY_ID = 'x';
+        process.env.RAILWAY_BUCKET_SECRET_ACCESS_KEY = 'y';
 
-    it('stages uploads under tmp/<folder>/<ownerId>/', async () => {
         const { tmpKey, uploadUrl } = await getPresignedUploadUrl({
             folder: 'avatar',
             ownerId: 'user-123',
@@ -28,54 +26,13 @@ describe('presigned upload key handling', () => {
         });
         expect(tmpKey.startsWith(`${TMP_PREFIX}/avatar/user-123/`)).toBe(true);
         expect(tmpKey.endsWith('.png')).toBe(true);
-        expect(uploadUrl).toContain('/api/v1/uploads/local/');
+        expect(uploadUrl).toContain('X-Amz-Signature');
     });
 
     it('derives the permanent key by swapping the tmp/ prefix for uploads/', () => {
         const tmpKey = `${TMP_PREFIX}/vehicle/u1/abc.png`;
         const permanentKey = `${PERMANENT_PREFIX}${tmpKey.slice(TMP_PREFIX.length)}`;
         expect(permanentKey).toBe('uploads/vehicle/u1/abc.png');
-    });
-});
-
-describe('local upload token', () => {
-    it('round-trips a valid token', () => {
-        const key = 'tmp/avatar/u1/x.png';
-        const token = createLocalUploadToken(key, 300);
-        expect(verifyLocalUploadToken(token)?.key).toBe(key);
-    });
-
-    it('rejects a tampered token', () => {
-        const token = createLocalUploadToken('tmp/avatar/u1/x.png', 300);
-        const tampered = token.slice(0, -2) + (token.endsWith('a') ? 'bb' : 'aa');
-        expect(verifyLocalUploadToken(tampered)).toBeNull();
-    });
-
-    it('rejects an expired token', () => {
-        const token = createLocalUploadToken('tmp/avatar/u1/x.png', -10);
-        expect(verifyLocalUploadToken(token)).toBeNull();
-    });
-});
-
-describe('deleteObject (local mode)', () => {
-    beforeEach(() => {
-        process.env.STORAGE_PROVIDER = 'local';
-    });
-
-    it('removes an existing object', async () => {
-        const key = `${PERMANENT_PREFIX}/test-del/${Date.now()}.png`;
-        const path = join(process.cwd(), key);
-        await mkdir(dirname(path), { recursive: true });
-        await writeFile(path, Buffer.from('x'));
-
-        await deleteObject(key);
-
-        await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
-    });
-
-    it('is a no-op for a missing object', async () => {
-        const key = `${PERMANENT_PREFIX}/test-del/does-not-exist-${Date.now()}.png`;
-        await expect(deleteObject(key)).resolves.toBeUndefined();
     });
 });
 

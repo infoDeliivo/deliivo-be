@@ -30,9 +30,9 @@ const main = async (): Promise<void> => {
         return;
     }
 
-    if (target.isLocal || !target.bucketName) {
+    if (!target.bucketName) {
         console.log(
-            'Storage provider is local (no bucket). Nothing to configure — the maintenance queue sweeps ./tmp instead.',
+            'No storage bucket configured. Nothing to configure.',
         );
         return;
     }

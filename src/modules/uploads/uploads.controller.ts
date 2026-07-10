@@ -121,7 +121,7 @@ export const confirmUpload = async (req: AuthRequest, res: Response) => {
 
         // 4. Promote tmp/ → uploads/.
         const permanentKey = `${PERMANENT_PREFIX}${key.slice(TMP_PREFIX.length)}`;
-        await promoteObject(key, permanentKey);
+        await promoteObject(key, permanentKey, TARGETS[target].visibility === 'public');
 
         // 5. Persist per target.
         if (target === 'avatar') {

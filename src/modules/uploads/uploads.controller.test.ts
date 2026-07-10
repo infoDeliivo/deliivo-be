@@ -79,7 +79,7 @@ describe('confirmUpload — avatar replace deletes the previous object', () => {
             { user: { id: 'u1' }, body: { target: 'avatar', key: 'tmp/avatar/u1/new.png' } } as never,
             res as never,
         );
-        expect(mockPromoteObject).toHaveBeenCalledWith('tmp/avatar/u1/new.png', 'uploads/avatar/u1/new.png');
+        expect(mockPromoteObject).toHaveBeenCalledWith('tmp/avatar/u1/new.png', 'uploads/avatar/u1/new.png', true);
         expect(mockDeleteObject).toHaveBeenCalledWith('uploads/avatar/u1/old.png');
         expect(out.body).toMatchObject({ success: true });
     });
