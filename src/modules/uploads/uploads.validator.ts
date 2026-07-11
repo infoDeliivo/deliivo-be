@@ -8,6 +8,7 @@ const targetEnum = z.enum([
     'vehicle_document',
     'chat_image',
     'vehicle_draft_document',
+    'vehicle_draft_document_private',
 ]);
 
 const requireTargetFields = (
@@ -44,12 +45,11 @@ export const confirmSchema = z
     .strict()
     .superRefine(requireTargetFields);
 
-// Read is only meaningful for private targets (documents/driving-license).
+// Read any private object the caller owns. Authorization is by the owner id embedded
+// in the key (uploads/<folder>/<ownerId>/...), so no target/vehicleId is needed.
 export const readSchema = z
     .object({
-        target: z.literal('vehicle_document'),
         key: z.string().min(1),
-        vehicleId: z.string().uuid(),
     })
     .strict();
 

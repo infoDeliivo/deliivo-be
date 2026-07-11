@@ -7,6 +7,7 @@ import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
 import { getCache, setCache, deleteCache, cacheKeys } from '../../services/cache.service.js';
 import { DocumentType } from '@prisma/client';
+import { normalizeDocumentSource } from './vehicle-documents.util.js';
 
 /* ================= CREATE / UPDATE VEHICLE ================= */
 export const createVehicle = async (req: AuthRequest, res: Response) => {
@@ -220,35 +221,48 @@ export const updateDraftVehicleDetails = async (req: AuthRequest, res: Response)
 /* ================= DRAFT: STEP 3 — UPLOAD DOCUMENT & SAVE TO DRAFT ================= */
 export const uploadDraftDocument = async (req: AuthRequest, res: Response) => {
   try {
-    // Image already uploaded via the presigned flow (target=vehicle_draft_document);
-    // the body carries the confirmed public URL + document type (draftImageSchema).
-    const { imageUrl, documentType } = req.body as {
-      imageUrl: string;
+    // Object already uploaded via the presigned flow. Public docs (VEHICLE_IMAGE) come
+    // from target=vehicle_draft_document and carry imageUrl; private KYC docs
+    // (DRIVING_LICENSE, INSURANCE_DOCUMENT) come from vehicle_draft_document_private and
+    // carry imageKey. Exactly one is present (draftImageSchema).
+    const { imageUrl, imageKey, documentType } = req.body as {
+      imageUrl?: string;
+      imageKey?: string;
       documentType: DocumentType;
     };
 
-    // Save to Redis draft
-    const draft = await DraftVehicleService.addDocument(
-      req.user.id,
+    // Enforce visibility server-side: private types (licence/insurance) are forced to a
+    // private object key even if the client sent a public URL. Public types keep the URL.
+    const normalized = await normalizeDocumentSource(req.user.id, documentType, {
       imageUrl,
-      documentType,
-    );
+      imageKey,
+    });
+
+    // Save to Redis draft
+    const draft = await DraftVehicleService.addDocument(req.user.id, documentType, normalized);
 
     return sendSuccess(res, {
       message: 'Document saved to draft',
       data: {
-        imageUrl,
+        ...normalized,
         documentType,
         draft: formatDraftResponse(draft),
       },
     });
   } catch (error: any) {
     logError('Vehicle uploadDraftDocument error', error);
+    if (error.message === 'DRAFT_NOT_FOUND') {
+      return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'No vehicle draft found' });
+    }
+    if (error.message === 'PRIVATE_DOCUMENT_KEY_UNRESOLVED') {
+      return sendError(res, {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Could not resolve the uploaded object for this document',
+      });
+    }
     return sendError(res, {
-      status:
-        error.message === 'DRAFT_NOT_FOUND' ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_ERROR,
-      message:
-        error.message === 'DRAFT_NOT_FOUND' ? 'No vehicle draft found' : 'Failed to upload document',
+      status: HttpStatus.INTERNAL_ERROR,
+      message: 'Failed to upload document',
     });
   }
 };

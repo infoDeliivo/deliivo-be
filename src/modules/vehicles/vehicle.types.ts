@@ -1,9 +1,12 @@
 import { VehicleType, DocumentType } from '@prisma/client';
 
 /* ================= DRAFT DOCUMENT ================= */
+// A draft document is either public (imageUrl, e.g. VEHICLE_IMAGE) or private
+// (imageKey, e.g. DRIVING_LICENSE / INSURANCE_DOCUMENT). Exactly one is set.
 export interface DraftDocument {
-    imageUrl: string;
     documentType: DocumentType;
+    imageUrl?: string;
+    imageKey?: string;
 }
 
 /* ================= DRAFT VEHICLE (Redis) ================= */
@@ -27,6 +30,18 @@ export interface DraftVehicle {
 
     // Step 3 — Documents (multiple)
     documents: DraftDocument[];
+}
+
+/* ================= VEHICLE RESPONSE ================= */
+export interface VehicleDocumentResponse {
+    id: string;
+    documentType: DocumentType;
+    // S3 object key. Private docs have no public URL — pass this to
+    // GET /uploads/read?key=<previewKey> to obtain a short-lived signed view URL.
+    previewKey: string | null;
+    // Public URL for public documents; null for private documents (use previewKey).
+    image: string | null;
+    createdAt: Date;
 }
 
 /* ================= STEP INPUT TYPES ================= */

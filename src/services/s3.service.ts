@@ -17,6 +17,35 @@ export const TMP_PREFIX = 'tmp';
 export const PERMANENT_PREFIX = 'uploads';
 
 /**
+ * Extract the owner id embedded in a permanent object key.
+ * Permanent keys are `uploads/<folder>/<ownerId>/<uuid>.<ext>`, so the owner is the
+ * third path segment. Returns null for anything that is not a permanent key (e.g. a
+ * staged `tmp/` key or a malformed value) — callers treat that as "not owned".
+ */
+export const ownerIdFromKey = (key: string): string | null => {
+    const parts = key.split('/');
+    return parts.length >= 4 && parts[0] === PERMANENT_PREFIX ? parts[2] : null;
+};
+
+/**
+ * Recover the object key from a stored public URL. Public URLs across all providers
+ * (S3 / R2 / Railway / GCS) end in `.../<PERMANENT_PREFIX>/<folder>/<owner>/<file>`,
+ * so the key is everything from `uploads/` onward. Returns null if not found.
+ */
+export const keyFromPublicUrl = (url: string): string | null => {
+    const marker = `/${PERMANENT_PREFIX}/`;
+    const idx = url.indexOf(marker);
+    if (idx === -1) return null;
+    // Strip any query string (signed URLs) and decode percent-encoding.
+    const raw = url.slice(idx + 1).split('?')[0];
+    try {
+        return decodeURIComponent(raw);
+    } catch {
+        return raw;
+    }
+};
+
+/**
  * Build the public URL for an object key from the active provider's config.
  */
 export const buildPublicUrl = (key: string): string => {

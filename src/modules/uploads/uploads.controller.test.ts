@@ -11,14 +11,23 @@ const mockDeleteCache = jest.fn();
 const mockClearAvatarService = jest.fn();
 const mockClearVehicleImage = jest.fn();
 const mockDeleteVehicleDocument = jest.fn();
+const mockGetPresignedDownloadUrl = jest.fn();
+
+// Real owner-parsing logic mirrored here so the mocked module keeps readUrl's
+// authorization behavior; the pure function itself is unit-tested in s3.service.test.ts.
+const realOwnerIdFromKey = (key: string): string | null => {
+    const parts = key.split('/');
+    return parts.length >= 4 && parts[0] === 'uploads' ? parts[2] : null;
+};
 
 jest.mock('../../services/s3.service.js', () => ({
     getPresignedUploadUrl: jest.fn(),
-    getPresignedDownloadUrl: jest.fn(),
+    getPresignedDownloadUrl: mockGetPresignedDownloadUrl,
     headObject: mockHeadObject,
     promoteObject: mockPromoteObject,
     deleteObject: mockDeleteObject,
     buildPublicUrl: mockBuildPublicUrl,
+    ownerIdFromKey: realOwnerIdFromKey,
     TMP_PREFIX: 'tmp',
     PERMANENT_PREFIX: 'uploads',
 }));
@@ -45,7 +54,7 @@ jest.mock('../user/user.service.js', () => ({
     clearAvatarService: mockClearAvatarService,
 }));
 
-import { confirmUpload, deleteUpload } from './uploads.controller.js';
+import { confirmUpload, deleteUpload, readUrl } from './uploads.controller.js';
 
 type JsonResponse = { status: number; body: unknown };
 const makeRes = () => {
@@ -137,6 +146,65 @@ describe('confirmUpload — one-shot public targets return {url,key} without an 
             success: true,
             data: { key: expect.stringContaining('uploads/'), url: expect.stringContaining('https://cdn.test/') },
         });
+    });
+});
+
+describe('confirmUpload — private draft doc promotes privately and returns only a key', () => {
+    it('returns { key } (no url) and does not grant public read', async () => {
+        const { res, out } = makeRes();
+        await confirmUpload(
+            {
+                user: { id: 'u1' },
+                body: { target: 'vehicle_draft_document_private', key: 'tmp/vehicle-documents/u1/x.png' },
+            } as never,
+            res as never,
+        );
+        // Promoted privately (isPublic = false), tmp/ -> uploads/.
+        expect(mockPromoteObject).toHaveBeenCalledWith(
+            'tmp/vehicle-documents/u1/x.png',
+            'uploads/vehicle-documents/u1/x.png',
+            false,
+        );
+        const data = (out.body as { data: { key: string; url?: string } }).data;
+        expect(data.key).toBe('uploads/vehicle-documents/u1/x.png');
+        expect(data.url).toBeUndefined();
+        expect(mockAddVehicleDocument).not.toHaveBeenCalled();
+    });
+});
+
+describe('readUrl — view a private object you own', () => {
+    it('returns a signed URL when the caller owns the key', async () => {
+        mockGetPresignedDownloadUrl.mockResolvedValue('https://signed.test/doc');
+        const { res, out } = makeRes();
+        await readUrl(
+            { user: { id: 'u1' }, query: { key: 'uploads/vehicle-documents/u1/doc.png' } } as never,
+            res as never,
+        );
+        expect(mockGetPresignedDownloadUrl).toHaveBeenCalledWith('uploads/vehicle-documents/u1/doc.png', 300);
+        expect(out.body).toMatchObject({
+            success: true,
+            data: { url: 'https://signed.test/doc', expiresIn: 300 },
+        });
+    });
+
+    it('404 when the key belongs to another owner', async () => {
+        const { res, out } = makeRes();
+        await readUrl(
+            { user: { id: 'u1' }, query: { key: 'uploads/vehicle-documents/u2/doc.png' } } as never,
+            res as never,
+        );
+        expect(out.status).toBe(404);
+        expect(mockGetPresignedDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('404 for a malformed / non-permanent key', async () => {
+        const { res, out } = makeRes();
+        await readUrl(
+            { user: { id: 'u1' }, query: { key: 'tmp/vehicle-documents/u1/doc.png' } } as never,
+            res as never,
+        );
+        expect(out.status).toBe(404);
+        expect(mockGetPresignedDownloadUrl).not.toHaveBeenCalled();
     });
 });
 

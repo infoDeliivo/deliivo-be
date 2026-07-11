@@ -7,6 +7,7 @@ import {
     VehicleDetailsInput,
 } from './vehicle.types.js';
 import { DocumentType } from '@prisma/client';
+import { isPrivateDocumentType } from './vehicle-documents.util.js';
 
 // ============================================================
 //  DRAFT RESPONSE HELPER (strip step/userId, add next)
@@ -113,8 +114,8 @@ export const updateVehicleDetails = async (
 
 export const addDocument = async (
     userId: string,
-    imageUrl: string,
     documentType: DocumentType,
+    source: { imageUrl?: string; imageKey?: string },
 ): Promise<DraftVehicle> => {
     const draft = await getDraft(userId);
 
@@ -128,7 +129,12 @@ export const addDocument = async (
         (d) => d.documentType === documentType,
     );
 
-    const doc: DraftDocument = { imageUrl, documentType };
+    // Public docs carry imageUrl; private KYC docs carry imageKey.
+    const doc: DraftDocument = {
+        documentType,
+        imageUrl: source.imageUrl,
+        imageKey: source.imageKey,
+    };
 
     if (existingIdx >= 0) {
         draft.documents[existingIdx] = doc;
@@ -192,10 +198,23 @@ export const saveVehicle = async (userId: string) => {
             imageUrl: mainImageUrl,
             isVerified: shouldAutoVerifyVehicle(),
             documents: {
-                create: (draft.documents || []).map((doc) => ({
-                    imageUrl: doc.imageUrl,
-                    documentType: doc.documentType,
-                })),
+                // VEHICLE_IMAGE is the rider-visible car photo — it lives on vehicle.imageUrl
+                // above, not as a document row. Only real documents are persisted here:
+                // private KYC docs persist imageKey (no public URL, exposed as previewKey);
+                // any public doc persists imageUrl.
+                create: (draft.documents || [])
+                    .filter((doc) => doc.documentType !== 'VEHICLE_IMAGE')
+                    .map((doc) => {
+                        // Guard: a private-type document must never persist a public URL.
+                        // Attach-time normalization already enforces this, but defend against
+                        // stale drafts — private types keep only imageKey.
+                        const priv = isPrivateDocumentType(doc.documentType);
+                        return {
+                            documentType: doc.documentType,
+                            image: priv ? null : doc.imageUrl ?? null,
+                            imageKey: doc.imageKey ?? null,
+                        };
+                    }),
             },
         },
         include: {

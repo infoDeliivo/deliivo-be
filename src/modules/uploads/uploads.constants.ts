@@ -14,7 +14,8 @@ export type UploadTarget =
     | 'vehicle_image'
     | 'vehicle_document'
     | 'chat_image'
-    | 'vehicle_draft_document';
+    | 'vehicle_draft_document'
+    | 'vehicle_draft_document_private';
 
 export interface TargetConfig {
     folder: string;
@@ -53,6 +54,16 @@ export const TARGETS: Record<UploadTarget, TargetConfig> = {
     vehicle_draft_document: {
         folder: 'vehicle',
         visibility: 'public',
+        needsVehicle: false,
+        needsDocumentType: false,
+    },
+    // Private one-shot draft upload for sensitive KYC documents (driving licence,
+    // insurance). Confirm promotes the object to the private vehicle-documents/ folder
+    // (no public ACL) and returns only { key }; the caller stores that key on the draft.
+    // On draft save it becomes VehicleDocument.imageKey (served via GET /uploads/read).
+    vehicle_draft_document_private: {
+        folder: 'vehicle-documents',
+        visibility: 'private',
         needsVehicle: false,
         needsDocumentType: false,
     },

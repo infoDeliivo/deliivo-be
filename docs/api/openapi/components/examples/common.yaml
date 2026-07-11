@@ -318,7 +318,60 @@
         "type": "CAR",
         "color": "Blue",
         "imageUrl": "https://cdn.example.com/vehicle.jpg",
-        "isVerified": true
+        "isVerified": true,
+        "documents": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "documentType": "DRIVING_LICENSE",
+            "previewKey": "uploads/vehicle-documents/<ownerId>/abcd.jpg",
+            "image": null,
+            "createdAt": "2026-07-11T10:00:00.000Z"
+          },
+          {
+            "id": "55555555-5555-5555-5555-555555555555",
+            "documentType": "INSURANCE_DOCUMENT",
+            "previewKey": "uploads/vehicle-documents/<ownerId>/efgh.jpg",
+            "image": null,
+            "createdAt": "2026-07-11T10:05:00.000Z"
+          }
+        ]
+      }
+    }
+  },
+  "VehicleListSuccess": {
+    "summary": "Vehicle list response",
+    "value": {
+      "success": true,
+      "status": "OK",
+      "message": "Vehicles fetched successfully",
+      "data": {
+        "vehicles": [
+          {
+            "id": "33333333-3333-3333-3333-333333333333",
+            "brand": "Toyota",
+            "model_num": "Camry",
+            "model_name": "Camry Hybrid",
+            "type": "CAR",
+            "color": "Blue",
+            "imageUrl": "https://cdn.example.com/vehicle.jpg",
+            "isVerified": true,
+            "documents": [
+              {
+                "id": "44444444-4444-4444-4444-444444444444",
+                "documentType": "DRIVING_LICENSE",
+                "previewKey": "uploads/vehicle-documents/<ownerId>/abcd.jpg",
+                "image": null,
+                "createdAt": "2026-07-11T10:00:00.000Z"
+              }
+            ]
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 1,
+          "totalPages": 1
+        }
       }
     }
   },

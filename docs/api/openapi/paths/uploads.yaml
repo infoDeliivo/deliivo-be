@@ -33,9 +33,10 @@
                       "vehicle_image",
                       "vehicle_document",
                       "chat_image",
-                      "vehicle_draft_document"
+                      "vehicle_draft_document",
+                      "vehicle_draft_document_private"
                     ],
-                    "description": "What the upload is for. Determines folder, visibility (public/private) and which owner fields are required."
+                    "description": "What the upload is for. Determines folder, visibility (public/private) and which owner fields are required. vehicle_draft_document_private is a private one-shot for draft KYC docs (licence/insurance): confirm returns only { key }."
                   },
                   "contentType": {
                     "type": "string",
@@ -168,7 +169,8 @@
                       "vehicle_image",
                       "vehicle_document",
                       "chat_image",
-                      "vehicle_draft_document"
+                      "vehicle_draft_document",
+                      "vehicle_draft_document_private"
                     ]
                   },
                   "key": {
@@ -236,7 +238,7 @@
       "get": {
         "operationId": "uploadsRead",
         "summary": "GET uploads/read",
-        "description": "Returns a short-lived presigned GET URL for a private object (vehicle_document). Ownership is enforced: the caller must own the vehicle the document belongs to.",
+        "description": "Returns a short-lived presigned GET URL for any private object the caller owns. Authorization is by the owner id embedded in the key (uploads/<folder>/<ownerId>/...); a key you do not own returns 404. Get the key from GET /api/v1/vehicles/{id} as documents[].previewKey.",
         "tags": [
           "Uploads"
         ],
@@ -247,31 +249,11 @@
         ],
         "parameters": [
           {
-            "name": "target",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "vehicle_document"
-              ]
-            }
-          },
-          {
             "name": "key",
             "in": "query",
             "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "vehicleId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
             }
           }
         ],

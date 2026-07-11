@@ -9,6 +9,7 @@ import {
     getPresignedDownloadUrl,
     deleteObject,
     buildPublicUrl,
+    ownerIdFromKey,
     TMP_PREFIX,
     PERMANENT_PREFIX,
 } from '../../services/s3.service.js';
@@ -156,6 +157,16 @@ export const confirmUpload = async (req: AuthRequest, res: Response) => {
             return sendSuccess(res, { message: 'Vehicle image updated successfully', data: { imageUrl: url } });
         }
 
+        // Private one-shot draft upload (KYC docs). Promoted to the private folder with
+        // no public ACL; return only the key. The caller stores it on the draft and it
+        // becomes VehicleDocument.imageKey on save — never a public URL.
+        if (target === 'vehicle_draft_document_private') {
+            return sendSuccess(res, {
+                message: 'Upload confirmed',
+                data: { key: permanentKey },
+            });
+        }
+
         // Public one-shot targets: return the promoted URL; the caller attaches it via
         // its own endpoint (chat send-image / vehicle draft save). No owner record here.
         if (target === 'chat_image' || target === 'vehicle_draft_document') {
@@ -189,10 +200,12 @@ export const confirmUpload = async (req: AuthRequest, res: Response) => {
 /* ================= READ (private targets → signed GET URL) ================= */
 export const readUrl = async (req: AuthRequest, res: Response) => {
     try {
-        const { key, vehicleId } = req.query as unknown as { key: string; vehicleId: string };
+        const { key } = req.query as unknown as { key: string };
 
-        const doc = await VehicleService.findVehicleDocumentByKey(req.user.id, vehicleId, key);
-        if (!doc) {
+        // Authorize by the owner id embedded in the key. A user may only read objects
+        // stored under their own owner segment. 404 (not 403) so we never confirm whether
+        // someone else's key exists.
+        if (ownerIdFromKey(key) !== req.user.id) {
             return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Document not found' });
         }
 

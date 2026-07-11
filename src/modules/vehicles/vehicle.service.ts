@@ -1,5 +1,6 @@
 import { prisma } from '../../config/index.js';
-import { VehicleType, DocumentType } from '@prisma/client';
+import { VehicleType, DocumentType, Prisma } from '@prisma/client';
+import { VehicleDocumentResponse } from './vehicle.types.js';
 
 type UpdateVehicleDetailsInput = {
   brand: string;
@@ -180,7 +181,7 @@ export const addVehicleDocument = async (
     data: {
       vehicleId,
       imageKey: input.imageKey,
-      imageUrl: input.imageUrl,
+      image: input.imageUrl,
       documentType: input.documentType,
     },
   });
@@ -202,6 +203,36 @@ export const findVehicleDocumentByKey = async (
 };
 
 /* ================= GET VEHICLE ================= */
+
+// Only the document fields the client needs; keeps raw S3 keys out of the response
+// except as `previewKey`, which is fed to GET /uploads/read for a signed view URL.
+const vehicleDocumentSelect = {
+  id: true,
+  imageKey: true,
+  image: true,
+  documentType: true,
+  createdAt: true,
+} satisfies Prisma.VehicleDocumentSelect;
+
+type VehicleWithDocuments = Prisma.VehicleGetPayload<{
+  include: { documents: { select: typeof vehicleDocumentSelect } };
+}>;
+
+const mapVehicleDocument = (
+  doc: VehicleWithDocuments['documents'][number],
+): VehicleDocumentResponse => ({
+  id: doc.id,
+  documentType: doc.documentType,
+  previewKey: doc.imageKey ?? null,
+  image: doc.image ?? null,
+  createdAt: doc.createdAt,
+});
+
+const mapVehicle = (vehicle: VehicleWithDocuments) => {
+  const { documents, ...rest } = vehicle;
+  return { ...rest, documents: documents.map(mapVehicleDocument) };
+};
+
 export const getVehicle = async (
   userId: string,
   vehicleId?: string,
@@ -215,13 +246,14 @@ export const getVehicle = async (
         userId,
         deletedAt: null,
       },
+      include: { documents: { select: vehicleDocumentSelect } },
     });
 
     if (!vehicle) {
       throw new Error('VEHICLE_NOT_FOUND');
     }
 
-    return vehicle;
+    return mapVehicle(vehicle);
   }
 
   // No vehicleId — return all vehicles for the user with pagination
@@ -238,6 +270,7 @@ export const getVehicle = async (
       orderBy: { createdAt: 'desc' },
       skip,
       take: actualLimit,
+      include: { documents: { select: vehicleDocumentSelect } },
     }),
     prisma.vehicle.count({
       where: {
@@ -248,7 +281,7 @@ export const getVehicle = async (
   ]);
 
   return {
-    vehicles,
+    vehicles: vehicles.map(mapVehicle),
     pagination: {
       page: actualPage,
       limit: actualLimit,
