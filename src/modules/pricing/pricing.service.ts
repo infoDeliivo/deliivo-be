@@ -1,4 +1,5 @@
 import { prisma } from '../../config/index.js';
+import { Prisma } from '@prisma/client';
 import {
     getActivePricingConfig,
     calculatePrice,
@@ -59,6 +60,7 @@ export const validateAndSnapshotPricing = async (params: {
     distanceKm: number;
     selectedPricePerSeat: number;
     regionCode?: string;
+    tx?: Prisma.TransactionClient;
 }): Promise<{ valid: boolean; reason?: string; snapshotId?: string }> => {
     const regionCode = params.regionCode || DEFAULT_REGION;
     const config = await getActivePricingConfig(regionCode);
@@ -71,7 +73,8 @@ export const validateAndSnapshotPricing = async (params: {
         return validation;
     }
 
-    const snapshot = await prisma.ridePricingSnapshot.create({
+    const db = params.tx ?? prisma;
+    const snapshot = await db.ridePricingSnapshot.create({
         data: {
             rideId: params.rideId,
             pricingVersion: 'DISTANCE_RATE_V1',

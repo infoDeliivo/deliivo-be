@@ -1583,6 +1583,7 @@ export const publishRide = async (driverId: string) => {
                     rideId: newRide.id,
                     distanceKm,
                     selectedPricePerSeat: newRide.basePricePerSeat,
+                    tx,
                 });
                 if (!priceValidation.valid) {
                     throw new Error(`PRICE_OUT_OF_RANGE: ${priceValidation.reason}`);
