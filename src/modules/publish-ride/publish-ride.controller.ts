@@ -419,6 +419,11 @@ export const publishRide = async (req: AuthRequest, res: Response) => {
             data: ride,
         });
     } catch (error: any) {
+        logError('Failed to publish ride', error, {
+            requestId: req.headers['x-request-id'],
+            userId: req.user?.id,
+        });
+
         let status = HttpStatus.INTERNAL_ERROR;
         let message = 'Failed to publish ride';
 
@@ -470,6 +475,9 @@ export const publishRide = async (req: AuthRequest, res: Response) => {
         } else if (error.message === 'MEETING_POINT_OUTSIDE_ROUTE') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Meeting points must be within the allowed distance of the selected route';
+        } else if (String(error.message || '').startsWith('PRICE_OUT_OF_RANGE')) {
+            status = HttpStatus.BAD_REQUEST;
+            message = String(error.message).replace(/^PRICE_OUT_OF_RANGE:\s*/, '') || 'Selected price is outside the allowed pricing range';
         }
 
         return sendError(res, { status, message });
