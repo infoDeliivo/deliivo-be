@@ -5,7 +5,6 @@ type SchemaTargets = {
   body?: ZodSchema;
   params?: ZodSchema;
   query?: ZodSchema;
-  file?: ZodSchema; // multer file
 };
 
 export const validate =
@@ -27,11 +26,6 @@ export const validate =
         Object.keys(req.query).forEach((k) => delete (req.query as any)[k]);
         Object.assign(req.query, parsed);
       }
-
-      if (schemas.file) {
-        req.file = schemas.file.parse(req.file) as any;
-      }
-
 
       next();
     } catch (error) {

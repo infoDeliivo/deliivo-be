@@ -92,6 +92,16 @@ tmp/
 temp/
 .xlsx-review*/
 
+# Browser-automation profiles, screenshots, and tool temp dumps
+.tmp*
+.codex
+.codex-tmp
+.kiro
+test-report
+scr-*.jpg
+scr-*.png
+token.txt
+
 /src/generated/prisma
 carpooling-37720-firebase-adminsdk-*.json
 *.json

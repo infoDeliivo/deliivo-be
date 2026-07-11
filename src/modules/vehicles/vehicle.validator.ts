@@ -76,20 +76,6 @@ export const updateYearSchema = z
   .strict();
 
 /**
- * Image upload validation (S3 / Multer)
- */
-export const imageUploadSchema = z
-  .object({
-    fieldname: z.literal('image'),
-    originalname: z.string(),
-    encoding: z.string(),
-    mimetype: z.enum(['image/jpeg', 'image/png', 'image/webp']),
-    buffer: z.instanceof(Buffer),
-    size: z.number().max(5 * 1024 * 1024),
-  })
-  .strict();
-
-/**
  * Get vehicles list query parameters
  */
 export const getVehiclesQuerySchema = z.object({
@@ -130,9 +116,22 @@ export const draftVehicleDetailsSchema = z
 /**
  * Step 4: Image URL
  */
+// A draft document is attached by reference to the already-uploaded object:
+// public docs (VEHICLE_IMAGE) send imageUrl; private KYC docs (DRIVING_LICENSE,
+// INSURANCE_DOCUMENT) send imageKey from the private draft upload. Exactly one.
 export const draftImageSchema = z
   .object({
-    imageUrl: z.string().trim().url('Invalid image URL'),
+    imageUrl: z.string().trim().url('Invalid image URL').optional(),
+    imageKey: z.string().trim().min(1).optional(),
     documentType: z.nativeEnum(DocumentType),
   })
-  .strict();
+  .strict()
+  .superRefine((val, ctx) => {
+    if (!val.imageUrl === !val.imageKey) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['imageKey'],
+        message: 'Provide exactly one of imageUrl (public) or imageKey (private)',
+      });
+    }
+  });

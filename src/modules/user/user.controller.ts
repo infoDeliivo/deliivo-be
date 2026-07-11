@@ -2,7 +2,6 @@ import { Response } from 'express';
 import { AuthRequest } from '../../types/auth.js';
 import { HttpStatus, sendSuccess, sendError } from '../../utils/index.js';
 import { logError } from '../../utils/logger.js';
-import { uploadToS3 } from '../../services/s3.service.js';
 import { getCache, setCache, deleteCache, cacheKeys } from '../../services/cache.service.js';
 import type { FullProfileResponse, PublicProfileResponse } from './user.types.js';
 
@@ -13,7 +12,6 @@ import {
   updateFullProfileService,
   completeOnBoardingStep1Service,
   updateProfileService,
-  updateAvatarService,
 } from './user.service.js';
 import { reportUser, blockUser, unblockUser, listBlockedUsers } from './user-safety.service.js';
 import { exportUserData, deleteUserAccount } from './user-gdpr.service.js';
@@ -247,62 +245,9 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// ====================== UPLOAD AVATAR ======================
-export const uploadAvatar = async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.file) {
-      return sendError(res, {
-        status: HttpStatus.BAD_REQUEST,
-        message: 'Avatar image file required',
-      });
-    }
-
-    // Upload to S3 using the reusable service
-    const uploadResult = await uploadToS3({
-      folder: 'avatar',
-      file: req.file,
-      ownerId: req.user.id,
-    });
-
-    if (!uploadResult.success) {
-      return sendError(res, {
-        status: HttpStatus.INTERNAL_ERROR,
-        message: uploadResult.error || 'Failed to upload avatar to S3',
-      });
-    }
-
-    // Update user avatar URL in database
-    const userId = req.user.id;
-    const { success, user, reason } = await updateAvatarService(userId, uploadResult.url!, uploadResult.key);
-
-    if (!success) {
-      return sendError(res, {
-        status: HttpStatus.BAD_REQUEST,
-        message: reason || 'Unable to update avatar',
-      });
-    }
-
-    // Invalidate user cache after update
-    await Promise.all([
-      deleteCache(cacheKeys.user(userId)),
-      deleteCache(cacheKeys.userProfile(userId)),
-      deleteCache(cacheKeys.publicProfile(userId)),
-    ]);
-
-    return sendSuccess(res, {
-      status: HttpStatus.OK,
-      message: 'Avatar uploaded successfully',
-      data: { avatarUrl: user?.avatarUrl },
-    });
-  } catch (error) {
-    logError('uploadAvatar controller error', error);
-    return sendError(res, {
-      status: HttpStatus.INTERNAL_ERROR,
-      message: 'Server error',
-      error,
-    });
-  }
-};
+// Avatar upload moved to the presigned flow (src/modules/uploads): the client
+// gets a presigned PUT URL, uploads direct to the bucket, then confirms — the
+// confirm handler persists avatarUrl/avatarKey via updateAvatarService.
 
 // ====================== REPORT USER ======================
 export const reportUserHandler = async (req: AuthRequest, res: Response) => {

@@ -65,6 +65,10 @@
       "description": "Travel Preferences endpoints"
     },
     {
+      "name": "Uploads",
+      "description": "Presigned direct-to-bucket image upload endpoints"
+    },
+    {
       "name": "Users",
       "description": "Users endpoints"
     },
@@ -117,8 +121,17 @@
     "/api/v1/users/me/onboarding/complete": {
       "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1onboarding~1complete"
     },
-    "/api/v1/users/me/avatar": {
-      "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1avatar"
+    "/api/v1/uploads/presign": {
+      "$ref": "./paths/uploads.yaml#/paths/~1api~1v1~1uploads~1presign"
+    },
+    "/api/v1/uploads/confirm": {
+      "$ref": "./paths/uploads.yaml#/paths/~1api~1v1~1uploads~1confirm"
+    },
+    "/api/v1/uploads/read": {
+      "$ref": "./paths/uploads.yaml#/paths/~1api~1v1~1uploads~1read"
+    },
+    "/api/v1/uploads": {
+      "$ref": "./paths/uploads.yaml#/paths/~1api~1v1~1uploads"
     },
     "/api/v1/users/{userId}/profile": {
       "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1{userId}~1profile"

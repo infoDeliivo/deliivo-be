@@ -210,17 +210,32 @@
         "requestBody": {
           "required": true,
           "content": {
-            "multipart/form-data": {
+            "application/json": {
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
+                "description": "Attach an uploaded document to the draft. Provide exactly one of imageUrl (public docs, e.g. VEHICLE_IMAGE) or imageKey (private KYC docs, e.g. DRIVING_LICENSE / INSURANCE_DOCUMENT).",
                 "required": [
-                  "image"
+                  "documentType"
                 ],
                 "properties": {
-                  "image": {
+                  "imageUrl": {
                     "type": "string",
-                    "format": "binary"
+                    "format": "uri",
+                    "description": "Public URL returned by POST /uploads/confirm (target=vehicle_draft_document). For public docs only."
+                  },
+                  "imageKey": {
+                    "type": "string",
+                    "description": "Private object key returned by POST /uploads/confirm (target=vehicle_draft_document_private). For private KYC docs; becomes the document's previewKey."
+                  },
+                  "documentType": {
+                    "type": "string",
+                    "enum": [
+                      "VEHICLE_IMAGE",
+                      "VEHICLE_DOCUMENT",
+                      "DRIVING_LICENSE",
+                      "INSURANCE_DOCUMENT"
+                    ]
                   }
                 }
               }
@@ -296,11 +311,34 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "vehicles": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "../components/schemas/common.yaml#/VehicleSummary"
+                              }
+                            },
+                            "pagination": {
+                              "$ref": "../components/schemas/common.yaml#/Pagination"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
                 },
                 "examples": {
                   "default": {
-                    "$ref": "../components/examples/common.yaml#/VehicleSuccess"
+                    "$ref": "../components/examples/common.yaml#/VehicleListSuccess"
                   }
                 }
               }
@@ -420,7 +458,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "../components/schemas/common.yaml#/VehicleSummary"
+                        }
+                      }
+                    }
+                  ]
                 },
                 "examples": {
                   "default": {

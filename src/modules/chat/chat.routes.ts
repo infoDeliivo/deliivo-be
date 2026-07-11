@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { validate } from '../../middlewares/validate.js';
-import { uploadSingleImage } from '../../middlewares/upload.middleware.js';
 import * as controller from './chat.controller.js';
 import {
     getConversationsQuerySchema,
@@ -41,10 +40,10 @@ router.post(
     controller.sendMessage,
 );
 
-// Send an image message (multipart form upload)
+// Send an image message. The image is uploaded first via the presigned flow
+// (POST /uploads/presign + /confirm, target=chat_image); the confirmed URL is passed here.
 router.post(
     '/send-image',
-    uploadSingleImage,
     validate({ body: sendImageSchema }),
     controller.sendImage,
 );

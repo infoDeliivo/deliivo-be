@@ -172,6 +172,7 @@ model Vehicle {
   color      String?
   year       Int?
   imageUrl     String?
+  imageKey     String?
   isVerified Boolean      @default(false)
   deletedAt  DateTime?
 
@@ -189,7 +190,8 @@ model VehicleDocument {
   id           String       @id @default(uuid())
   vehicleId    String
   vehicle      Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  imageUrl     String
+  image        String?
+  imageKey     String?
   documentType DocumentType
 
   createdAt DateTime @default(now())

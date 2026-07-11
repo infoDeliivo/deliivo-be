@@ -5,9 +5,9 @@ import * as DraftVehicleService from './draft-vehicle.service.js';
 import { formatDraftResponse } from './draft-vehicle.service.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
-import { uploadToS3 } from '../../services/s3.service.js';
 import { getCache, setCache, deleteCache, cacheKeys } from '../../services/cache.service.js';
 import { DocumentType } from '@prisma/client';
+import { normalizeDocumentSource } from './vehicle-documents.util.js';
 
 /* ================= CREATE / UPDATE VEHICLE ================= */
 export const createVehicle = async (req: AuthRequest, res: Response) => {
@@ -95,97 +95,8 @@ export const updateVehicleDetails = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/* ================= UPLOAD IMAGE AND UPDATE VEHICLE ================= */
-export const uploadImage = async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.file) {
-      return sendError(res, {
-        status: HttpStatus.BAD_REQUEST,
-        message: 'Image file required',
-      });
-    }
-
-    const vehicleId = req.params.id as string;
-    const uploadResult = await uploadToS3({ folder: 'vehicle', file: req.file, ownerId: req.user.id });
-
-    if (!uploadResult.success) {
-      return sendError(res, {
-        status: HttpStatus.INTERNAL_ERROR,
-        message: uploadResult.error || 'Failed to upload image',
-      });
-    }
-
-    const imageUrl = uploadResult.url!;
-
-    const result = await VehicleService.updateVehicle(req.user.id, vehicleId, {
-      imageUrl,
-    });
-
-    if (!result.success) {
-      return sendError(res, {
-        status: HttpStatus.NOT_FOUND,
-        message: result.message,
-      });
-    }
-
-    // Invalidate vehicle cache after update
-    await deleteCache(cacheKeys.vehicle(vehicleId));
-
-    return sendSuccess(res, {
-      message: 'Vehicle image uploaded and updated successfully',
-      data: {
-        imageUrl,
-        vehicle: result.data
-      }
-    });
-  } catch (error) {
-    logError('Vehicle uploadImage error', error);
-    return sendError(res, {
-      message: 'Failed to upload vehicle image',
-    });
-  }
-};
-
-/* ================= UPLOAD IMAGE ONLY (RETURNS URL) ================= */
-export const uploadVehicleImageOnly = async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.file) {
-      return sendError(res, {
-        status: HttpStatus.BAD_REQUEST,
-        message: 'Image file required',
-      });
-    }
-
-    // Upload to S3
-    const uploadResult = await uploadToS3({
-      folder: 'vehicle',
-      file: req.file,
-      ownerId: req.user.id,
-    });
-
-    if (!uploadResult.success) {
-      return sendError(res, {
-        status: HttpStatus.INTERNAL_ERROR,
-        message: uploadResult.error || 'Failed to upload image to S3',
-      });
-    }
-
-    return sendSuccess(res, {
-      status: HttpStatus.OK,
-      message: 'Image uploaded successfully',
-      data: {
-        imageUrl: uploadResult.url,
-        key: uploadResult.key
-      },
-    });
-  } catch (error) {
-    logError('Vehicle uploadVehicleImageOnly error', error);
-    return sendError(res, {
-      status: HttpStatus.INTERNAL_ERROR,
-      message: 'Server error during image upload',
-    });
-  }
-};
+// Vehicle image upload moved to the presigned flow (src/modules/uploads):
+// target=vehicle_image persists Vehicle.imageUrl + imageKey on confirm.
 
 /* ================= GET VEHICLE ================= */
 export const getVehicle = async (req: AuthRequest, res: Response) => {
@@ -310,57 +221,48 @@ export const updateDraftVehicleDetails = async (req: AuthRequest, res: Response)
 /* ================= DRAFT: STEP 3 — UPLOAD DOCUMENT & SAVE TO DRAFT ================= */
 export const uploadDraftDocument = async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.file) {
-      return sendError(res, {
-        status: HttpStatus.BAD_REQUEST,
-        message: 'Image file required',
-      });
-    }
+    // Object already uploaded via the presigned flow. Public docs (VEHICLE_IMAGE) come
+    // from target=vehicle_draft_document and carry imageUrl; private KYC docs
+    // (DRIVING_LICENSE, INSURANCE_DOCUMENT) come from vehicle_draft_document_private and
+    // carry imageKey. Exactly one is present (draftImageSchema).
+    const { imageUrl, imageKey, documentType } = req.body as {
+      imageUrl?: string;
+      imageKey?: string;
+      documentType: DocumentType;
+    };
 
-    const { documentType } = req.body;
-    if (!documentType || !Object.values(DocumentType).includes(documentType as DocumentType)) {
-      return sendError(res, {
-        status: HttpStatus.BAD_REQUEST,
-        message: 'A valid documentType is required',
-      });
-    }
-
-    // Upload to S3
-    const uploadResult = await uploadToS3({
-      folder: 'vehicle',
-      file: req.file,
-      ownerId: req.user.id,
+    // Enforce visibility server-side: private types (licence/insurance) are forced to a
+    // private object key even if the client sent a public URL. Public types keep the URL.
+    const normalized = await normalizeDocumentSource(req.user.id, documentType, {
+      imageUrl,
+      imageKey,
     });
 
-    if (!uploadResult.success) {
-      return sendError(res, {
-        status: HttpStatus.INTERNAL_ERROR,
-        message: uploadResult.error || 'Failed to upload image to S3',
-      });
-    }
-
     // Save to Redis draft
-    const draft = await DraftVehicleService.addDocument(
-      req.user.id,
-      uploadResult.url!,
-      documentType as DocumentType,
-    );
+    const draft = await DraftVehicleService.addDocument(req.user.id, documentType, normalized);
 
     return sendSuccess(res, {
-      message: 'Document uploaded and saved to draft',
+      message: 'Document saved to draft',
       data: {
-        imageUrl: uploadResult.url,
+        ...normalized,
         documentType,
         draft: formatDraftResponse(draft),
       },
     });
   } catch (error: any) {
     logError('Vehicle uploadDraftDocument error', error);
+    if (error.message === 'DRAFT_NOT_FOUND') {
+      return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'No vehicle draft found' });
+    }
+    if (error.message === 'PRIVATE_DOCUMENT_KEY_UNRESOLVED') {
+      return sendError(res, {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Could not resolve the uploaded object for this document',
+      });
+    }
     return sendError(res, {
-      status:
-        error.message === 'DRAFT_NOT_FOUND' ? HttpStatus.NOT_FOUND : HttpStatus.INTERNAL_ERROR,
-      message:
-        error.message === 'DRAFT_NOT_FOUND' ? 'No vehicle draft found' : 'Failed to upload document',
+      status: HttpStatus.INTERNAL_ERROR,
+      message: 'Failed to upload document',
     });
   }
 };

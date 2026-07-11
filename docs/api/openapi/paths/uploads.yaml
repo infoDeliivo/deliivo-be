@@ -1,0 +1,376 @@
+{
+  "paths": {
+    "/api/v1/uploads/presign": {
+      "post": {
+        "operationId": "uploadsPresign",
+        "summary": "POST uploads/presign",
+        "description": "Step 1 of the presigned direct-to-bucket flow. Returns a short-lived presigned PUT URL and a staged (tmp/) object key. The client uploads the file bytes directly to the returned URL; nothing is persisted until POST /uploads/confirm.",
+        "tags": [
+          "Uploads"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "target",
+                  "contentType",
+                  "fileExtension"
+                ],
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "enum": [
+                      "avatar",
+                      "vehicle_image",
+                      "vehicle_document",
+                      "chat_image",
+                      "vehicle_draft_document",
+                      "vehicle_draft_document_private"
+                    ],
+                    "description": "What the upload is for. Determines folder, visibility (public/private) and which owner fields are required. vehicle_draft_document_private is a private one-shot for draft KYC docs (licence/insurance): confirm returns only { key }."
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "enum": [
+                      "image/jpeg",
+                      "image/png",
+                      "image/webp"
+                    ]
+                  },
+                  "fileExtension": {
+                    "type": "string",
+                    "enum": [
+                      "jpg",
+                      "jpeg",
+                      "png",
+                      "webp"
+                    ]
+                  },
+                  "vehicleId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Required when target is vehicle_image or vehicle_document."
+                  },
+                  "documentType": {
+                    "type": "string",
+                    "enum": [
+                      "VEHICLE_IMAGE",
+                      "VEHICLE_DOCUMENT",
+                      "DRIVING_LICENSE",
+                      "INSURANCE_DOCUMENT"
+                    ],
+                    "description": "Required when target is vehicle_document."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Presigned upload URL generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "description": "Staged object key, e.g. tmp/avatar/<userId>/<uuid>.jpg. Pass this back to /uploads/confirm."
+                        },
+                        "uploadUrl": {
+                          "type": "string",
+                          "description": "Presigned URL to PUT the file bytes to."
+                        },
+                        "method": {
+                          "type": "string",
+                          "example": "PUT"
+                        },
+                        "headers": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Headers to send with the PUT (at minimum Content-Type)."
+                        },
+                        "expiresIn": {
+                          "type": "integer",
+                          "description": "Seconds until the presigned URL expires."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/confirm": {
+      "post": {
+        "operationId": "uploadsConfirm",
+        "summary": "POST uploads/confirm",
+        "description": "Step 2 of the presigned flow. Verifies the staged object exists and passes type/size checks, promotes it from tmp/ to uploads/, and persists it. For avatar and vehicle_image the previous object is deleted. For chat_image and vehicle_draft_document the promoted public URL is returned without writing an owner record (the caller then sends it via the chat/draft endpoints).",
+        "tags": [
+          "Uploads"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "target",
+                  "key"
+                ],
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "enum": [
+                      "avatar",
+                      "vehicle_image",
+                      "vehicle_document",
+                      "chat_image",
+                      "vehicle_draft_document",
+                      "vehicle_draft_document_private"
+                    ]
+                  },
+                  "key": {
+                    "type": "string",
+                    "description": "The staged tmp/ key returned by /uploads/presign."
+                  },
+                  "vehicleId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "documentType": {
+                    "type": "string",
+                    "enum": [
+                      "VEHICLE_IMAGE",
+                      "VEHICLE_DOCUMENT",
+                      "DRIVING_LICENSE",
+                      "INSURANCE_DOCUMENT"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upload confirmed and persisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Document created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/read": {
+      "get": {
+        "operationId": "uploadsRead",
+        "summary": "GET uploads/read",
+        "description": "Returns a short-lived presigned GET URL for any private object the caller owns. Authorization is by the owner id embedded in the key (uploads/<folder>/<ownerId>/...); a key you do not own returns 404. Get the key from GET /api/v1/vehicles/{id} as documents[].previewKey.",
+        "tags": [
+          "Uploads"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Signed read URL generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        },
+                        "expiresIn": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/uploads": {
+      "delete": {
+        "operationId": "uploadsDelete",
+        "summary": "DELETE uploads",
+        "description": "Remove a persisted image: avatar and vehicle_image clear the owner's URL/key; vehicle_document deletes the document row. The stored object is removed from the bucket (best-effort). chat_image / vehicle_draft_document are not persisted and cannot be deleted here.",
+        "tags": [
+          "Uploads"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "target",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "avatar",
+                "vehicle_image",
+                "vehicle_document"
+              ]
+            }
+          },
+          {
+            "name": "vehicleId",
+            "in": "query",
+            "required": false,
+            "description": "Required for vehicle_image and vehicle_document.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "description": "Required for vehicle_document; identifies which document to delete.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,10 @@
 // @ts-ignore - bullmq types not resolved by moduleResolution:"Node"; runtime works fine
 import { Queue, Worker } from 'bullmq';
+import { readdir, stat, unlink } from 'fs/promises';
+import { join } from 'path';
 import { BookingStatus, RideStatus } from '@prisma/client';
+import { resolveStorageTarget } from '../config/s3.config.js';
+import { TMP_PREFIX } from '../services/s3.service.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { bullRedis } from './redisConnection.js';
 import { prisma } from '../config/index.js';
@@ -86,6 +90,20 @@ scheduleMaintenanceJob(
         jobId: 'payment-outbox',
         removeOnComplete: true,
         removeOnFail: 100,
+    }
+);
+
+// Local-disk staged-upload sweep: in local storage mode, staged uploads land on
+// disk under ./tmp. In bucket mode a lifecycle rule handles this (see
+// src/scripts/put-tmp-lifecycle.ts) and the local dir is absent, so this is a no-op.
+scheduleMaintenanceJob(
+    'tmp-upload-sweep',
+    {},
+    {
+        repeat: { pattern: '30 2 * * *' }, // 02:30 UTC daily
+        jobId: 'tmp-upload-sweep',
+        removeOnComplete: true,
+        removeOnFail: 50,
     }
 );
 
@@ -498,6 +516,58 @@ export const runRideOverdueCheck = async () => {
     });
 };
 
+const TMP_SWEEP_MAX_AGE_MS = Number(process.env.UPLOAD_TMP_EXPIRY_DAYS || '1') * 24 * 60 * 60 * 1000;
+
+/**
+ * Delete stale staged uploads from the on-disk ./tmp folder (local storage mode only).
+ * Objects presigned but never confirmed would otherwise accumulate. Recurses one level
+ * per folder/owner and removes files older than the expiry window.
+ */
+export const runTmpUploadSweep = async () => {
+    const target = resolveStorageTarget();
+    if (target.bucketName) {
+        // Bucket mode: a lifecycle rule expires tmp/ objects; nothing on local disk.
+        return { swept: 0, skipped: true };
+    }
+
+    const root = join(process.cwd(), TMP_PREFIX);
+    const cutoff = Date.now() - TMP_SWEEP_MAX_AGE_MS;
+    let swept = 0;
+
+    const walk = async (dir: string): Promise<void> => {
+        let entries;
+        try {
+            entries = await readdir(dir, { withFileTypes: true });
+        } catch (error) {
+            const e = error as { code?: string };
+            if (e.code === 'ENOENT') return; // no tmp dir yet
+            throw error;
+        }
+
+        for (const entry of entries) {
+            const full = join(dir, entry.name);
+            if (entry.isDirectory()) {
+                await walk(full);
+                continue;
+            }
+            try {
+                const info = await stat(full);
+                if (info.mtimeMs < cutoff) {
+                    await unlink(full);
+                    swept++;
+                }
+            } catch (error) {
+                const e = error as { code?: string };
+                if (e.code !== 'ENOENT') logError('tmp sweep: failed to remove file', error, { full });
+            }
+        }
+    };
+
+    await walk(root);
+    logInfo('Tmp upload sweep complete', { swept });
+    return { swept, skipped: false };
+};
+
 export const maintenanceWorker = new Worker(
     QUEUE_NAME,
     async (job: any) => {
@@ -527,6 +597,11 @@ export const maintenanceWorker = new Worker(
         if (job.name === 'payment-outbox') {
             const { processOutboxEvents } = await import('../modules/payments/payment-outbox.worker.js');
             await processOutboxEvents(25);
+            return;
+        }
+
+        if (job.name === 'tmp-upload-sweep') {
+            await runTmpUploadSweep();
             return;
         }
 

@@ -278,6 +278,51 @@
       },
       "isVerified": {
         "type": "boolean"
+      },
+      "documents": {
+        "type": "array",
+        "description": "Uploaded vehicle documents. Private docs (e.g. driving licence / insurance) have no public URL — use previewKey with GET /uploads/read to obtain a signed view URL.",
+        "items": {
+          "$ref": "#/VehicleDocument"
+        }
+      }
+    }
+  },
+  "VehicleDocument": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "documentType": {
+        "type": "string",
+        "enum": [
+          "VEHICLE_IMAGE",
+          "VEHICLE_DOCUMENT",
+          "DRIVING_LICENSE",
+          "INSURANCE_DOCUMENT"
+        ],
+        "description": "Identifies the document — driving licence, insurance, generic vehicle document, or vehicle image."
+      },
+      "previewKey": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "S3 object key (uploads/<folder>/<ownerId>/...). Pass to GET /uploads/read?key=<previewKey> for a short-lived signed view URL. null only if the row has no stored object."
+      },
+      "image": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Public URL for public documents; null for private documents (served via previewKey)."
+      },
+      "createdAt": {
+        "type": "string",
+        "format": "date-time"
       }
     }
   },

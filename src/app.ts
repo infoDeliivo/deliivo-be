@@ -36,6 +36,7 @@ import {
   safetyRouter,
   contentRouter,
   adminContentRouter,
+  uploadsRouter,
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
@@ -65,9 +66,6 @@ app.use('/api/v1/payments', express.raw({ type: 'application/json' }), paymentsW
 app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 app.use(requestTimeout);
-
-// Serve local uploads (dev fallback when S3 is not configured)
-app.use('/uploads', express.static('uploads'));
 
 app.get('/health', async (req, res) => {
   const checks: Record<string, boolean> = { database: false, redis: false };
@@ -153,6 +151,7 @@ app.use('/api/v1/bookings', protect, bookingOperationsRouter);
 app.use('/api/v1/driver/bookings', protect, driverBookingRouter);
 app.use('/api/v1/rides', protect, rideOperationsRouter);
 app.use('/api/v1/vehicles', protect, vehiclesRouter);
+app.use('/api/v1/uploads', protect, uploadsRouter);
 app.use('/api/v1/travel-preferences', protect, travelPreferenceRouter);
 app.use('/api/v1/maps', mapRouter);
 app.use('/api/v1/chat', protect, chatRouter);

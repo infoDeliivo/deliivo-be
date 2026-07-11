@@ -1,5 +1,6 @@
 import { prisma } from '../../config/index.js';
-import { VehicleType } from '@prisma/client';
+import { VehicleType, DocumentType, Prisma } from '@prisma/client';
+import { VehicleDocumentResponse } from './vehicle.types.js';
 
 type UpdateVehicleDetailsInput = {
   brand: string;
@@ -111,15 +112,127 @@ export const updateVehicle = async (
   if (!vehicle) {
     return { success: false, message: 'Vehicle not found' }
   }
+  const previousImageKey = vehicle.imageKey ?? undefined;
   const data = await prisma.vehicle.update({
     where: { id: vehicleId },
     data: update,
   })
 
-  return { success: true, message: 'Vehicle updated successfully', data };
+  return { success: true, message: 'Vehicle updated successfully', data, previousImageKey };
+};
+
+/* ================= CLEAR VEHICLE IMAGE ================= */
+export const clearVehicleImage = async (userId: string, vehicleId: string) => {
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: vehicleId, userId, deletedAt: null },
+  });
+
+  if (!vehicle) {
+    return { success: false, message: 'Vehicle not found' };
+  }
+
+  const previousImageKey = vehicle.imageKey ?? undefined;
+  await prisma.vehicle.update({
+    where: { id: vehicleId },
+    data: { imageUrl: null, imageKey: null },
+  });
+
+  return { success: true, message: 'Vehicle image removed', previousImageKey };
+};
+
+/* ================= DELETE VEHICLE DOCUMENT (ownership-scoped) ================= */
+export const deleteVehicleDocument = async (
+  userId: string,
+  vehicleId: string,
+  imageKey: string,
+) => {
+  const doc = await findVehicleDocumentByKey(userId, vehicleId, imageKey);
+  if (!doc) return null;
+
+  await prisma.vehicleDocument.delete({ where: { id: doc.id } });
+  return doc;
+};
+
+/* ================= OWNERSHIP CHECK ================= */
+export const userOwnsVehicle = async (userId: string, vehicleId: string): Promise<boolean> => {
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: vehicleId, userId, deletedAt: null },
+    select: { id: true },
+  });
+  return !!vehicle;
+};
+
+/* ================= ADD VEHICLE DOCUMENT (presigned confirm) ================= */
+export const addVehicleDocument = async (
+  userId: string,
+  vehicleId: string,
+  input: { imageKey: string; imageUrl?: string; documentType: DocumentType },
+) => {
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: vehicleId, userId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!vehicle) {
+    throw new Error('VEHICLE_NOT_FOUND');
+  }
+
+  return prisma.vehicleDocument.create({
+    data: {
+      vehicleId,
+      imageKey: input.imageKey,
+      image: input.imageUrl,
+      documentType: input.documentType,
+    },
+  });
+};
+
+/* ================= FIND VEHICLE DOCUMENT BY KEY (ownership-scoped read) ================= */
+export const findVehicleDocumentByKey = async (
+  userId: string,
+  vehicleId: string,
+  imageKey: string,
+) => {
+  return prisma.vehicleDocument.findFirst({
+    where: {
+      imageKey,
+      vehicleId,
+      vehicle: { userId, deletedAt: null },
+    },
+  });
 };
 
 /* ================= GET VEHICLE ================= */
+
+// Only the document fields the client needs; keeps raw S3 keys out of the response
+// except as `previewKey`, which is fed to GET /uploads/read for a signed view URL.
+const vehicleDocumentSelect = {
+  id: true,
+  imageKey: true,
+  image: true,
+  documentType: true,
+  createdAt: true,
+} satisfies Prisma.VehicleDocumentSelect;
+
+type VehicleWithDocuments = Prisma.VehicleGetPayload<{
+  include: { documents: { select: typeof vehicleDocumentSelect } };
+}>;
+
+const mapVehicleDocument = (
+  doc: VehicleWithDocuments['documents'][number],
+): VehicleDocumentResponse => ({
+  id: doc.id,
+  documentType: doc.documentType,
+  previewKey: doc.imageKey ?? null,
+  image: doc.image ?? null,
+  createdAt: doc.createdAt,
+});
+
+const mapVehicle = (vehicle: VehicleWithDocuments) => {
+  const { documents, ...rest } = vehicle;
+  return { ...rest, documents: documents.map(mapVehicleDocument) };
+};
+
 export const getVehicle = async (
   userId: string,
   vehicleId?: string,
@@ -133,13 +246,14 @@ export const getVehicle = async (
         userId,
         deletedAt: null,
       },
+      include: { documents: { select: vehicleDocumentSelect } },
     });
 
     if (!vehicle) {
       throw new Error('VEHICLE_NOT_FOUND');
     }
 
-    return vehicle;
+    return mapVehicle(vehicle);
   }
 
   // No vehicleId — return all vehicles for the user with pagination
@@ -156,6 +270,7 @@ export const getVehicle = async (
       orderBy: { createdAt: 'desc' },
       skip,
       take: actualLimit,
+      include: { documents: { select: vehicleDocumentSelect } },
     }),
     prisma.vehicle.count({
       where: {
@@ -166,7 +281,7 @@ export const getVehicle = async (
   ]);
 
   return {
-    vehicles,
+    vehicles: vehicles.map(mapVehicle),
     pagination: {
       page: actualPage,
       limit: actualLimit,
