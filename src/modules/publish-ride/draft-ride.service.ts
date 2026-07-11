@@ -25,7 +25,7 @@ import {
   RouteLocationSuggestionsResult,
 } from './publish-ride.types.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
-import { getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { DEFAULT_BALTIC_PRICING_CONFIG, getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
 import { calculatePrice, PricingConfigData } from '../pricing/pricing.calculator.js';
 import { createNotification } from '../notification/notification.service.js';
 import { googleService } from '../maps/google.service.js';
@@ -1041,16 +1041,7 @@ export const updateCapacity = async (
 //  STEP 11: GET RECOMMENDED PRICE
 // ============================================================
 
-const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = {
-  id: 'default-baltic-distance-pricing',
-  regionCode: 'BALTIC',
-  currency: 'EUR',
-  minRatePerKm: 0.06,
-  recommendedRatePerKm: 0.08,
-  maxRatePerKm: 0.12,
-  minimumSeatPrice: 3,
-  roundingStrategy: 'NEAREST_EURO',
-};
+const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = DEFAULT_BALTIC_PRICING_CONFIG;
 
 export const getRecommendedPrice = async (
   driverId: string,

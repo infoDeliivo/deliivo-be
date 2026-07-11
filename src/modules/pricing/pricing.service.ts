@@ -7,6 +7,18 @@ import {
 } from './pricing.calculator.js';
 
 const DEFAULT_REGION = 'BALTIC';
+const DEFAULT_PRICING_CREATED_BY = 'system';
+
+export const DEFAULT_BALTIC_PRICING_CONFIG = {
+    id: 'default-baltic-distance-pricing',
+    regionCode: DEFAULT_REGION,
+    currency: 'EUR',
+    minRatePerKm: 0.06,
+    recommendedRatePerKm: 0.08,
+    maxRatePerKm: 0.12,
+    minimumSeatPrice: 3,
+    roundingStrategy: 'NEAREST_EURO',
+} as const;
 
 export interface PricingConfigInput {
     regionCode: string;
@@ -82,13 +94,34 @@ export const validateAndSnapshotPricing = async (params: {
 };
 
 export const getActiveConfigs = async () => {
+    await ensureDefaultPricingConfig();
     return prisma.pricingConfig.findMany({
         where: { active: true },
         orderBy: { regionCode: 'asc' },
     });
 };
 
+export const ensureDefaultPricingConfig = async () => {
+    const existing = await prisma.pricingConfig.findFirst({
+        where: { regionCode: DEFAULT_REGION },
+        orderBy: [{ active: 'desc' }, { validFrom: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    if (existing) return existing;
+
+    return prisma.pricingConfig.create({
+        data: {
+            ...DEFAULT_BALTIC_PRICING_CONFIG,
+            active: true,
+            validFrom: new Date(),
+            validTo: null,
+            createdBy: DEFAULT_PRICING_CREATED_BY,
+        },
+    });
+};
+
 export const listPricingConfigs = async () => {
+    await ensureDefaultPricingConfig();
     return prisma.pricingConfig.findMany({
         orderBy: [{ regionCode: 'asc' }, { validFrom: 'desc' }, { createdAt: 'desc' }],
     });
