@@ -20,4 +20,6 @@ export interface ConnectAccountStatus {
     chargesEnabled: boolean;
     payoutsEnabled: boolean;
     detailsSubmitted: boolean;
+    accountName: string | null;
+    accountDob: { day?: number | null; month?: number | null; year?: number | null } | null;
 }

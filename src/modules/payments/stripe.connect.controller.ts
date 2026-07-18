@@ -3,6 +3,8 @@ import { prisma } from '../../config/index.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { createConnectOnboardingLink, getConnectAccountStatus } from './stripe.service.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
+import { logError, logWarn } from '../../utils/logger.js';
+import { matchIdentity } from '../../utils/nameMatch.js';
 
 /* ================= CONNECT ONBOARD ================= */
 export const connectOnboard = async (req: AuthRequest, res: Response) => {
@@ -43,7 +45,8 @@ export const connectOnboard = async (req: AuthRequest, res: Response) => {
             message: 'Stripe Connect onboarding link created',
             data: { url: onboardingUrl },
         });
-    } catch {
+    } catch (error) {
+        logError('[STRIPE_CONNECT] onboard failed', error, { userId: req.user?.id });
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to create Stripe Connect onboarding link',
@@ -71,7 +74,7 @@ export const connectStatus = async (req: AuthRequest, res: Response) => {
 
         const user = await prisma.user.findUnique({
             where: { id: userId },
-            select: { stripeAccountId: true, stripeOnboardingComplete: true },
+            select: { stripeAccountId: true, stripeOnboardingComplete: true, name: true, dob: true },
         });
 
         if (!user?.stripeAccountId) {
@@ -82,20 +85,58 @@ export const connectStatus = async (req: AuthRequest, res: Response) => {
         }
 
         const status = await getConnectAccountStatus(user.stripeAccountId);
+        const stripeReady = status.detailsSubmitted && status.chargesEnabled;
+        // Stripe asserts name + DOB (no gender); match both against the profile.
+        const match = matchIdentity(
+            { name: user.name, dob: user.dob },
+            { name: status.accountName, dob: status.accountDob },
+        );
 
-        // Mark onboarding complete when Stripe confirms it
-        if (status.detailsSubmitted && status.chargesEnabled && !user.stripeOnboardingComplete) {
+        let onboardingComplete = user.stripeOnboardingComplete;
+
+        // Only complete onboarding when Stripe is ready AND the account-holder
+        // identity matches the entered profile. A mismatch is a hard block.
+        if (stripeReady && match.overall && !user.stripeOnboardingComplete) {
             await prisma.user.update({
                 where: { id: userId },
-                data: { stripeOnboardingComplete: true },
+                data: {
+                    stripeOnboardingComplete: true,
+                    stripeAccountName: status.accountName,
+                    stripeNameMatch: match.nameMatch,
+                    stripeDobMatch: match.dobMatch,
+                },
+            });
+            onboardingComplete = true;
+        } else if (stripeReady && !match.overall) {
+            await prisma.user.update({
+                where: { id: userId },
+                data: {
+                    stripeAccountName: status.accountName,
+                    stripeNameMatch: match.nameMatch,
+                    stripeDobMatch: match.dobMatch,
+                },
+            });
+            logWarn('[STRIPE_CONNECT] account ready but identity mismatch — onboarding withheld', {
+                userId,
+                nameMatch: match.nameMatch,
+                dobMatch: match.dobMatch,
             });
         }
 
         return sendSuccess(res, {
             message: 'Connect status fetched',
-            data: { connected: true, onboardingComplete: user.stripeOnboardingComplete, ...status },
+            data: {
+                connected: true,
+                onboardingComplete,
+                accountId: status.accountId,
+                chargesEnabled: status.chargesEnabled,
+                payoutsEnabled: status.payoutsEnabled,
+                detailsSubmitted: status.detailsSubmitted,
+                identityMismatch: stripeReady && !match.overall,
+            },
         });
-    } catch {
+    } catch (error) {
+        logError('[STRIPE_CONNECT] status fetch failed', error, { userId: req.user?.id });
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to fetch Stripe Connect status',

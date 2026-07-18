@@ -70,6 +70,7 @@ enum DlVerificationStatus {
   DECLINED
   RESUBMISSION_REQUESTED
   EXPIRED
+  IDENTITY_MISMATCH
 }
 
 model User {
@@ -98,6 +99,9 @@ model User {
 
   stripeAccountId          String?
   stripeOnboardingComplete Boolean @default(false)
+  stripeAccountName        String?
+  stripeNameMatch          Boolean?
+  stripeDobMatch           Boolean?
 
   tosAcceptedAt     DateTime?
   tosVersion        String?
@@ -995,6 +999,12 @@ model DlVerification {
   decisionCode     Int?
   reasonCode       String?
   decisionPayload  Json?
+  verifiedName     String?
+  verifiedDob      String?
+  verifiedGender   String?
+  nameMatch        Boolean?
+  dobMatch         Boolean?
+  genderMatch      Boolean?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

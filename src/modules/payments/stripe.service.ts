@@ -71,11 +71,20 @@ export const getConnectAccountStatus = async (
 ): Promise<ConnectAccountStatus> => {
     const stripe = getStripeClient();
     const account = await stripe.accounts.retrieve(stripeAccountId);
+    const individual = account.individual;
+    const accountName = individual
+        ? [individual.first_name, individual.last_name].filter(Boolean).join(' ').trim() || null
+        : null;
+    const accountDob = individual?.dob?.year
+        ? { day: individual.dob.day, month: individual.dob.month, year: individual.dob.year }
+        : null;
     return {
         accountId: account.id,
         chargesEnabled: account.charges_enabled,
         payoutsEnabled: account.payouts_enabled,
         detailsSubmitted: account.details_submitted,
+        accountName,
+        accountDob,
     };
 };
 
