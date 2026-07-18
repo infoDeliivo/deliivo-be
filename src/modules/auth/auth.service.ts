@@ -119,19 +119,35 @@ export const verifyOtpService = async (
       return { success: false, reason: 'USER_NOT_FOUND' };
     }
 
+    // Record which channel the OTP proved on every successful verification, so
+    // phoneVerified/emailVerified stay accurate. Nothing gates on these today —
+    // the publish-ride check reads only tosAcceptedAt + dlVerified.
+    const channelVerified: { phoneVerified?: true; emailVerified?: true } =
+      method === 'phone' ? { phoneVerified: true } : method === 'email' ? { emailVerified: true } : {};
+
     // Signup flow → mark user verified
     if (purpose === 'signup') {
       await prisma.user.update({
         where: { id: user.id },
-        data: { isVerified: true },
+        data: { isVerified: true, ...channelVerified },
       });
 
       user.isVerified = true;
+      Object.assign(user, channelVerified);
     }
 
     // Login flow → ensure verified user
     if (purpose === 'login' && !user.isVerified) {
       return { success: false, reason: 'USER_NOT_VERIFIED' };
+    }
+
+    // Login / reset flows for an already-verified user → backfill channel flag
+    if (purpose !== 'signup' && (method === 'phone' || method === 'email')) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: channelVerified,
+      });
+      Object.assign(user, channelVerified);
     }
 
     const tokens = await generateTokens({

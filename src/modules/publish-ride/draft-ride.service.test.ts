@@ -6,12 +6,18 @@ const mockRedis = {
     on: jest.fn(),
 };
 
+const verifiedDriver = {
+    dlVerified: true,
+    tosAcceptedAt: new Date(),
+    gender: 'FEMALE',
+};
+
 const mockPrisma = {
     vehicle: {
         findFirst: jest.fn(),
     },
     user: {
-        findUnique: jest.fn().mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' }),
+        findUnique: jest.fn().mockResolvedValue({ ...verifiedDriver }),
     },
     $transaction: jest.fn(),
 };
@@ -56,7 +62,7 @@ import polyline from '@mapbox/polyline';
 describe('publishRide', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' });
+        mockPrisma.user.findUnique.mockResolvedValue({ ...verifiedDriver });
         mockGoogleService.placeDetails.mockResolvedValue({
             address_components: [{ short_name: 'EE', types: ['country'] }],
         });
@@ -255,7 +261,7 @@ describe('publishRide', () => {
         };
 
         mockRedis.get.mockResolvedValue(JSON.stringify(draft));
-        mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'MALE' });
+        mockPrisma.user.findUnique.mockResolvedValue({ ...verifiedDriver, gender: 'MALE' });
         mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
 
         await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('FEMALE_ONLY_NOT_ALLOWED');
@@ -353,5 +359,46 @@ describe('publishRide', () => {
         } finally {
             global.fetch = originalFetch;
         }
+    });
+
+    describe('publish gates', () => {
+        // Minimal draft with no meeting points: publish clears the DL gate and then
+        // fails with MEETING_POINTS_REQUIRED.
+        const minimalDraft = JSON.stringify({
+            userId: 'driver-1',
+            step: 13,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originPlaceId: 'place-tallinn',
+            destinationPlaceId: 'place-tartu',
+            routePolyline: 'encoded-route',
+            routeIsPublishable: true,
+            departureDate: '2026-08-01T00:00:00.000Z',
+            departureTime: '10:00',
+            totalSeats: 3,
+            basePricePerSeat: 12,
+            pickups: [],
+            dropoffs: [],
+        });
+
+        beforeEach(() => {
+            mockRedis.get.mockResolvedValue(minimalDraft);
+            delete process.env.SKIP_DL_VERIFICATION;
+        });
+
+        it('rejects publish when the driving licence is not verified', async () => {
+            mockPrisma.user.findUnique.mockResolvedValue({ ...verifiedDriver, dlVerified: false });
+            await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('DRIVER_NOT_VERIFIED');
+        });
+
+        it('clears the gates with a verified DL and proceeds to meeting-point validation', async () => {
+            await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('MEETING_POINTS_REQUIRED');
+        });
+
+        it('bypasses the DL gate when SKIP_DL_VERIFICATION is set', async () => {
+            process.env.SKIP_DL_VERIFICATION = 'true';
+            mockPrisma.user.findUnique.mockResolvedValue({ ...verifiedDriver, dlVerified: false });
+            await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('MEETING_POINTS_REQUIRED');
+        });
     });
 });

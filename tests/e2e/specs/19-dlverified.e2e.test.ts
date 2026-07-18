@@ -67,7 +67,15 @@ beforeAll(async () => {
   // (publishing requires dlVerified; accepting requires dlVerified — we test the accept guard)
   const db = getDb();
   try {
-    await db.user.update({ where: { id: unverifiedDriverId }, data: { dlVerified: true } });
+    await db.user.update({
+      where: { id: unverifiedDriverId },
+      data: {
+        dlVerified: true,
+        isVerified: true,
+        phoneVerified: true,
+        stripeOnboardingComplete: true,
+      },
+    });
 
     // Publish the ride while dlVerified=true
     try {

@@ -83,7 +83,12 @@ beforeAll(async () => {
   try {
     await db.user.update({
       where: { id: femaleDriverAccount.id },
-      data: { dlVerified: true },
+      data: {
+        dlVerified: true,
+        isVerified: true,
+        phoneVerified: true,
+        stripeOnboardingComplete: true,
+      },
     });
   } catch (err: any) {
     console.warn(`[18-tos-femaleonly] Could not set dlVerified for female driver: ${err.message}`);
