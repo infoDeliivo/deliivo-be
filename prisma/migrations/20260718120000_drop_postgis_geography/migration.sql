@@ -30,15 +30,7 @@ ALTER TABLE "RideWaypoint"
 -- (it requires elevated privileges to re-create and other objects may come to depend on it),
 -- and it is inert once the columns above are gone.
 
--- The reverted migration's directory no longer exists in the repository, so its history row
--- would leave Prisma reporting an applied migration it cannot find. Clear it to keep
--- `prisma migrate deploy` / `prisma migrate status` consistent.
---
--- Guarded: databases managed with `prisma db push` (the dev workflow here) have no
--- _prisma_migrations table at all, and an unguarded DELETE would abort the migration there.
-DO $$
-BEGIN
-  IF to_regclass('public._prisma_migrations') IS NOT NULL THEN
-    DELETE FROM "_prisma_migrations" WHERE migration_name = '20260717120000_postgis_geography';
-  END IF;
-END $$;
+-- Note: 20260717120000_postgis_geography is deliberately kept in the repository even though the
+-- feature is gone. It is already applied to deployed databases, and Prisma's guidance is not to
+-- edit or delete an applied migration — doing so produces the "applied to the database but not
+-- found in prisma/migrations" history conflict. This migration reverses its effects instead.
