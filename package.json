@@ -29,6 +29,8 @@
     "prisma:migrate:reset": "prisma migrate reset",
     "prisma:studio": "prisma studio",
     "db:push": "prisma db push",
+    "db:postgis": "prisma db execute --file prisma/migrations/20260717120000_postgis_geography/migration.sql",
+    "db:setup": "prisma db push && npm run db:postgis",
     "test:e2e": "jest --config jest.e2e.config.js --runInBand",
     "test:e2e:open": "node scripts/run-e2e.mjs --open",
     "postinstall": "node scripts/postinstall.mjs",
