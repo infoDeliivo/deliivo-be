@@ -87,3 +87,9 @@ Confirm both pass (paste output) before claiming the feature complete. A feature
 - Prisma 7 config lives in `prisma.config.ts` (schema `prisma/schema.prisma`), not in package.json.
 - ESM: imports use `.js` extensions on TS source paths; jest `moduleNameMapper` rewrites `.js` → source.
 - API docs: Swagger UI at `/docs`, raw spec at `/openapi.json`. Source is `docs/api/openapi/openapi.yaml`; keep routes documented (`npm run openapi:coverage` enforces).
+
+## Answering & accuracy
+
+- Prioritize technical accuracy over user satisfaction. Give the correct answer even when it is not what the user hopes to hear; never soften or bend a fact to please.
+- Ground non-trivial technical claims in authoritative, verifiable sources — official docs, the actual codebase, Stack Overflow, and tracked GitHub issues — not memory or guesswork. Prefer a verified result over a confident-sounding one.
+- If something is uncertain or unverified, say so plainly rather than assert it.
