@@ -1,23 +1,51 @@
 import nodemailer from 'nodemailer';
+import type SESTransport from 'nodemailer/lib/ses-transport/index.js';
+import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import dotenv from 'dotenv';
 import logger from '../utils/logger.js';
 
 dotenv.config({ quiet: true });
 
-const transporter = nodemailer.createTransport({
-  host: process.env.MAIL_HOST || 'smtp.gmail.com',
-  port: Number(process.env.MAIL_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,
-  },
-  connectionTimeout: 5000, // 5s – fail fast if SMTP is unreachable
-  greetingTimeout: 5000,
-});
+const parseMailProvider = (value?: string): 'smtp' | 'ses' => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === undefined || normalized === '' || normalized === 'smtp') {
+    return 'smtp';
+  }
+  if (normalized === 'ses') {
+    return 'ses';
+  }
+  throw new Error('MAIL_PROVIDER must be one of: smtp, ses');
+};
+
+const mailProvider = parseMailProvider(process.env.MAIL_PROVIDER);
+
+const createTransport = () => {
+  if (mailProvider === 'ses') {
+    // Nodemailer SES transport — credentials resolved by the AWS SDK default
+    // chain (env vars, shared config, or instance role). Region required.
+    const sesClient = new SESv2Client({ region: process.env.AWS_SES_REGION });
+    const sesOptions: SESTransport.Options = { SES: { sesClient, SendEmailCommand } };
+    return nodemailer.createTransport(sesOptions);
+  }
+
+  return nodemailer.createTransport({
+    host: process.env.MAIL_HOST || 'smtp.gmail.com',
+    port: Number(process.env.MAIL_PORT) || 587,
+    secure: false,
+    auth: {
+      user: process.env.MAIL_USER,
+      pass: process.env.MAIL_PASS,
+    },
+    connectionTimeout: 5000, // 5s – fail fast if SMTP is unreachable
+    greetingTimeout: 5000,
+  });
+};
+
+const transporter = createTransport();
 
 const getMailerLogMeta = () => ({
-  host: process.env.MAIL_HOST || 'smtp.gmail.com',
+  provider: mailProvider,
+  host: mailProvider === 'ses' ? `ses:${process.env.AWS_SES_REGION ?? 'unset'}` : process.env.MAIL_HOST || 'smtp.gmail.com',
   port: Number(process.env.MAIL_PORT) || 587,
   hasUser: Boolean(process.env.MAIL_USER),
   hasPass: Boolean(process.env.MAIL_PASS),

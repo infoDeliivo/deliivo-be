@@ -1,9 +1,10 @@
 import { SendSmsPayload } from './sms.types.js';
 import { smsQueue } from './sms.queue.js';
 import logger from '../../utils/logger.js';
-import twilio from 'twilio';
 import { bullRedis } from '../../queue/redisConnection.js';
 import { getSmsQueueConfig, isValidE164PhoneNumber, loadSmsWorkerConfig, maskPhoneNumber } from './sms.config.js';
+import { assertSmsAllowed } from './sms.abuse.js';
+import { getSmsProvider } from './providers/index.js';
 
 export interface SendSmsResult {
     success: boolean;
@@ -35,6 +36,17 @@ export const sendSms = async (to: string, body: string): Promise<SendSmsResult> 
                 success: false,
                 error: `SMS body exceeds ${queueConfig.maxBodyLength} characters`,
             };
+        }
+
+        // Abuse gate: country allowlist + per-phone daily cap + global spend cap.
+        // Runs once per accepted send; covers both the queued and direct-fallback paths.
+        const allowed = await assertSmsAllowed(normalizedTo);
+        if (!allowed.ok) {
+            logger.warn('[SMS] Blocked by abuse gate', {
+                to: maskPhoneNumber(normalizedTo),
+                reason: allowed.error,
+            });
+            return { success: false, error: allowed.error };
         }
 
         const payload: SendSmsPayload = { to: normalizedTo, body: normalizedBody };
@@ -93,38 +105,14 @@ async function sendSmsDirect(payload: SendSmsPayload): Promise<SendSmsResult> {
             return { success: true, jobId: 'mock-direct' };
         }
 
-        if (!smsConfig.accountSid || !smsConfig.authToken) {
-            return { success: false, error: 'Twilio not configured. Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN' };
-        }
-
-        if (!smsConfig.messagingServiceSid && !smsConfig.phoneNumber) {
-            return { success: false, error: 'Twilio sender not configured. Set TWILIO_PHONE_NUMBER or TWILIO_MESSAGING_SERVICE_SID' };
-        }
-
-        const client = twilio(smsConfig.accountSid, smsConfig.authToken);
-        const payloadBase = {
-            body: normalizedBody,
-            to: normalizedTo,
-            ...(smsConfig.statusCallbackUrl ? { statusCallback: smsConfig.statusCallbackUrl } : {}),
-        };
-
-        const message =
-            smsConfig.messagingServiceSid
-                ? await client.messages.create({
-                    ...payloadBase,
-                    messagingServiceSid: smsConfig.messagingServiceSid,
-                })
-                : await client.messages.create({
-                    ...payloadBase,
-                    from: smsConfig.phoneNumber as string,
-                });
+        const result = await getSmsProvider().send(normalizedTo, normalizedBody);
 
         logger.info('[SMS] Direct fallback sent', {
-            messageSid: message.sid,
+            messageSid: result.id,
             to: maskPhoneNumber(normalizedTo),
-            status: message.status,
+            status: result.status,
         });
-        return { success: true, jobId: message.sid };
+        return { success: true, jobId: result.id };
     } catch (error: any) {
         logger.error('[SMS] Direct fallback failed', {
             error: error?.message || String(error),
