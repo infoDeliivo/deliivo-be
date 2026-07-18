@@ -1,11 +1,9 @@
 generator client {
-  provider        = "prisma-client-js" // ✅ required for Prisma v7
-  previewFeatures = ["postgresqlExtensions"]
+  provider = "prisma-client-js" // ✅ required for Prisma v7
 }
 
 datasource db {
-  provider   = "postgresql"
-  extensions = [postgis]
+  provider = "postgresql"
 }
 
 // ENUMS
@@ -287,11 +285,6 @@ model Ride {
   destinationLat      Float
   destinationLng      Float
 
-  // PostGIS geography points — kept in sync with the lat/lng above by DB triggers
-  // (see prisma/migrations/20260717120000_postgis_geography). Never written from Prisma.
-  originGeog      Unsupported("geography(Point, 4326)")?
-  destinationGeog Unsupported("geography(Point, 4326)")?
-
   // Encoded polyline for the selected route
   routePolyline        String?
   routeDistanceMeters  Int?
@@ -345,8 +338,6 @@ model Ride {
   @@index([status])
   @@index([departureDate])
   @@index([status, departureDate])
-  @@index([originGeog], type: Gist)
-  @@index([destinationGeog], type: Gist)
 }
 
 model RideWaypoint {
@@ -358,9 +349,6 @@ model RideWaypoint {
   address String
   lat     Float
   lng     Float
-
-  // PostGIS geography point — kept in sync with lat/lng by a DB trigger. Never written from Prisma.
-  geog Unsupported("geography(Point, 4326)")?
 
   // Type: PICKUP, DROPOFF, or STOPOVER
   waypointType WaypointType
@@ -378,7 +366,6 @@ model RideWaypoint {
   updatedAt DateTime @updatedAt
 
   @@index([rideId])
-  @@index([geog], type: Gist)
 }
 
 model RideSegmentCapacity {

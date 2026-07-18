@@ -15,7 +15,6 @@ const mockPrisma = {
     rideBooking: {
         groupBy: jest.fn(),
     },
-    $queryRaw: jest.fn(),
 };
 
 jest.mock('../../config/index.js', () => ({
@@ -53,9 +52,6 @@ describe('searchRidesAdvanced segment shaping', () => {
         mockPrisma.user.findUnique.mockResolvedValue(null);
         mockPrisma.userRatingStats.findMany.mockResolvedValue([]);
         mockPrisma.rideBooking.groupBy.mockResolvedValue([]);
-        // PostGIS spatial pre-filter (findRideIdsNearby) — findMany is mocked separately,
-        // so the candidate-id list here only needs to be a well-formed array.
-        mockPrisma.$queryRaw.mockResolvedValue([]);
     });
 
     it('searches all upcoming rides when departure date is omitted', async () => {

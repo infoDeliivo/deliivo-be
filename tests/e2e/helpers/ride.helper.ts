@@ -184,18 +184,6 @@ export const LONDON_TO_MANCHESTER = {
   destinationLng: -2.2426,
 };
 
-/** Tallinn → Tartu (Estonia) — Baltic route for publish tests (publishing is restricted to EE/LV/LT). */
-export const TALLINN_TO_TARTU = {
-  originPlaceId: 'ChIJvxZW35mUkkYRcGL8GG2zAAQ',
-  originAddress: 'Tallinn, Estonia',
-  originLat: 59.4370,
-  originLng: 24.7536,
-  destinationPlaceId: 'ChIJ9z1d1dg260YREG38GG2zAAQ',
-  destinationAddress: 'Tartu, Estonia',
-  destinationLat: 58.3780,
-  destinationLng: 26.7290,
-};
-
 /** Milton Keynes — used as a stopover point */
 export const MILTON_KEYNES_STOPOVER = {
   placeId: 'ChIJM5GaGdNhd0gRMBD_Bue-a_0',
