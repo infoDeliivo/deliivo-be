@@ -222,36 +222,4 @@ export const isRouteCovered = (
     };
 };
 
-/* ================= BOUNDING BOX UTILITIES ================= */
-/**
- * Get bounding box for spatial queries
- */
-export const getBoundingBox = (lat: number, lng: number, radiusKm: number) => {
-    const latDelta = radiusKm / 111.32;
-    const lngDelta = radiusKm / (111.32 * Math.cos((lat * Math.PI) / 180));
-
-    return {
-        minLat: lat - latDelta,
-        maxLat: lat + latDelta,
-        minLng: lng - lngDelta,
-        maxLng: lng + lngDelta,
-    };
-};
-
-/**
- * Merge multiple bounding boxes into one encompassing box
- */
-export const mergeBoundingBoxes = (
-    boxes: Array<{ minLat: number; maxLat: number; minLng: number; maxLng: number }>
-): { minLat: number; maxLat: number; minLng: number; maxLng: number } => {
-    if (boxes.length === 0) {
-        return { minLat: 0, maxLat: 0, minLng: 0, maxLng: 0 };
-    }
-
-    return boxes.reduce((merged, box) => ({
-        minLat: Math.min(merged.minLat, box.minLat),
-        maxLat: Math.max(merged.maxLat, box.maxLat),
-        minLng: Math.min(merged.minLng, box.minLng),
-        maxLng: Math.max(merged.maxLng, box.maxLng),
-    }));
-};
+/* Bounding-box helpers removed — ride search now uses PostGIS ST_DWithin (see src/utils/geo.ts). */
