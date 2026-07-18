@@ -24,27 +24,13 @@ npm run test:e2e -- --testPathPattern=06-booking   # single E2E spec
 npx eslint src           # lint (eslint 9, prettier)
 npm run openapi:check     # lint + bundle + coverage of OpenAPI spec
 
-npm run db:setup                # dev DB from scratch: db push + PostGIS columns/triggers
-npm run db:push                 # sync schema.prisma to the DB (dev workflow)
-npm run db:postgis              # (re)apply PostGIS extension/columns/triggers only
-npm run prisma:migrate:deploy   # apply migrations (prod)
+npm run prisma:migrate:dev      # apply migrations (dev)
 npm run prisma:generate         # regenerate client after schema.prisma change
 npm run prisma:studio           # DB GUI
 npm run db:seed                 # seed data
 ```
 
-**Database requires PostGIS.** Ride search uses `geography(Point,4326)` columns + `ST_DWithin`
-(`src/utils/geo.ts`), so the Postgres instance must have the extension available — local
-docker-compose uses `postgis/postgis:16-3.4`, not plain `postgres`.
-
-Dev schema changes go through **`db push`, not `migrate dev`** (the committed migration chain does
-not replay on a fresh DB — an early migration references `ContentPost` before it exists). After any
-`db push`, run `npm run db:postgis` (or just `npm run db:setup`, which does both) — `db push` creates
-the geography columns and GiST indexes from the schema, but cannot create the sync triggers.
-The geography columns are deliberately **plain + trigger-maintained rather than `GENERATED ALWAYS`**:
-Prisma cannot represent generated columns and `db push` errors on them.
-
-E2E requires a running server started with `EXPOSE_OTP_IN_RESPONSE=true`, `BOOKING_PAYMENT_MODE=bypass`, `SMS_MOCK_MODE=true`, then `E2E_BASE_URL=http://localhost:3000 npm run test:e2e` (host only — the harness appends `/api/v1` itself, see `tests/e2e/helpers/api.client.ts`). globalSetup creates `*@test.local` users; globalTeardown deletes them. See `tests/e2e/README.md`.
+E2E requires a running server started with `EXPOSE_OTP_IN_RESPONSE=true`, `BOOKING_PAYMENT_MODE=bypass`, `SMS_MOCK_MODE=true`, then `E2E_BASE_URL=http://localhost:3000/api/v1 npm run test:e2e`. globalSetup creates `*@test.local` users; globalTeardown deletes them. See `tests/e2e/README.md`.
 
 ## Architecture
 
@@ -87,9 +73,3 @@ Confirm both pass (paste output) before claiming the feature complete. A feature
 - Prisma 7 config lives in `prisma.config.ts` (schema `prisma/schema.prisma`), not in package.json.
 - ESM: imports use `.js` extensions on TS source paths; jest `moduleNameMapper` rewrites `.js` → source.
 - API docs: Swagger UI at `/docs`, raw spec at `/openapi.json`. Source is `docs/api/openapi/openapi.yaml`; keep routes documented (`npm run openapi:coverage` enforces).
-
-## Answering & accuracy
-
-- Prioritize technical accuracy over user satisfaction. Give the correct answer even when it is not what the user hopes to hear; never soften or bend a fact to please.
-- Ground non-trivial technical claims in authoritative, verifiable sources — official docs, the actual codebase, Stack Overflow, and tracked GitHub issues — not memory or guesswork. Prefer a verified result over a confident-sounding one.
-- If something is uncertain or unverified, say so plainly rather than assert it.

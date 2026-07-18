@@ -24,10 +24,11 @@ import {
   isPointOnRoute,
   isRouteCovered,
   calculatePolylineSimilarity,
+  getBoundingBox,
+  mergeBoundingBoxes,
   findNearestPointOnRoute,
   LatLng,
 } from './polyline.utils.js';
-import { findRideIdsNearby } from '../../utils/geo.js';
 
 /* ================= CONSTANTS (Spec §4.1, §8) ================= */
 const RADIUS_KM = 10;
@@ -386,24 +387,25 @@ export const searchRides = async (
   const normalizedMaxPrice = maxPrice ? Number(maxPrice) : undefined;
   const skip = (page - 1) * limit;
 
-  // Spatial pre-filter via PostGIS (GiST-indexed ST_DWithin) — replaces the bounding-box scan.
-  // Returns rides whose origin AND destination both fall within radiusKm of the rider's O/D.
-  const nearbyRideIds = await findRideIdsNearby({
-    origin: { lat: originLat, lng: originLng },
-    destination: { lat: destinationLat, lng: destinationLng },
-    radiusMeters: radiusKm * 1000,
-  });
+  // Get bounding boxes for origin and destination
+  const originBB = getBoundingBox(originLat, originLng, radiusKm);
+  const destBB = getBoundingBox(destinationLat, destinationLng, radiusKm);
 
-  // Build where clause scoped to the spatially-matched candidates.
+  // Build where clause with bounding box optimization
   const todayUtc = new Date();
   todayUtc.setUTCHours(0, 0, 0, 0);
   const whereClause: Prisma.RideWhereInput = {
-    id: { in: nearbyRideIds },
     status: RideStatus.PUBLISHED,
     availableSeats: { gte: requiredSeats },
     departureDate: departureDate
       ? { equals: new Date(new Date(departureDate).toISOString().split('T')[0] + 'T00:00:00.000Z') }
       : { gte: todayUtc },
+    // Bounding box filter for origin
+    originLat: { gte: originBB.minLat, lte: originBB.maxLat },
+    originLng: { gte: originBB.minLng, lte: originBB.maxLng },
+    // Bounding box filter for destination
+    destinationLat: { gte: destBB.minLat, lte: destBB.maxLat },
+    destinationLng: { gte: destBB.minLng, lte: destBB.maxLng },
   };
   if (departureTime) whereClause.departureTime = departureTime;
   else if (departurePeriod) whereClause.departureTime = departurePeriodFilter(departurePeriod);
@@ -965,16 +967,13 @@ export const searchRidesAdvanced = async (
   const riderDest: LatLng = { lat: destinationLat, lng: destinationLng };
 
   /* ------------------------------------------------------------------
-       Phase 1: Spatial pre-filtering via PostGIS (GiST-indexed ST_DWithin, Spec §9).
-       Use 2× radius, and match on origin / destination / any waypoint, so Phase 2's
-       exact route-pairing has every plausible candidate to work with.
+       Phase 1: Spatial pre-filtering with expanded bounding box (Spec §9)
+       Use 2× radius so we can catch rides where waypoints match
        ------------------------------------------------------------------ */
-  const nearbyRideIds = await findRideIdsNearby({
-    origin: { lat: originLat, lng: originLng },
-    destination: { lat: destinationLat, lng: destinationLng },
-    radiusMeters: radiusKm * 2 * 1000,
-    includeWaypoints: true,
-  });
+  const expandedRadius = radiusKm * 2;
+  const originBB = getBoundingBox(originLat, originLng, expandedRadius);
+  const destBB = getBoundingBox(destinationLat, destinationLng, expandedRadius);
+  const mergedBB = mergeBoundingBoxes([originBB, destBB]);
 
   const todayUtc = new Date();
   todayUtc.setUTCHours(0, 0, 0, 0);
@@ -983,10 +982,27 @@ export const searchRidesAdvanced = async (
     : null;
 
   const whereClause: Prisma.RideWhereInput = {
-    id: { in: nearbyRideIds },
     status: RideStatus.PUBLISHED,
     availableSeats: { gte: requiredSeats },
     departureDate: searchDate ? { equals: searchDate } : { gte: todayUtc },
+    OR: [
+      {
+        originLat: { gte: mergedBB.minLat, lte: mergedBB.maxLat },
+        originLng: { gte: mergedBB.minLng, lte: mergedBB.maxLng },
+      },
+      {
+        destinationLat: { gte: mergedBB.minLat, lte: mergedBB.maxLat },
+        destinationLng: { gte: mergedBB.minLng, lte: mergedBB.maxLng },
+      },
+      {
+        waypoints: {
+          some: {
+            lat: { gte: mergedBB.minLat, lte: mergedBB.maxLat },
+            lng: { gte: mergedBB.minLng, lte: mergedBB.maxLng },
+          },
+        },
+      },
+    ],
   };
   if (departurePeriod) whereClause.departureTime = departurePeriodFilter(departurePeriod);
 
