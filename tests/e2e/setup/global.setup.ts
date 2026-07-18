@@ -129,11 +129,21 @@ export default async function globalSetup(): Promise<void> {
     const adapter = new PrismaPg({ connectionString: dbConnectionString });
     const prismaSetup = new PrismaClient({ adapter });
     try {
+      // Give driver_a a fully-verified profile. Only dlVerified is actually enforced by
+      // the publish-ride gate (see publishRide in draft-ride.service.ts, which checks
+      // tosAcceptedAt + dlVerified); isVerified, phoneVerified and stripeOnboardingComplete
+      // are set so the test driver mirrors a real onboarded account. Set directly in the DB
+      // since there is no API endpoint for these in the test environment.
       await prismaSetup.user.update({
         where: { id: driverAccount.id },
-        data: { dlVerified: true },
+        data: {
+          dlVerified: true,
+          isVerified: true,
+          phoneVerified: true,
+          stripeOnboardingComplete: true,
+        },
       });
-      console.log(`[e2e setup] Set dlVerified=true for driver_a (${driverAccount.id})`);
+      console.log(`[e2e setup] Set dlVerified + verification flags for driver_a (${driverAccount.id})`);
     } catch (err: any) {
       console.warn(`[e2e setup] Could not set dlVerified for driver_a: ${err.message}`);
     } finally {
