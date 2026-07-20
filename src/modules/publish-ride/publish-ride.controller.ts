@@ -86,7 +86,9 @@ export const updateDestination = async (req: AuthRequest, res: Response) => {
         });
     } catch (error: any) {
         const locationError = error.message === 'LOCATION_OUTSIDE_BALTICS'
-            ? 'Only locations in Estonia, Latvia, or Lithuania can be used to publish rides'
+            ? 'Only locations in Estonia, Latvia, or Lithuania can be used as ride origins'
+            : error.message === 'DESTINATION_OUTSIDE_EUROPE'
+                ? 'Destinations must be in Europe for outbound rides from the Baltics'
             : error.message === 'LOCATION_COUNTRY_UNVERIFIED'
                 ? 'Unable to verify the destination country. Select a suggested location and try again'
                 : null;
@@ -465,7 +467,10 @@ export const publishRide = async (req: AuthRequest, res: Response) => {
             message = 'Your vehicle must be verified before publishing a ride';
         } else if (error.message === 'LOCATION_OUTSIDE_BALTICS') {
             status = HttpStatus.BAD_REQUEST;
-            message = 'Only locations in Estonia, Latvia, or Lithuania can be used to publish rides';
+            message = 'Only locations in Estonia, Latvia, or Lithuania can be used as ride origins';
+        } else if (error.message === 'DESTINATION_OUTSIDE_EUROPE') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Destinations must be in Europe for outbound rides from the Baltics';
         } else if (error.message === 'LOCATION_COUNTRY_UNVERIFIED') {
             status = HttpStatus.BAD_REQUEST;
             message = 'Unable to verify the route countries. Select suggested locations and try again';

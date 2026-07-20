@@ -46,8 +46,14 @@ const CITY_POINT_RADIUS_METERS = Number(process.env.PUBLISH_CITY_POINT_RADIUS_ME
 const STOPOVER_POINT_RADIUS_METERS = Number(process.env.PUBLISH_STOPOVER_POINT_RADIUS_METERS || '5000');
 const ROUTE_POINT_RADIUS_METERS = Number(process.env.PUBLISH_ROUTE_POINT_RADIUS_METERS || '10000');
 const BALTIC_COUNTRY_CODES = new Set(['EE', 'LV', 'LT']);
+const EUROPE_COUNTRY_CODES = new Set([
+  'AL', 'AD', 'AT', 'BY', 'BE', 'BA', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
+  'DE', 'GR', 'HU', 'IS', 'IE', 'IT', 'XK', 'LV', 'LI', 'LT', 'LU', 'MT', 'MD', 'MC',
+  'ME', 'NL', 'MK', 'NO', 'PL', 'PT', 'RO', 'SM', 'RS', 'SK', 'SI', 'ES', 'SE', 'CH',
+  'UA', 'GB', 'VA',
+]);
 
-const validateBalticPlace = async (placeId: string) => {
+const getPlaceCountryCode = async (placeId: string) => {
   let details: any;
   try {
     details = await googleService.placeDetails(placeId);
@@ -60,7 +66,17 @@ const validateBalticPlace = async (placeId: string) => {
     ?.short_name?.toUpperCase();
 
   if (!countryCode) throw new Error('LOCATION_COUNTRY_UNVERIFIED');
+  return countryCode;
+};
+
+const validateBalticPlace = async (placeId: string) => {
+  const countryCode = await getPlaceCountryCode(placeId);
   if (!BALTIC_COUNTRY_CODES.has(countryCode)) throw new Error('LOCATION_OUTSIDE_BALTICS');
+};
+
+const validateEuropeanDestinationPlace = async (placeId: string) => {
+  const countryCode = await getPlaceCountryCode(placeId);
+  if (!EUROPE_COUNTRY_CODES.has(countryCode)) throw new Error('DESTINATION_OUTSIDE_EUROPE');
 };
 
 // ============================================================
@@ -274,7 +290,7 @@ export const updateDestination = async (
   driverId: string,
   input: UpdateDestinationInput,
 ): Promise<DraftRide> => {
-  await validateBalticPlace(input.destinationPlaceId);
+  await validateEuropeanDestinationPlace(input.destinationPlaceId);
 
   const draft = await getDraft(driverId);
   draft.destinationPlaceId = input.destinationPlaceId;
@@ -1412,7 +1428,7 @@ export const publishRide = async (driverId: string) => {
 
   await Promise.all([
     validateBalticPlace(draft.originPlaceId),
-    validateBalticPlace(draft.destinationPlaceId),
+    validateEuropeanDestinationPlace(draft.destinationPlaceId),
   ]);
 
     // Validate driver has accepted ToS and has verified DL

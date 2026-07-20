@@ -77,6 +77,31 @@ describe('publishRide', () => {
         expect(mockRedis.del).not.toHaveBeenCalled();
     });
 
+    it('allows a European destination for an outbound ride from the Baltics', async () => {
+        mockRedis.get.mockResolvedValue(JSON.stringify({
+            userId: 'driver-1',
+            step: 1,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originPlaceId: 'place-tallinn',
+            originAddress: 'Tallinn, Estonia',
+            originLat: 59.437,
+            originLng: 24.7536,
+        }));
+        mockGoogleService.placeDetails.mockResolvedValue({
+            address_components: [{ short_name: 'DE', types: ['country'] }],
+        });
+
+        await expect(DraftRideService.updateDestination('driver-1', {
+            destinationPlaceId: 'place-hamburg',
+            destinationAddress: 'Hamburg, Germany',
+            destinationLat: 53.5511,
+            destinationLng: 9.9937,
+        })).resolves.toMatchObject({
+            destinationAddress: 'Hamburg, Germany',
+        });
+    });
+
     it('requires at least one pickup and one drop-off before publishing', async () => {
         mockRedis.get.mockResolvedValue(JSON.stringify({
             userId: 'driver-1',
