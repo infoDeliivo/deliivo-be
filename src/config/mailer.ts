@@ -23,7 +23,7 @@ const createTransport = () => {
   if (mailProvider === 'ses') {
     // Nodemailer SES transport — credentials resolved by the AWS SDK default
     // chain (env vars, shared config, or instance role). Region required.
-    const sesClient = new SESv2Client({ region: process.env.AWS_SES_REGION });
+    const sesClient = new SESv2Client({ region: process.env.AWS_SES_REGION || process.env.AWS_REGION });
     const sesOptions: SESTransport.Options = { SES: { sesClient, SendEmailCommand } };
     return nodemailer.createTransport(sesOptions);
   }
@@ -32,6 +32,7 @@ const createTransport = () => {
     host: process.env.MAIL_HOST || 'smtp.gmail.com',
     port: Number(process.env.MAIL_PORT) || 587,
     secure: false,
+    requireTLS: true, // port 587 is STARTTLS-only – never send credentials in the clear
     auth: {
       user: process.env.MAIL_USER,
       pass: process.env.MAIL_PASS,
@@ -45,7 +46,10 @@ const transporter = createTransport();
 
 const getMailerLogMeta = () => ({
   provider: mailProvider,
-  host: mailProvider === 'ses' ? `ses:${process.env.AWS_SES_REGION ?? 'unset'}` : process.env.MAIL_HOST || 'smtp.gmail.com',
+  host:
+    mailProvider === 'ses'
+      ? `ses:${process.env.AWS_SES_REGION || process.env.AWS_REGION || 'unset'}`
+      : process.env.MAIL_HOST || 'smtp.gmail.com',
   port: Number(process.env.MAIL_PORT) || 587,
   hasUser: Boolean(process.env.MAIL_USER),
   hasPass: Boolean(process.env.MAIL_PASS),
@@ -57,8 +61,15 @@ logger.info('[MAILER] Config loaded', getMailerLogMeta());
 export const verifyMailer = async (): Promise<boolean> => {
   const mailerMeta = getMailerLogMeta();
 
-  if (!mailerMeta.hasUser || !mailerMeta.hasPass || !mailerMeta.hasFrom) {
-    logger.warn('[MAILER] Variables are incomplete; skipping SMTP verification', mailerMeta);
+  // SES resolves credentials through the AWS SDK chain, so MAIL_USER/MAIL_PASS
+  // are only required for the SMTP transport.
+  const isConfigured =
+    mailProvider === 'ses'
+      ? mailerMeta.hasFrom
+      : mailerMeta.hasUser && mailerMeta.hasPass && mailerMeta.hasFrom;
+
+  if (!isConfigured) {
+    logger.warn('[MAILER] Variables are incomplete; skipping verification', mailerMeta);
     return false;
   }
 
