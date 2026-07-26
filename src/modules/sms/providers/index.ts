@@ -2,6 +2,7 @@ import { parseSmsProvider } from '../sms.config.js';
 import type { SmsProvider } from './sms.provider.js';
 import { TwilioSmsProvider } from './twilio.provider.js';
 import { MessenteSmsProvider } from './messente.provider.js';
+import { SnsSmsProvider } from './sns.provider.js';
 
 export type { SmsProvider, SmsSendResult, SmsProviderName } from './sms.provider.js';
 
@@ -11,6 +12,8 @@ export const getSmsProvider = (): SmsProvider => {
   switch (name) {
     case 'messente':
       return new MessenteSmsProvider();
+    case 'sns':
+      return new SnsSmsProvider();
     case 'twilio':
     default:
       return new TwilioSmsProvider();

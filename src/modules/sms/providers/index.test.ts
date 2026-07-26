@@ -17,6 +17,11 @@ describe('getSmsProvider', () => {
     expect(getSmsProvider().name).toBe('messente');
   });
 
+  it('returns the sns provider when SMS_PROVIDER=sns', () => {
+    process.env.SMS_PROVIDER = 'sns';
+    expect(getSmsProvider().name).toBe('sns');
+  });
+
   it('is case/space-insensitive', () => {
     process.env.SMS_PROVIDER = '  Twilio ';
     expect(getSmsProvider().name).toBe('twilio');

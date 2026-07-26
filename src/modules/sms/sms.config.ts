@@ -94,7 +94,12 @@ export type SmsQueueConfig = {
   workerConcurrency: number;
 };
 
-export type SmsProviderName = 'twilio' | 'messente';
+export type SmsProviderName = 'twilio' | 'messente' | 'sns';
+
+export type SnsSmsType = 'Transactional' | 'Promotional';
+
+/** Alphanumeric sender ID: 1-11 chars, must start with a letter. */
+const SNS_SENDER_ID_REGEX = /^[A-Za-z][A-Za-z0-9]{0,10}$/;
 
 export type SmsWorkerConfig = SmsQueueConfig & {
   isProduction: boolean;
@@ -108,6 +113,9 @@ export type SmsWorkerConfig = SmsQueueConfig & {
   messenteUsername?: string;
   messentePassword?: string;
   messenteSender?: string;
+  snsRegion?: string;
+  snsSenderId?: string;
+  snsSmsType: SnsSmsType;
 };
 
 export const parseSmsProvider = (value?: string): SmsProviderName => {
@@ -118,7 +126,22 @@ export const parseSmsProvider = (value?: string): SmsProviderName => {
   if (normalized === 'messente') {
     return 'messente';
   }
-  throw new Error('SMS_PROVIDER must be one of: twilio, messente');
+  if (normalized === 'sns') {
+    return 'sns';
+  }
+  throw new Error('SMS_PROVIDER must be one of: twilio, messente, sns');
+};
+
+export const parseSnsSmsType = (value?: string): SnsSmsType => {
+  const normalized = value?.trim().toLowerCase();
+  // OTP codes are transactional; that is the safe default when unset.
+  if (normalized === undefined || normalized === '' || normalized === 'transactional') {
+    return 'Transactional';
+  }
+  if (normalized === 'promotional') {
+    return 'Promotional';
+  }
+  throw new Error('SNS_SMS_TYPE must be one of: Transactional, Promotional');
 };
 
 export const getSmsQueueConfig = (): SmsQueueConfig => ({
@@ -169,6 +192,9 @@ export const loadSmsWorkerConfig = (): SmsWorkerConfig => {
   const messenteUsername = process.env.MESSENTE_API_USERNAME;
   const messentePassword = process.env.MESSENTE_API_PASSWORD;
   const messenteSender = process.env.MESSENTE_SENDER;
+  const snsRegion = process.env.SNS_REGION || process.env.AWS_REGION;
+  const snsSenderId = process.env.SNS_SENDER_ID;
+  const snsSmsType = parseSnsSmsType(process.env.SNS_SMS_TYPE);
 
   if (isProduction && isMockMode) {
     throw new Error('SMS_MOCK_MODE=true is not allowed in production');
@@ -210,6 +236,20 @@ export const loadSmsWorkerConfig = (): SmsWorkerConfig => {
     }
   }
 
+  if (!isMockMode && provider === 'sns') {
+    if (!snsRegion) {
+      throw new Error('SNS not configured. Set SNS_REGION (or AWS_REGION)');
+    }
+
+    // Credentials come from the AWS SDK default chain, so they are not required
+    // here — an instance role or profile is a valid setup.
+    if (snsSenderId && !SNS_SENDER_ID_REGEX.test(snsSenderId)) {
+      throw new Error(
+        'SNS_SENDER_ID must be 1-11 alphanumeric characters starting with a letter',
+      );
+    }
+  }
+
   if (statusCallbackUrl) {
     if (!isValidHttpUrl(statusCallbackUrl)) {
       throw new Error('TWILIO_STATUS_CALLBACK_URL must be a valid http/https URL');
@@ -233,6 +273,9 @@ export const loadSmsWorkerConfig = (): SmsWorkerConfig => {
     messenteUsername,
     messentePassword,
     messenteSender,
+    snsRegion,
+    snsSenderId,
+    snsSmsType,
   };
 };
 

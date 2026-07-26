@@ -103,8 +103,8 @@ Each layer: **what / why / where.**
 ## 5. Provider abstraction (makes the swap clean)
 
 Introduce a provider selector so vendor swaps don't touch producers/queues:
-- `SMS_PROVIDER=twilio|messente`, `MAIL_PROVIDER=smtp|ses`.
-- Wrap sending behind a small interface, e.g. `send(to, body): Promise<{ id, status }>`, with `twilio` / `messente` implementations selected at boot.
+- `SMS_PROVIDER=twilio|messente|sns`, `MAIL_PROVIDER=smtp|ses`.
+- Wrap sending behind a small interface, e.g. `send(to, body): Promise<{ id, status }>`, with `twilio` / `messente` / `sns` implementations selected at boot.
 - SMS coupling to remove: hardcoded `import twilio` in `sms.worker.ts` and `sms.service.ts`.
 - Email: `mailer.ts` is already a single seam — SES fits via Nodemailer's SES transport with **zero** changes to worker/service.
 
@@ -114,7 +114,7 @@ Introduce a provider selector so vendor swaps don't touch producers/queues:
 
 ```
 # provider selection
-SMS_PROVIDER=twilio            # twilio | messente
+SMS_PROVIDER=twilio            # twilio | messente | sns
 MAIL_PROVIDER=smtp             # smtp | ses
 # messente / ses credentials … (added with the integration)
 
