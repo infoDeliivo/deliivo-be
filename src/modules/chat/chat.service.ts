@@ -100,10 +100,10 @@ export const getConversations = async (
         }),
         include: {
             userA: {
-                select: { id: true, name: true, avatarUrl: true },
+                select: { id: true, firstName: true, avatarUrl: true },
             },
             userB: {
-                select: { id: true, name: true, avatarUrl: true },
+                select: { id: true, firstName: true, avatarUrl: true },
             },
             messages: {
                 orderBy: { createdAt: 'desc' },

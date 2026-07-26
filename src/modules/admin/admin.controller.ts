@@ -1,6 +1,8 @@
 import { Response } from 'express';
+import { VehicleVerificationStatus } from '@prisma/client';
 import { AuthRequest } from '../../types/auth.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
+import { logError } from '../../utils/logger.js';
 import * as AdminService from './admin.service.js';
 import { createPricingConfig as createPricingConfigService, listPricingConfigs as listPricingConfigsService, updatePricingConfig as updatePricingConfigService } from '../pricing/pricing.service.js';
 
@@ -135,15 +137,55 @@ export const updateEmergencyAlertStatus = async (req: AuthRequest, res: Response
     }
 };
 
+/* ================= LIST VEHICLES (REVIEW QUEUE) ================= */
+export const listVehicles = async (req: AuthRequest, res: Response) => {
+    try {
+        const statusParam = typeof req.query.status === 'string'
+            ? req.query.status.toUpperCase()
+            : undefined;
+        const status = statusParam && statusParam in VehicleVerificationStatus
+            ? (statusParam as VehicleVerificationStatus)
+            : undefined;
+
+        const result = await AdminService.listVehicles({
+            page: req.query.page ? Number(req.query.page) : undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            status,
+        });
+        return sendSuccess(res, { message: 'Vehicles fetched', data: result });
+    } catch (error) {
+        logError('[ADMIN] list vehicles failed', error);
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch vehicles' });
+    }
+};
+
 /* ================= VERIFY VEHICLE ================= */
 export const verifyVehicle = async (req: AuthRequest, res: Response) => {
     try {
-        const result = await AdminService.verifyVehicle(req.params.id as string);
+        const result = await AdminService.verifyVehicle(req.params.id as string, req.user?.id);
         return sendSuccess(res, { message: 'Vehicle verified', data: result });
     } catch (error: any) {
         if (error.message === 'VEHICLE_NOT_FOUND')
             return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Vehicle not found' });
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to verify vehicle' });
+    }
+};
+
+/* ================= REJECT VEHICLE ================= */
+export const rejectVehicle = async (req: AuthRequest, res: Response) => {
+    try {
+        const { reason } = req.body as { reason: string };
+        const result = await AdminService.rejectVehicle(
+            req.params.id as string,
+            reason,
+            req.user?.id,
+        );
+        return sendSuccess(res, { message: 'Vehicle rejected', data: result });
+    } catch (error: any) {
+        if (error.message === 'VEHICLE_NOT_FOUND')
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Vehicle not found' });
+        logError('[ADMIN] reject vehicle failed', error);
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to reject vehicle' });
     }
 };
 

@@ -1,6 +1,7 @@
 import { prisma } from '../../config/index.js';
 import { VehicleType, DocumentType, Prisma } from '@prisma/client';
 import { VehicleDocumentResponse } from './vehicle.types.js';
+import { buildReviewReset, changeKindForDocumentType } from './vehicle-review.util.js';
 
 type UpdateVehicleDetailsInput = {
   brand: string;
@@ -58,9 +59,13 @@ export const updateCreateVehicle = async (
     throw new Error('VEHICLE_NOT_FOUND');
   }
 
+  // The plate is the strongest thing an admin verifies against the registry document,
+  // so changing it invalidates the decision.
+  const reviewReset = buildReviewReset(vehicle.verificationStatus, 'LICENSE_PLATE');
+
   return prisma.vehicle.update({
     where: { id: vehicleId },
-    data: { licenseCountry, licenseNumber },
+    data: { licenseCountry, licenseNumber, ...(reviewReset ?? {}) },
   });
 };
 
@@ -82,6 +87,8 @@ export const updateVehicleDetailService = async (
     throw new Error('VEHICLE_NOT_FOUND');
   }
 
+  const reviewReset = buildReviewReset(vehicle.verificationStatus, 'VEHICLE_DETAILS');
+
   return prisma.vehicle.update({
     where: { id: vehicleId },
     data: {
@@ -91,6 +98,7 @@ export const updateVehicleDetailService = async (
       type: update.type,
       color: update.color,
       year: update.year,
+      ...(reviewReset ?? {}),
     },
   });
 };
@@ -113,9 +121,12 @@ export const updateVehicle = async (
     return { success: false, message: 'Vehicle not found' }
   }
   const previousImageKey = vehicle.imageKey ?? undefined;
+  // Only reached from the vehicle-image confirm path, so the change is always the
+  // rider-facing photo rather than anything the admin reviewed.
+  const reviewReset = buildReviewReset(vehicle.verificationStatus, 'PRIMARY_PHOTO');
   const data = await prisma.vehicle.update({
     where: { id: vehicleId },
-    data: update,
+    data: { ...update, ...(reviewReset ?? {}) },
   })
 
   return { success: true, message: 'Vehicle updated successfully', data, previousImageKey };
@@ -149,7 +160,24 @@ export const deleteVehicleDocument = async (
   const doc = await findVehicleDocumentByKey(userId, vehicleId, imageKey);
   if (!doc) return null;
 
-  await prisma.vehicleDocument.delete({ where: { id: doc.id } });
+  // findVehicleDocumentByKey already scoped the read to this owner's vehicle, so this is
+  // a status lookup rather than a second ownership check.
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id: vehicleId, userId, deletedAt: null },
+    select: { verificationStatus: true },
+  });
+
+  const reviewReset = vehicle
+    ? buildReviewReset(vehicle.verificationStatus, changeKindForDocumentType(doc.documentType))
+    : null;
+
+  await prisma.$transaction([
+    prisma.vehicleDocument.delete({ where: { id: doc.id } }),
+    ...(reviewReset
+      ? [prisma.vehicle.update({ where: { id: vehicleId }, data: reviewReset })]
+      : []),
+  ]);
+
   return doc;
 };
 
@@ -170,21 +198,35 @@ export const addVehicleDocument = async (
 ) => {
   const vehicle = await prisma.vehicle.findFirst({
     where: { id: vehicleId, userId, deletedAt: null },
-    select: { id: true },
+    select: { id: true, verificationStatus: true },
   });
 
   if (!vehicle) {
     throw new Error('VEHICLE_NOT_FOUND');
   }
 
-  return prisma.vehicleDocument.create({
-    data: {
-      vehicleId,
-      imageKey: input.imageKey,
-      image: input.imageUrl,
-      documentType: input.documentType,
-    },
-  });
+  const reviewReset = buildReviewReset(
+    vehicle.verificationStatus,
+    changeKindForDocumentType(input.documentType),
+  );
+
+  // The document row and the review reset must land together — a stored document with a
+  // stale APPROVED status would leave an unreviewed change looking verified.
+  const [document] = await prisma.$transaction([
+    prisma.vehicleDocument.create({
+      data: {
+        vehicleId,
+        imageKey: input.imageKey,
+        image: input.imageUrl,
+        documentType: input.documentType,
+      },
+    }),
+    ...(reviewReset
+      ? [prisma.vehicle.update({ where: { id: vehicleId }, data: reviewReset })]
+      : []),
+  ]);
+
+  return document;
 };
 
 /* ================= FIND VEHICLE DOCUMENT BY KEY (ownership-scoped read) ================= */

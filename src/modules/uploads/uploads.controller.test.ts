@@ -208,6 +208,40 @@ describe('readUrl — view a private object you own', () => {
     });
 });
 
+// Reviewing a vehicle means opening the registry document, which lives under the
+// driver's owner segment — so admins are exempt from the owner rule.
+describe('readUrl — admin review access', () => {
+    it('returns a signed URL for a document owned by someone else', async () => {
+        mockGetPresignedDownloadUrl.mockResolvedValue('https://signed.test/registry');
+        const { res, out } = makeRes();
+        await readUrl(
+            {
+                user: { id: 'admin-1', role: 'ADMIN' },
+                query: { key: 'uploads/vehicle-documents/u2/registry.png' },
+            } as never,
+            res as never,
+        );
+        expect(mockGetPresignedDownloadUrl).toHaveBeenCalledWith(
+            'uploads/vehicle-documents/u2/registry.png',
+            300,
+        );
+        expect(out.body).toMatchObject({ success: true });
+    });
+
+    it('does not extend the exemption to other roles', async () => {
+        const { res, out } = makeRes();
+        await readUrl(
+            {
+                user: { id: 'u1', role: 'USER' },
+                query: { key: 'uploads/vehicle-documents/u2/registry.png' },
+            } as never,
+            res as never,
+        );
+        expect(out.status).toBe(404);
+        expect(mockGetPresignedDownloadUrl).not.toHaveBeenCalled();
+    });
+});
+
 describe('deleteUpload', () => {
     it('avatar: clears the record and deletes the object', async () => {
         mockClearAvatarService.mockResolvedValue({ success: true, previousKey: 'uploads/avatar/u1/a.png' });

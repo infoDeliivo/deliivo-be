@@ -73,8 +73,8 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                         passenger: {
                             select: {
                                 id: true,
-                                name: true,
-                                nickName: true,
+                                firstName: true,
+                                lastName: true,
                                 phone: true,
                                 avatarUrl: true,
                             },
@@ -224,8 +224,8 @@ export const getRideById = async (driverId: string, rideId: string) => {
                     passenger: {
                         select: {
                             id: true,
-                            name: true,
-                            nickName: true,
+                            firstName: true,
+                            lastName: true,
                             phone: true,
                             avatarUrl: true,
                         },

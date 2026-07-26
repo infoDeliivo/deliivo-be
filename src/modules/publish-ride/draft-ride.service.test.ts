@@ -6,12 +6,26 @@ const mockRedis = {
     on: jest.fn(),
 };
 
+// A driver who satisfies every publish requirement. Tests that exercise a specific gate
+// override the relevant field.
+const eligibleDriver = {
+    dlVerified: true,
+    tosAcceptedAt: new Date(),
+    gender: 'FEMALE',
+    stripeOnboardingComplete: true,
+};
+
+const approvedVehicle = { id: 'vehicle-1', verificationStatus: 'APPROVED' };
+
 const mockPrisma = {
     vehicle: {
-        findFirst: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(approvedVehicle),
     },
     user: {
-        findUnique: jest.fn().mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' }),
+        findUnique: jest.fn().mockResolvedValue(eligibleDriver),
+    },
+    dlVerification: {
+        findFirst: jest.fn().mockResolvedValue(null),
     },
     $transaction: jest.fn(),
 };
@@ -56,7 +70,9 @@ import polyline from '@mapbox/polyline';
 describe('publishRide', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' });
+        mockPrisma.user.findUnique.mockResolvedValue(eligibleDriver);
+        mockPrisma.vehicle.findFirst.mockResolvedValue(approvedVehicle);
+        mockPrisma.dlVerification.findFirst.mockResolvedValue(null);
         mockGoogleService.placeDetails.mockResolvedValue({
             address_components: [{ short_name: 'EE', types: ['country'] }],
         });
@@ -210,7 +226,7 @@ describe('publishRide', () => {
         };
 
         mockRedis.get.mockResolvedValue(JSON.stringify(draft));
-        mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
+        mockPrisma.vehicle.findFirst.mockResolvedValue(approvedVehicle);
 
         const rideCreate = jest.fn().mockResolvedValue({ id: 'ride-1', departureTime: '09:30', routeDurationSeconds: 3600 });
         const rideWaypointCreateMany = jest.fn().mockResolvedValue(undefined);
@@ -280,8 +296,8 @@ describe('publishRide', () => {
         };
 
         mockRedis.get.mockResolvedValue(JSON.stringify(draft));
-        mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'MALE' });
-        mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
+        mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, gender: 'MALE' });
+        mockPrisma.vehicle.findFirst.mockResolvedValue(approvedVehicle);
 
         await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('FEMALE_ONLY_NOT_ALLOWED');
     });
@@ -361,7 +377,7 @@ describe('publishRide', () => {
             .mockResolvedValueOnce(JSON.stringify(draft))
             .mockResolvedValueOnce(cachedRoutes)
             .mockResolvedValueOnce(JSON.stringify(blockedDraft));
-        mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
+        mockPrisma.vehicle.findFirst.mockResolvedValue(approvedVehicle);
 
         const originalFetch = global.fetch;
         global.fetch = fetchMock as any;

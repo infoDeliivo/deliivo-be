@@ -2,11 +2,24 @@ import axios from 'axios';
 import crypto from 'crypto';
 import { prisma } from '../../config/index.js';
 import { logError, logWarn, logDebug } from '../../utils/logger.js';
+import { matchIdentity } from '../../utils/nameMatch.js';
+import type { DlVerificationStatus } from '@prisma/client';
 
 const VERIFF_BASE_URL = process.env.VERIFF_BASE_URL || 'https://stationapi.veriff.com/v1';
 const VERIFF_API_KEY = process.env.VERIFF_API_KEY || '';
 const VERIFF_SHARED_SECRET = process.env.VERIFF_SHARED_SECRET || '';
 const VERIFF_CALLBACK_URL = process.env.VERIFF_CALLBACK_URL || '';
+
+// Veriff only accepts HTTPS return URLs (API error 1302). Drop anything else
+// instead of letting the session-create call fail with a 400.
+const resolveCallbackUrl = (requested?: string): string | undefined => {
+  for (const candidate of [requested, VERIFF_CALLBACK_URL]) {
+    if (!candidate) continue;
+    if (candidate.startsWith('https://')) return candidate;
+    logWarn('Ignoring non-HTTPS Veriff callback URL', { callback: candidate });
+  }
+  return undefined;
+};
 
 interface CreateVeriffSessionOptions {
   userId: string;
@@ -66,9 +79,11 @@ export const createVeriffSession = async (
     return { success: false, reason: 'ALREADY_VERIFIED' };
   }
 
+  const callbackUrl = resolveCallbackUrl(callback);
+
   const payload: any = {
     verification: {
-      callback: callback || VERIFF_CALLBACK_URL,
+      ...(callbackUrl && { callback: callbackUrl }),
       person: {
         firstName,
         lastName,
@@ -158,6 +173,19 @@ export const validateWebhookSignature = (
   );
 };
 
+/**
+ * Veriff person fields may arrive as a plain string or as `{ value }`.
+ * Returns the trimmed string value, or empty string when absent.
+ */
+const extractVeriffField = (field: unknown): string => {
+  if (typeof field === 'string') return field.trim();
+  if (field && typeof field === 'object' && 'value' in field) {
+    const value = (field as { value: unknown }).value;
+    return typeof value === 'string' ? value.trim() : '';
+  }
+  return '';
+};
+
 // ─── Handle webhook decision from Veriff ───────────────────────────
 export const handleWebhookDecision = async (body: any) => {
   const { verification } = body;
@@ -191,26 +219,74 @@ export const handleWebhookDecision = async (body: any) => {
     return { success: false, reason: 'SESSION_NOT_FOUND' };
   }
 
+  // Extract the verified person's identity (name, DOB, gender) and compare it to
+  // the entered profile — a matching identity is required before we trust the DL.
+  const person = verification.person ?? {};
+  const firstName = extractVeriffField(person.firstName);
+  const lastName = extractVeriffField(person.lastName);
+  const verifiedName = [firstName, lastName].filter(Boolean).join(' ').trim() || null;
+  const verifiedDob = extractVeriffField(person.dateOfBirth) || null;
+  const verifiedGender = extractVeriffField(person.gender) || null;
+
+  const driver = await prisma.user.findUnique({
+    where: { id: record.userId },
+    select: { firstName: true, lastName: true, dob: true, gender: true },
+  });
+
+  // The profile stores the given and family name separately; Veriff returns them
+  // the same way, so both sides are compared as one joined full name.
+  const driverName = [driver?.firstName, driver?.lastName].filter(Boolean).join(' ').trim() || null;
+
+  const match =
+    mappedStatus === 'APPROVED'
+      ? matchIdentity(
+          { name: driverName, dob: driver?.dob, gender: driver?.gender },
+          { name: verifiedName, dob: verifiedDob, gender: verifiedGender },
+        )
+      : null;
+  const approvedAndMatched = mappedStatus === 'APPROVED' && match?.overall === true;
+
+  // Hard block: an approved decision whose identity does not match is flagged
+  // IDENTITY_MISMATCH and does NOT verify the user.
+  const finalStatus: DlVerificationStatus =
+    mappedStatus === 'APPROVED' && !approvedAndMatched
+      ? 'IDENTITY_MISMATCH'
+      : (mappedStatus as DlVerificationStatus);
+
   // Update verification record
   await prisma.dlVerification.update({
     where: { veriffSessionId: sessionId },
     data: {
-      status: mappedStatus as any,
+      status: finalStatus,
       decisionCode: code ? Number(code) : null,
       reasonCode: reasonCode || null,
       decisionPayload: body,
+      verifiedName,
+      verifiedDob,
+      verifiedGender,
+      nameMatch: match?.nameMatch ?? null,
+      dobMatch: match?.dobMatch ?? null,
+      genderMatch: match?.genderMatch ?? null,
     },
   });
 
-  // If approved, mark user as DL-verified
-  if (mappedStatus === 'APPROVED') {
+  // Only mark the user DL-verified when approved AND the identity matches.
+  if (approvedAndMatched) {
     await prisma.user.update({
       where: { id: record.userId },
       data: { dlVerified: true },
     });
+  } else if (mappedStatus === 'APPROVED') {
+    logWarn('Veriff webhook: DL approved but identity mismatch — verification withheld', {
+      sessionId,
+      userId: record.userId,
+      nameMatch: match?.nameMatch,
+      dobMatch: match?.dobMatch,
+      genderMatch: match?.genderMatch,
+    });
   }
 
-  return { success: true, status: mappedStatus };
+  return { success: true, status: finalStatus };
 };
 
 // ─── Get DL verification status for a user ─────────────────────────

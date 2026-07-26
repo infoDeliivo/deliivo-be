@@ -38,7 +38,14 @@ export const createSessionSchema = z.object({
   fullAddress: z.string().min(1).max(500).optional(),
 
   // Optional session configuration
-  callback: z.string().url('Invalid callback URL').optional(),
+  // Veriff rejects non-HTTPS return URLs (error 1302), so fail fast here
+  callback: z
+    .string()
+    .url('Invalid callback URL')
+    .refine((value) => value.startsWith('https://'), {
+      message: 'Callback URL must use HTTPS',
+    })
+    .optional(),
   endUserId: z.string().uuid('Invalid UUID format').optional(),
   consents: z.array(consentSchema).optional(),
   tag: z.string().min(1).max(64, 'Tag must be max 64 characters').optional(),

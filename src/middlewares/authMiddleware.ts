@@ -9,8 +9,8 @@ export interface AuthRequest extends Request {
 
 const authUserSelect = {
   id: true,
-  name: true,
-  nickName: true,
+  firstName: true,
+  lastName: true,
   salutation: true,
   gender: true,
   dob: true,

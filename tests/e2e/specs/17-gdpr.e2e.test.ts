@@ -32,7 +32,8 @@ beforeAll(async () => {
 
   // Fill in profile data so the export has something to return
   await authed(gdprUserToken).put('/users/me', {
-    name: 'GDPR Test User',
+    firstName: 'GDPR',
+    lastName: 'TestUser',
     salutation: 'MX',
   });
 });

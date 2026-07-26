@@ -21,8 +21,8 @@ export interface ContactInfo {
 export interface UserBasicInfo {
   id: string;
   role: string;
-  name: string | null;
-  nickName: string | null;
+  firstName: string | null;
+  lastName: string | null;
   salutation: Salutation | null;
   gender: Gender | null;
   dob: Date | null;
@@ -83,8 +83,8 @@ export interface FullProfileResponse {
 export interface PublicUserInfo {
   id: string;
   role: string;
-  name: string | null;
-  nickName: string | null;
+  firstName: string | null;
+  lastName: string | null;
   avatarUrl: string | null;
   isVerified: boolean;
   memberSince: Date;
@@ -109,8 +109,8 @@ export interface TravelPreferenceInput {
 
 // Profile update input
 export interface UpdateProfileInput {
-  name?: string;
-  nickName?: string;
+  firstName?: string;
+  lastName?: string;
   salutation?: Salutation;
   gender?: Gender;
   dob?: string;

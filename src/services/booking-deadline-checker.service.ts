@@ -22,7 +22,7 @@ export const checkExpiredDeadlines = async () => {
             passenger: {
                 select: {
                     id: true,
-                    name: true,
+                    firstName: true,
                 },
             },
             ride: {
@@ -52,7 +52,7 @@ export const checkExpiredDeadlines = async () => {
             passenger: {
                 select: {
                     id: true,
-                    name: true,
+                    firstName: true,
                 },
             },
             ride: {

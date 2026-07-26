@@ -29,10 +29,10 @@ export const createSetupIntent = async (userId: string) => {
     if (customerRecord?.stripeCustomerId) {
         customerId = customerRecord.stripeCustomerId;
     } else {
-        const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true, name: true } });
+        const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true, firstName: true } });
         const customer = await stripe.customers.create({
             email: user.email ?? undefined,
-            name: user.name ?? undefined,
+            name: user.firstName ?? undefined,
             metadata: { userId },
         });
         customerId = customer.id;

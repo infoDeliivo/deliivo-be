@@ -1,5 +1,6 @@
-import { BookingStatus, Prisma, RideStatus } from '@prisma/client';
+import { BookingStatus, Prisma, RideStatus, UserRole, VehicleVerificationStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
+import { createNotification } from '../notification/notification.service.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { markBookingPaymentRefunded } from '../payments/payment.service.js';
@@ -20,7 +21,7 @@ const emergencyAlertSelect = {
     acknowledgedAt: true,
     resolvedAt: true,
     resolvedBy: true,
-    user: { select: { id: true, name: true, email: true, phone: true, avatarUrl: true } },
+    user: { select: { id: true, firstName: true, email: true, phone: true, avatarUrl: true } },
     ride: {
         select: {
             id: true,
@@ -55,10 +56,13 @@ export const listUsers = async (query: {
     const limit = Math.min(100, Math.max(1, query.limit ?? 20));
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    // Typed rather than `any`: an untyped where silently compiles against columns that
+    // no longer exist and only fails at runtime.
+    const where: Prisma.UserWhereInput = {};
     if (query.search) {
         where.OR = [
-            { name: { contains: query.search, mode: 'insensitive' } },
+            { firstName: { contains: query.search, mode: 'insensitive' } },
+            { lastName: { contains: query.search, mode: 'insensitive' } },
             { email: { contains: query.search, mode: 'insensitive' } },
             { phone: { contains: query.search, mode: 'insensitive' } },
         ];
@@ -67,7 +71,12 @@ export const listUsers = async (query: {
         where.isBanned = query.isBanned;
     }
     if (query.role) {
-        where.role = query.role.toUpperCase();
+        // Only a real role reaches the query; an unknown value is ignored rather than
+        // handed to Prisma, which would throw on an invalid enum member.
+        const role = query.role.toUpperCase();
+        if (role in UserRole) {
+            where.role = role as UserRole;
+        }
     }
     if (typeof query.dlVerified === 'boolean') {
         where.dlVerified = query.dlVerified;
@@ -81,7 +90,7 @@ export const listUsers = async (query: {
             orderBy: { createdAt: 'desc' },
             select: {
                 id: true,
-                name: true,
+                firstName: true,
                 email: true,
                 phone: true,
                 role: true,
@@ -198,16 +207,162 @@ export const getMonitoringTrends = async (days = 7) => {
     return { points };
 };
 
+/* ================= VEHICLE REVIEW QUEUE ================= */
+
+const adminVehicleSelect = {
+    id: true,
+    userId: true,
+    licenseCountry: true,
+    licenseNumber: true,
+    brand: true,
+    model_num: true,
+    model_name: true,
+    type: true,
+    color: true,
+    year: true,
+    imageUrl: true,
+    isVerified: true,
+    verificationStatus: true,
+    rejectionReason: true,
+    reviewedAt: true,
+    reviewedById: true,
+    createdAt: true,
+    user: { select: { id: true, firstName: true, email: true, phone: true, dlVerified: true } },
+    documents: {
+        select: { id: true, documentType: true, image: true, imageKey: true, createdAt: true },
+    },
+} satisfies Prisma.VehicleSelect;
+
+type AdminVehicle = Prisma.VehicleGetPayload<{ select: typeof adminVehicleSelect }>;
+
+/**
+ * Private documents are exposed as `previewKey`, never as a URL — the admin exchanges the
+ * key for a short-lived signed URL via GET /uploads/read. Mirrors how the driver-facing
+ * vehicle response is shaped.
+ */
+const mapAdminVehicle = (vehicle: AdminVehicle) => {
+    const { documents, ...rest } = vehicle;
+    return {
+        ...rest,
+        documents: documents.map((doc) => ({
+            id: doc.id,
+            documentType: doc.documentType,
+            image: doc.image ?? null,
+            previewKey: doc.imageKey ?? null,
+            createdAt: doc.createdAt,
+        })),
+    };
+};
+
+export const listVehicles = async (query: {
+    page?: number;
+    limit?: number;
+    status?: VehicleVerificationStatus;
+}) => {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.VehicleWhereInput = { deletedAt: null };
+    if (query.status) {
+        where.verificationStatus = query.status;
+    }
+
+    const [vehicles, total] = await Promise.all([
+        prisma.vehicle.findMany({
+            where,
+            skip,
+            take: limit,
+            // Oldest first: a review queue should be worked front to back.
+            orderBy: { createdAt: 'asc' },
+            select: adminVehicleSelect,
+        }),
+        prisma.vehicle.count({ where }),
+    ]);
+
+    return {
+        vehicles: vehicles.map(mapAdminVehicle),
+        pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        },
+    };
+};
+
 /* ================= VERIFY VEHICLE ================= */
-export const verifyVehicle = async (vehicleId: string) => {
-    const vehicle = await prisma.vehicle.findUnique({ where: { id: vehicleId }, select: { id: true } });
+export const verifyVehicle = async (vehicleId: string, reviewedById?: string) => {
+    const vehicle = await prisma.vehicle.findUnique({
+        where: { id: vehicleId },
+        select: { id: true, userId: true },
+    });
     if (!vehicle) throw new Error('VEHICLE_NOT_FOUND');
 
-    return prisma.vehicle.update({
+    const updated = await prisma.vehicle.update({
         where: { id: vehicleId },
-        data: { isVerified: true },
-        select: { id: true, isVerified: true },
+        data: {
+            // isVerified is kept in sync with verificationStatus for existing readers.
+            isVerified: true,
+            verificationStatus: VehicleVerificationStatus.APPROVED,
+            rejectionReason: null,
+            reviewedAt: new Date(),
+            reviewedById: reviewedById ?? null,
+        },
+        select: { id: true, isVerified: true, verificationStatus: true, reviewedAt: true },
     });
+
+    await createNotification({
+        userId: vehicle.userId,
+        type: 'vehicle.approved',
+        title: 'Vehicle approved',
+        body: 'Your vehicle has been approved. You can now publish rides.',
+        data: { vehicleId },
+    });
+
+    return updated;
+};
+
+/* ================= REJECT VEHICLE ================= */
+export const rejectVehicle = async (
+    vehicleId: string,
+    reason: string,
+    reviewedById?: string,
+) => {
+    const vehicle = await prisma.vehicle.findUnique({
+        where: { id: vehicleId },
+        select: { id: true, userId: true },
+    });
+    if (!vehicle) throw new Error('VEHICLE_NOT_FOUND');
+
+    const updated = await prisma.vehicle.update({
+        where: { id: vehicleId },
+        data: {
+            isVerified: false,
+            verificationStatus: VehicleVerificationStatus.REJECTED,
+            rejectionReason: reason,
+            reviewedAt: new Date(),
+            reviewedById: reviewedById ?? null,
+        },
+        select: {
+            id: true,
+            isVerified: true,
+            verificationStatus: true,
+            rejectionReason: true,
+            reviewedAt: true,
+        },
+    });
+
+    // The reason travels with the notification so the driver knows what to re-upload.
+    await createNotification({
+        userId: vehicle.userId,
+        type: 'vehicle.rejected',
+        title: 'Vehicle rejected',
+        body: reason,
+        data: { vehicleId, reason },
+    });
+
+    return updated;
 };
 
 /* ================= ADMIN REFUND BOOKING ================= */
@@ -286,11 +441,12 @@ export const getOperationsSummary = async () => {
         || process.env.GOOGLE_APPLICATION_CREDENTIALS
     );
 
-    const [openReconciliationIssues, payoutEligiblePayments, pendingPaymentRecords, webhookEvents24h, content] = await Promise.all([
+    const [openReconciliationIssues, payoutEligiblePayments, pendingPaymentRecords, webhookEvents24h, pendingVehicles, content] = await Promise.all([
         prisma.reconciliationIssue.count({ where: { resolvedAt: null } }),
         prisma.payment.count({ where: { status: 'PAYOUT_ELIGIBLE' } }),
         prisma.payment.count({ where: { status: { in: ['CREATED', 'PAYMENT_PENDING', 'REFUND_PENDING'] } } }),
         prisma.stripeWebhookEvent.count({ where: { processedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } } }),
+        prisma.vehicle.count({ where: { deletedAt: null, verificationStatus: VehicleVerificationStatus.PENDING } }),
         getContentSummary(),
     ]);
 
@@ -307,6 +463,7 @@ export const getOperationsSummary = async () => {
             payoutEligiblePayments,
             pendingPaymentRecords,
             webhookEvents24h,
+            pendingVehicles,
         },
         content,
     };
@@ -337,12 +494,12 @@ export const listRides = async (query: {
                 { id: { contains: search, mode: 'insensitive' } },
                 { originAddress: { contains: search, mode: 'insensitive' } },
                 { destinationAddress: { contains: search, mode: 'insensitive' } },
-                { driver: { name: { contains: search, mode: 'insensitive' } } },
+                { driver: { firstName: { contains: search, mode: 'insensitive' } } },
                 { driver: { email: { contains: search, mode: 'insensitive' } } },
                 { driver: { phone: { contains: search, mode: 'insensitive' } } },
                 { bookings: { some: { id: { contains: search, mode: 'insensitive' } } } },
                 { bookings: { some: { passengerId: { contains: search, mode: 'insensitive' } } } },
-                { bookings: { some: { passenger: { name: { contains: search, mode: 'insensitive' } } } } },
+                { bookings: { some: { passenger: { firstName: { contains: search, mode: 'insensitive' } } } } },
                 { bookings: { some: { passenger: { email: { contains: search, mode: 'insensitive' } } } } },
                 { bookings: { some: { passenger: { phone: { contains: search, mode: 'insensitive' } } } } },
             );
@@ -365,7 +522,7 @@ export const listRides = async (query: {
                 conditions.push({ driverId: { contains: search, mode: 'insensitive' } });
                 break;
             case 'driverName':
-                conditions.push({ driver: { name: { contains: search, mode: 'insensitive' } } });
+                conditions.push({ driver: { firstName: { contains: search, mode: 'insensitive' } } });
                 break;
             case 'driverEmail':
                 conditions.push({ driver: { email: { contains: search, mode: 'insensitive' } } });
@@ -377,7 +534,7 @@ export const listRides = async (query: {
                 conditions.push({ bookings: { some: { passengerId: { contains: search, mode: 'insensitive' } } } });
                 break;
             case 'riderName':
-                conditions.push({ bookings: { some: { passenger: { name: { contains: search, mode: 'insensitive' } } } } });
+                conditions.push({ bookings: { some: { passenger: { firstName: { contains: search, mode: 'insensitive' } } } } });
                 break;
             case 'riderEmail':
                 conditions.push({ bookings: { some: { passenger: { email: { contains: search, mode: 'insensitive' } } } } });
@@ -410,7 +567,7 @@ export const listRides = async (query: {
                 basePricePerSeat: true,
                 currency: true,
                 createdAt: true,
-                driver: { select: { id: true, name: true, email: true, phone: true } },
+                driver: { select: { id: true, firstName: true, email: true, phone: true } },
                 bookings: {
                     select: {
                         id: true,
@@ -420,7 +577,7 @@ export const listRides = async (query: {
                         totalPrice: true,
                         paymentAmount: true,
                         refundedAt: true,
-                        passenger: { select: { id: true, name: true, email: true, phone: true } },
+                        passenger: { select: { id: true, firstName: true, email: true, phone: true } },
                     },
                     orderBy: { createdAt: 'desc' },
                 },

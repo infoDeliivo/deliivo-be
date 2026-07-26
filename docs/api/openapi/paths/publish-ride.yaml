@@ -770,6 +770,39 @@
         }
       }
     },
+    "/api/v1/publish-ride/eligibility": {
+      "get": {
+        "operationId": "publishRideGetEligibility",
+        "summary": "GET publish-ride/eligibility",
+        "description": "Every requirement the driver must satisfy before a ride can be published: Terms of Service, driving-licence verification, licence identity match, a connected bank account, and an admin-approved vehicle. Always returns 200 — `eligible: false` is a normal body. Requirements disabled by an environment bypass flag are reported with `skipped: true` and `satisfied: true`. An unsatisfied `VEHICLE_VERIFICATION` reports `reason: \"VEHICLE_NOT_VERIFIED\"` while the vehicle awaits review and `reason: \"VEHICLE_REJECTED\"` once an admin has rejected it, and carries a `vehicle` object holding `verificationStatus` and the admin's `rejectionReason` so the driver is told what to fix. Editing the vehicle or re-uploading a document returns it to the review queue.",
+        "tags": [
+          "Publish Ride"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
     "/api/v1/publish-ride/draft/publish": {
       "post": {
         "operationId": "publishRidePostDraftPublish",

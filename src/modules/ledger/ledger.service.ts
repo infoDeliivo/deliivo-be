@@ -249,7 +249,7 @@ export const getDriverEarningItems = async (driverId: string) => {
                 select: {
                     id: true,
                     status: true,
-                    passenger: { select: { id: true, name: true } },
+                    passenger: { select: { id: true, firstName: true } },
                     pickupAddress: true,
                     dropoffAddress: true,
                     completedAt: true,

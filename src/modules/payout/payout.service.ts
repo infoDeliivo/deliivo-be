@@ -197,7 +197,7 @@ export const getEligiblePayoutCandidates = async () => {
                 select: {
                     id: true,
                     status: true,
-                    passenger: { select: { id: true, name: true } },
+                    passenger: { select: { id: true, firstName: true } },
                     ride: {
                         select: {
                             id: true,
@@ -208,7 +208,7 @@ export const getEligiblePayoutCandidates = async () => {
                             driver: {
                                 select: {
                                     id: true,
-                                    name: true,
+                                    firstName: true,
                                     stripeAccountId: true,
                                     stripeOnboardingComplete: true,
                                 },
@@ -245,7 +245,7 @@ export const getEligiblePayoutCandidates = async () => {
 
         byDriver.set(driver.id, {
             driverId: driver.id,
-            driverName: driver.name,
+            driverName: driver.firstName,
             stripeAccountId: driver.stripeAccountId,
             stripeOnboardingComplete: driver.stripeOnboardingComplete,
             currency: payment.currency,

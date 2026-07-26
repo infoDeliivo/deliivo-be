@@ -102,8 +102,8 @@ type RideBookingWithRider = {
   updatedAt?: Date;
   passenger?: {
     id: string;
-    name: string | null;
-    nickName: string | null;
+    firstName: string | null;
+    lastName: string | null;
     phone: string | null;
     avatarUrl: string | null;
   };
@@ -155,8 +155,8 @@ const rideDetailsBookingInclude = {
     passenger: {
       select: {
         id: true,
-        name: true,
-        nickName: true,
+        firstName: true,
+        lastName: true,
         phone: true,
         avatarUrl: true,
       },
@@ -449,7 +449,7 @@ export const searchRides = async (
         driver: {
           select: {
             id: true,
-            name: true,
+            firstName: true,
             avatarUrl: true,
             isVerified: true,
           },
@@ -548,7 +548,7 @@ export const searchRides = async (
         driverId: ride.driverId,
         driver: {
           id: ride.driver.id,
-          name: ride.driver.name,
+          firstName: ride.driver.firstName,
           avatarUrl: ride.driver.avatarUrl,
           isVerified: ride.driver.isVerified,
           rating: trustStats?.rating,
@@ -637,7 +637,7 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
       driver: {
         select: {
           id: true,
-          name: true,
+          firstName: true,
           avatarUrl: true,
         },
       },
@@ -699,7 +699,7 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
     driverId: ride.driverId,
     driver: {
       id: ride.driver.id,
-      name: ride.driver.name,
+      firstName: ride.driver.firstName,
       avatarUrl: ride.driver.avatarUrl,
     },
     vehicle: mapRideVehicle(vehicle),
@@ -749,7 +749,7 @@ export const getRideViewByToken = async (
       driver: {
         select: {
           id: true,
-          name: true,
+          firstName: true,
           avatarUrl: true,
         },
       },
@@ -1035,7 +1035,7 @@ export const searchRidesAdvanced = async (
       driver: {
         select: {
           id: true,
-          name: true,
+          firstName: true,
           avatarUrl: true,
           isVerified: true,
         },
@@ -1259,7 +1259,7 @@ export const searchRidesAdvanced = async (
       driverId: ride.driverId,
       driver: {
         id: ride.driver.id,
-        name: ride.driver.name,
+        firstName: ride.driver.firstName,
         avatarUrl: ride.driver.avatarUrl,
         isVerified: ride.driver.isVerified,
         rating: trustStats?.rating,

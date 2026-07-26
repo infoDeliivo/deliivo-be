@@ -536,7 +536,7 @@ export const getDisputeById = async (disputeId: string) => {
         include: {
             booking: {
                 include: {
-                    passenger: { select: { id: true, name: true, avatarUrl: true } },
+                    passenger: { select: { id: true, firstName: true, avatarUrl: true } },
                     payment: true,
                 },
             },

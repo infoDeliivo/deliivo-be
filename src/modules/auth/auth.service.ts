@@ -27,7 +27,10 @@ export const googleAuthService = async (idToken: string) => {
     user = await prisma.user.create({
       data: {
         email,
-        name: payload.name?.trim() || null,
+        // Google returns the two parts separately, so they map straight across
+        // rather than being split back out of the display name.
+        firstName: payload.given_name?.trim() || null,
+        lastName: payload.family_name?.trim() || null,
         avatarUrl: payload.picture || null,
         emailVerified: true,
         isVerified: true,
@@ -40,7 +43,8 @@ export const googleAuthService = async (idToken: string) => {
       data: {
         emailVerified: true,
         isVerified: true,
-        ...(!user.name && payload.name ? { name: payload.name.trim() } : {}),
+        ...(!user.firstName && payload.given_name ? { firstName: payload.given_name.trim() } : {}),
+        ...(!user.lastName && payload.family_name ? { lastName: payload.family_name.trim() } : {}),
         ...(!user.avatarUrl && payload.picture ? { avatarUrl: payload.picture } : {}),
       },
     });

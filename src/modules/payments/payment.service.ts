@@ -262,7 +262,7 @@ export const getRiderTransactions = async (riderId: string) => {
                             destinationAddress: true,
                             departureDate: true,
                             departureTime: true,
-                            driver: { select: { id: true, name: true } },
+                            driver: { select: { id: true, firstName: true } },
                         },
                     },
                 },

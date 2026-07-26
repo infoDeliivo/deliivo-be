@@ -25,6 +25,7 @@ import {
   RouteLocationSuggestionsResult,
 } from './publish-ride.types.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
+import { assertDriverCanPublish } from './driver-eligibility.service.js';
 import { DEFAULT_BALTIC_PRICING_CONFIG, getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
 import { calculatePrice, PricingConfigData } from '../pricing/pricing.calculator.js';
 import { createNotification } from '../notification/notification.service.js';
@@ -234,6 +235,11 @@ export const createWithOrigin = async (
   driverId: string,
   input: CreateOriginInput,
 ): Promise<DraftRide> => {
+  // Gate the flow at its entry point so a driver is not walked through twelve steps
+  // before learning they cannot publish. ToS is deliberately not required here — it is
+  // accepted at the final publish step.
+  await assertDriverCanPublish(driverId, 'START');
+
   await validateBalticPlace(input.originPlaceId);
 
   // Delete any existing draft for this user
@@ -1431,20 +1437,15 @@ export const publishRide = async (driverId: string) => {
     validateEuropeanDestinationPlace(draft.destinationPlaceId),
   ]);
 
-    // Validate driver has accepted ToS and has verified DL
+    // Re-check every requirement at publish time: a licence can expire or a Connect
+    // account can be restricted while the draft is alive. Unlike the START stage, ToS is
+    // enforced here — it is the consent given when committing the ride.
+    await assertDriverCanPublish(driverId, 'PUBLISH');
+
     const driver = await prisma.user.findUnique({
         where: { id: driverId },
-        select: { dlVerified: true, tosAcceptedAt: true, gender: true },
+        select: { gender: true },
     });
-
-    if (!driver?.tosAcceptedAt) {
-        throw new Error('TOS_NOT_ACCEPTED');
-    }
-
-    const skipDlCheck = process.env.SKIP_DL_VERIFICATION === 'true';
-    if (!driver?.dlVerified && !skipDlCheck) {
-        throw new Error('DRIVER_NOT_VERIFIED');
-    }
 
     if (draft.femaleOnly && driver?.gender !== 'FEMALE') {
         throw new Error('FEMALE_ONLY_NOT_ALLOWED');
@@ -1465,7 +1466,8 @@ export const publishRide = async (driverId: string) => {
       throw new Error('MEETING_POINT_OUTSIDE_ROUTE');
     }
 
-  // Validate user has a verified vehicle
+  // Presence and approval were both asserted above; this lookup only supplies the id
+  // written onto the ride row.
   const vehicle = await prisma.vehicle.findFirst({
     where: { userId: driverId, deletedAt: null },
   });
@@ -1473,9 +1475,6 @@ export const publishRide = async (driverId: string) => {
   if (!vehicle) {
     throw new Error('VEHICLE_REQUIRED');
   }
-  // if (!vehicle.isVerified) {
-  //     throw new Error('VEHICLE_NOT_VERIFIED');
-  // }
 
   // ---- Atomic DB insert ---- //
   const ride = await prisma.$transaction(async (tx) => {

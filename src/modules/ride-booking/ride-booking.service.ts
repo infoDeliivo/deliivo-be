@@ -79,7 +79,7 @@ type RideWithDetails = {
     currency: string;
     driver: {
         id: string;
-        name: string | null;
+        firstName: string | null;
         avatarUrl: string | null;
     };
     vehicle?: {
@@ -204,7 +204,7 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
         include: {
             passenger: {
                 select: {
-                    name: true,
+                    firstName: true,
                     avatarUrl: true,
                 },
             },
@@ -272,11 +272,11 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
             userId: booking.ride.driverId,
             type: DRIVER_DECISION_NOTIFICATION_TYPE,
             title: 'New ride request',
-            body: `${booking.passenger.name ?? 'Rider'} wants ${originAddress} to ${destinationAddress}`,
+            body: `${booking.passenger.firstName ?? 'Rider'} wants ${originAddress} to ${destinationAddress}`,
             data: {
                 bookingId: booking.id,
                 rideId: booking.ride.id,
-                passengerName: booking.passenger.name ?? 'Rider',
+                passengerName: booking.passenger.firstName ?? 'Rider',
                 passengerAvatarUrl: booking.passenger.avatarUrl ?? '',
                 originAddress,
                 destinationAddress,
@@ -650,7 +650,7 @@ export const createBooking = async (
                 driver: {
                     select: {
                         id: true,
-                        name: true,
+                        firstName: true,
                         avatarUrl: true,
                         stripeAccountId: true,
                         stripeOnboardingComplete: true,
@@ -706,7 +706,7 @@ export const createBooking = async (
         const passenger = await tx.user.findUnique({
             where: { id: passengerId },
             select: {
-                name: true,
+                firstName: true,
                 avatarUrl: true,
                 gender: true,
             },
@@ -849,7 +849,7 @@ export const createBooking = async (
                         driver: {
                             select: {
                                 id: true,
-                                name: true,
+                                firstName: true,
                                 avatarUrl: true,
                             },
                         },
@@ -874,7 +874,7 @@ export const createBooking = async (
     });
 
     if (bypassBookingPaymentMode) {
-        const passengerName = bookingSeed.passenger?.name ?? 'Rider';
+        const passengerName = bookingSeed.passenger?.firstName ?? 'Rider';
         const originAddress = resolveSegmentAddress(
             bookingSeed.ride.originAddress,
             bookingSeed.resolvedPickupWaypointId,
@@ -1084,7 +1084,7 @@ export const createBooking = async (
                         driver: {
                             select: {
                                 id: true,
-                                name: true,
+                                firstName: true,
                                 avatarUrl: true,
                             },
                         },
@@ -1396,7 +1396,7 @@ export const getBookingById = async (
                     driver: {
                         select: {
                             id: true,
-                            name: true,
+                            firstName: true,
                             avatarUrl: true,
                         },
                     },
@@ -1494,7 +1494,7 @@ export const listUserBookings = async (
                         driver: {
                             select: {
                                 id: true,
-                                name: true,
+                                firstName: true,
                                 avatarUrl: true,
                             },
                         },

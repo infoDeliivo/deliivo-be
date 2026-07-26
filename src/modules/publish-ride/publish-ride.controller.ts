@@ -7,6 +7,8 @@ import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
 import { getCache, setCache, deleteCache } from '../../services/cache.service.js';
 import { getCurrentFuelPrice, refreshFuelPrice as refreshFuelPriceSvc } from '../../services/fuel-price.service.js';
 import { logError } from '../../utils/logger.js';
+import { getDriverPublishEligibility } from './driver-eligibility.service.js';
+import { resolvePublishError } from './publish-ride.constants.js';
 
 // Cache key helpers (for published rides only)
 const cacheKeys = {
@@ -28,15 +30,37 @@ export const createWithOrigin = async (req: AuthRequest, res: Response) => {
             message: 'Draft ride created with origin',
             data: formatDraftResponse(draft),
         });
-    } catch (error: any) {
-        const locationError = error.message === 'LOCATION_OUTSIDE_BALTICS'
-            ? 'Only locations in Estonia, Latvia, or Lithuania can be used to publish rides'
-            : error.message === 'LOCATION_COUNTRY_UNVERIFIED'
-                ? 'Unable to verify the origin country. Select a suggested location and try again'
-                : null;
+    } catch (error) {
+        const resolved = resolvePublishError(error, 'Failed to create draft');
+        const code = error instanceof Error ? error.message : '';
+
         return sendError(res, {
-            status: locationError ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_ERROR,
-            message: locationError || error.message || 'Failed to create draft',
+            status: resolved.status,
+            // Step 1 only has an origin, so the shared "route countries" wording is
+            // narrowed here.
+            message: code === 'LOCATION_COUNTRY_UNVERIFIED'
+                ? 'Unable to verify the origin country. Select a suggested location and try again'
+                : resolved.message,
+        });
+    }
+};
+
+/* ================= PUBLISH ELIGIBILITY CHECKLIST ================= */
+export const publishEligibility = async (req: AuthRequest, res: Response) => {
+    try {
+        // 'PUBLISH' returns the complete list including ToS, so the app can show every
+        // outstanding requirement even though ToS does not block until the final step.
+        const eligibility = await getDriverPublishEligibility(req.user.id, 'PUBLISH');
+
+        return sendSuccess(res, {
+            message: 'Publish eligibility fetched',
+            data: eligibility,
+        });
+    } catch (error) {
+        logError('Publish eligibility fetch failed', error, { userId: req.user?.id });
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to fetch publish eligibility',
         });
     }
 };

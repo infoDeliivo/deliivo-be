@@ -136,8 +136,20 @@
     "/api/v1/users/{userId}/profile": {
       "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1{userId}~1profile"
     },
+    "/api/v1/publish-ride/eligibility": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1eligibility"
+    },
     "/api/v1/publish-ride/draft/origin": {
       "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1origin"
+    },
+    "/api/v1/admin/vehicles": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1vehicles"
+    },
+    "/api/v1/admin/vehicles/{id}/verify": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1vehicles~1{id}~1verify"
+    },
+    "/api/v1/admin/vehicles/{id}/reject": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1vehicles~1{id}~1reject"
     },
     "/api/v1/publish-ride/draft/destination": {
       "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1destination"

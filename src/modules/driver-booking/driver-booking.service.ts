@@ -37,7 +37,7 @@ const fetchDriverBooking = async (bookingId: string) => {
             passenger: {
                 select: {
                     id: true,
-                    name: true,
+                    firstName: true,
                     avatarUrl: true,
                 },
             },
@@ -46,7 +46,7 @@ const fetchDriverBooking = async (bookingId: string) => {
                     driver: {
                         select: {
                             id: true,
-                            name: true,
+                            firstName: true,
                             avatarUrl: true,
                             dlVerified: true,
                         },
@@ -145,7 +145,7 @@ export const acceptBooking = async (driverId: string, bookingId: string): Promis
         userId: booking.passengerId,
         type: 'booking.driver.accepted',
         title: 'Ride confirmed',
-        body: `${booking.ride.driver.name ?? 'Your driver'} accepted your booking`,
+        body: `${booking.ride.driver.firstName ?? 'Your driver'} accepted your booking`,
         data: {
             bookingId: booking.id,
             rideId: booking.ride.id,

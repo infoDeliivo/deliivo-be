@@ -108,7 +108,8 @@ export default async function globalSetup(): Promise<void> {
 
   // Update driver profile
   await authed(driverAccount.accessToken).put('/users/me', {
-    name: 'Test Driver Alpha',
+    firstName: 'Test',
+    lastName: 'DriverAlpha',
     salutation: 'MR',
   });
 
@@ -131,11 +132,26 @@ export default async function globalSetup(): Promise<void> {
     try {
       await prismaSetup.user.update({
         where: { id: driverAccount.id },
-        data: { dlVerified: true },
+        data: {
+          dlVerified: true,
+          // Publishing also requires a payout destination. There is no way to complete
+          // real Stripe Connect onboarding from a test, so set the flag directly.
+          stripeOnboardingComplete: true,
+        },
       });
       console.log(`[e2e setup] Set dlVerified=true for driver_a (${driverAccount.id})`);
+
+      // A saved vehicle starts PENDING and waits for an admin decision. Approve the
+      // fixture vehicle here rather than running the whole suite with
+      // SKIP_VEHICLE_VERIFICATION=true, which would make the vehicle specs that assert
+      // isVerified=false on creation meaningless.
+      const approved = await prismaSetup.vehicle.updateMany({
+        where: { userId: driverAccount.id, deletedAt: null },
+        data: { verificationStatus: 'APPROVED', isVerified: true, reviewedAt: new Date() },
+      });
+      console.log(`[e2e setup] Approved ${approved.count} vehicle(s) for driver_a`);
     } catch (err: any) {
-      console.warn(`[e2e setup] Could not set dlVerified for driver_a: ${err.message}`);
+      console.warn(`[e2e setup] Could not prepare driver_a for publishing: ${err.message}`);
     } finally {
       await prismaSetup.$disconnect();
     }
@@ -157,7 +173,8 @@ export default async function globalSetup(): Promise<void> {
   const passengerAAccount = toAccountState(passengerAResult, passengerAEmail);
 
   await authed(passengerAAccount.accessToken).put('/users/me', {
-    name: 'Test Passenger Alpha',
+    firstName: 'Test',
+    lastName: 'PassengerAlpha',
     salutation: 'MS',
   });
 
@@ -173,7 +190,8 @@ export default async function globalSetup(): Promise<void> {
   const passengerBAccount = toAccountState(passengerBResult, passengerBEmail);
 
   await authed(passengerBAccount.accessToken).put('/users/me', {
-    name: 'Test Passenger Beta',
+    firstName: 'Test',
+    lastName: 'PassengerBeta',
     salutation: 'MR',
   });
 

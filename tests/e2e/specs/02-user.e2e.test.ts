@@ -20,14 +20,14 @@ describe('TC-USER-001 — Get my profile', () => {
 describe('TC-USER-002 — Update profile', () => {
   it('persists name and salutation', async () => {
     const res = await pa.put('/users/me', {
-      name: 'Alice Smith Updated',
-      nickName: 'Ali',
+      firstName: 'Alice',
+      lastName: 'Smith',
       salutation: 'MS',
     });
     expect(res.status).toBe(200);
     const user = res.data.data ?? res.data;
-    expect(user.name).toBe('Alice Smith Updated');
-    expect(user.nickName).toBe('Ali');
+    expect(user.firstName).toBe('Alice');
+    expect(user.lastName).toBe('Smith');
   });
 });
 

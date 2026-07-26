@@ -3,6 +3,7 @@ import { prisma } from '../../config/index.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { createConnectOnboardingLink, getConnectAccountStatus } from './stripe.service.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
+import { logError } from '../../utils/logger.js';
 
 /* ================= CONNECT ONBOARD ================= */
 export const connectOnboard = async (req: AuthRequest, res: Response) => {
@@ -43,7 +44,8 @@ export const connectOnboard = async (req: AuthRequest, res: Response) => {
             message: 'Stripe Connect onboarding link created',
             data: { url: onboardingUrl },
         });
-    } catch {
+    } catch (error) {
+        logError('[STRIPE_CONNECT] onboard failed', error, { userId: req.user?.id });
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to create Stripe Connect onboarding link',
@@ -82,20 +84,38 @@ export const connectStatus = async (req: AuthRequest, res: Response) => {
         }
 
         const status = await getConnectAccountStatus(user.stripeAccountId);
+        // Identity is matched against the driving licence only (see the Veriff webhook in
+        // dl-verification.service.ts). The bank account is not compared to the profile:
+        // Stripe readiness alone completes onboarding.
+        const stripeReady = status.detailsSubmitted && status.chargesEnabled;
 
-        // Mark onboarding complete when Stripe confirms it
-        if (status.detailsSubmitted && status.chargesEnabled && !user.stripeOnboardingComplete) {
+        let onboardingComplete = user.stripeOnboardingComplete;
+
+        if (stripeReady && !user.stripeOnboardingComplete) {
             await prisma.user.update({
                 where: { id: userId },
-                data: { stripeOnboardingComplete: true },
+                data: {
+                    stripeOnboardingComplete: true,
+                    // Retained for audit — which account holder Stripe reported.
+                    stripeAccountName: status.accountName,
+                },
             });
+            onboardingComplete = true;
         }
 
         return sendSuccess(res, {
             message: 'Connect status fetched',
-            data: { connected: true, onboardingComplete: user.stripeOnboardingComplete, ...status },
+            data: {
+                connected: true,
+                onboardingComplete,
+                accountId: status.accountId,
+                chargesEnabled: status.chargesEnabled,
+                payoutsEnabled: status.payoutsEnabled,
+                detailsSubmitted: status.detailsSubmitted,
+            },
         });
-    } catch {
+    } catch (error) {
+        logError('[STRIPE_CONNECT] status fetch failed', error, { userId: req.user?.id });
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to fetch Stripe Connect status',
