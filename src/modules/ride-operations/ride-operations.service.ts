@@ -187,7 +187,7 @@ export const startRide = async (driverId: string, rideId: string, input: RideEve
                     passenger: {
                         select: {
                             id: true,
-                            name: true,
+                            firstName: true,
                             email: true,
                             phone: true,
                         },

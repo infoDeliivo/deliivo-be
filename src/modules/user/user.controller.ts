@@ -138,10 +138,9 @@ export const updateFullProfile = async (req: AuthRequest, res: Response) => {
     const { success, data, reason } = await updateFullProfileService(userId, req.body);
 
     if (!success || !data) {
-      const status = reason === 'USERNAME_EXISTS' ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
       return sendError(res, {
-        status,
-        message: reason === 'USERNAME_EXISTS' ? 'Username already taken' : reason || 'Unable to update profile',
+        status: HttpStatus.BAD_REQUEST,
+        message: reason || 'Unable to update profile',
       });
     }
 
@@ -192,7 +191,7 @@ export const completeOnBoardingStep1 = async (req: AuthRequest, res: Response) =
       message: 'Onboarding completed successfully',
       data: {
         id: user!.id,
-        name: user!.name,
+        firstName: user!.firstName,
         email: user!.email,
         gender: user!.gender,
         role: user!.role,

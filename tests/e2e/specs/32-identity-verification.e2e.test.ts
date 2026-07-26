@@ -67,7 +67,7 @@ beforeAll(async () => {
   driverId = account.id;
 
   // Entered profile name the document will be matched against.
-  await authed(driverToken).put('/users/me', { name: 'Alan Turing', salutation: 'MR' });
+  await authed(driverToken).put('/users/me', { firstName: 'Alan', lastName: 'Turing', salutation: 'MR' });
   ready = true;
 });
 

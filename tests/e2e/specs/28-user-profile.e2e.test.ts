@@ -24,7 +24,8 @@ describe('TC-PROFILE-001 — Get full profile', () => {
 describe('TC-PROFILE-002 — Update full profile', () => {
   it('updates profile with travel preferences in one request', async () => {
     const res = await pa.put('/users/me/profile', {
-      name: 'Updated Passenger Alpha',
+      firstName: 'Updated',
+      lastName: 'PassengerAlpha',
       bio: 'I love carpooling',
       travelPreferences: {
         chattiness: 'CHATTY',
@@ -38,7 +39,8 @@ describe('TC-PROFILE-002 — Update full profile', () => {
 describe('TC-PROFILE-003 — Complete onboarding', () => {
   it('sets name and completes onboarding status', async () => {
     const res = await pa.post('/users/me/onboarding/complete', {
-      name: 'Passenger Alpha Complete',
+      firstName: 'Passenger',
+      lastName: 'AlphaComplete',
       salutation: 'MS',
       dob: '1995-06-15',
     });

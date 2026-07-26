@@ -3,6 +3,9 @@ import { authorize } from '../../middlewares/auth.js';
 import { validate } from '../../middlewares/validate.js';
 import * as adminController from './admin.controller.js';
 import { pricingConfigCreateSchema, pricingConfigIdSchema, pricingConfigUpdateSchema } from '../pricing/pricing.validator.js';
+import { rejectVehicleSchema, vehicleIdParamSchema } from './admin.validator.js';
+import { asyncHandler } from '../../utils/asyncHandler.js';
+import { AuthRequest } from '../../types/auth.js';
 
 const router = Router();
 
@@ -20,7 +23,19 @@ router.post('/users/:id/unban', adminController.unbanUser as any);
 router.get('/stats', adminController.getStats as any);
 router.get('/stats/trends', adminController.getMonitoringTrends as any);
 router.get('/ops/summary', adminController.getOperationsSummary as any);
-router.post('/vehicles/:id/verify', adminController.verifyVehicle as any);
+// Vehicle review queue. Private documents come back as `previewKey` — exchange them for
+// a signed URL via GET /uploads/read (admins may read any owner's key).
+router.get('/vehicles', asyncHandler<AuthRequest>(adminController.listVehicles));
+router.post(
+    '/vehicles/:id/verify',
+    validate({ params: vehicleIdParamSchema }),
+    asyncHandler<AuthRequest>(adminController.verifyVehicle),
+);
+router.post(
+    '/vehicles/:id/reject',
+    validate({ params: vehicleIdParamSchema, body: rejectVehicleSchema }),
+    asyncHandler<AuthRequest>(adminController.rejectVehicle),
+);
 router.post('/bookings/:id/refund', adminController.adminRefundBooking as any);
 router.get('/pricing/configs', adminController.listPricingConfigs as any);
 router.post('/pricing/configs', validate({ body: pricingConfigCreateSchema }), adminController.createPricingConfig as any);

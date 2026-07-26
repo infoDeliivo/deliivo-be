@@ -58,10 +58,19 @@ enum VehicleType {
 }
 
 enum DocumentType {
+  // Legacy single car photo. Read as an alias of VEHICLE_IMAGE_FRONT.
   VEHICLE_IMAGE
+  VEHICLE_IMAGE_FRONT
+  VEHICLE_IMAGE_BACK
   VEHICLE_DOCUMENT
   DRIVING_LICENSE
   INSURANCE_DOCUMENT
+}
+
+enum VehicleVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum DlVerificationStatus {
@@ -76,8 +85,8 @@ enum DlVerificationStatus {
 model User {
   id String @id @default(uuid())
 
-  name       String?     @db.VarChar(255)
-  nickName   String?     @db.VarChar(255)
+  firstName  String?     @db.VarChar(255)
+  lastName   String?     @db.VarChar(255)
   salutation Salutation?
   gender     Gender?
   dob        DateTime?
@@ -177,8 +186,15 @@ model Vehicle {
   year       Int?
   imageUrl     String?
   imageKey     String?
+  // Kept in sync with verificationStatus (true iff APPROVED) so existing readers
+  // keep working. verificationStatus is the source of truth for admin review.
   isVerified Boolean      @default(false)
   deletedAt  DateTime?
+
+  verificationStatus VehicleVerificationStatus @default(PENDING)
+  rejectionReason    String?
+  reviewedAt         DateTime?
+  reviewedById       String?
 
   documents VehicleDocument[]
   rides     Ride[]
@@ -188,6 +204,7 @@ model Vehicle {
 
   @@index([userId])
   @@index([userId, deletedAt])
+  @@index([verificationStatus])
 }
 
 model VehicleDocument {

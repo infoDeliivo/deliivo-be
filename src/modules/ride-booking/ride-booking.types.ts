@@ -74,7 +74,7 @@ export interface BookingRideInfo {
     waypoints?: WaypointInfo[];
     driver: {
         id: string;
-        name: string | null;
+        firstName: string | null;
         avatarUrl: string | null;
     };
     vehicle?: VehicleInfo | null;

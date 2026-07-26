@@ -40,7 +40,7 @@ export interface SearchRideResult {
     // Driver info
     driver: {
         id: string;
-        name: string | null;
+        firstName: string | null;
         avatarUrl: string | null;
         isVerified?: boolean;
         rating?: number;
@@ -110,8 +110,8 @@ export interface SearchRideResult {
 
 export interface SearchRideBookedRider {
     id: string;
-    name: string | null;
-    nickName: string | null;
+    firstName: string | null;
+    lastName: string | null;
     phone: string | null;
     avatarUrl: string | null;
 }

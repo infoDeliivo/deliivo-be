@@ -3,8 +3,7 @@ import { prisma } from '../../config/index.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { createConnectOnboardingLink, getConnectAccountStatus } from './stripe.service.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
-import { logError, logWarn } from '../../utils/logger.js';
-import { matchIdentity } from '../../utils/nameMatch.js';
+import { logError } from '../../utils/logger.js';
 
 /* ================= CONNECT ONBOARD ================= */
 export const connectOnboard = async (req: AuthRequest, res: Response) => {
@@ -74,7 +73,7 @@ export const connectStatus = async (req: AuthRequest, res: Response) => {
 
         const user = await prisma.user.findUnique({
             where: { id: userId },
-            select: { stripeAccountId: true, stripeOnboardingComplete: true, name: true, dob: true },
+            select: { stripeAccountId: true, stripeOnboardingComplete: true },
         });
 
         if (!user?.stripeAccountId) {
@@ -85,42 +84,23 @@ export const connectStatus = async (req: AuthRequest, res: Response) => {
         }
 
         const status = await getConnectAccountStatus(user.stripeAccountId);
+        // Identity is matched against the driving licence only (see the Veriff webhook in
+        // dl-verification.service.ts). The bank account is not compared to the profile:
+        // Stripe readiness alone completes onboarding.
         const stripeReady = status.detailsSubmitted && status.chargesEnabled;
-        // Stripe asserts name + DOB (no gender); match both against the profile.
-        const match = matchIdentity(
-            { name: user.name, dob: user.dob },
-            { name: status.accountName, dob: status.accountDob },
-        );
 
         let onboardingComplete = user.stripeOnboardingComplete;
 
-        // Only complete onboarding when Stripe is ready AND the account-holder
-        // identity matches the entered profile. A mismatch is a hard block.
-        if (stripeReady && match.overall && !user.stripeOnboardingComplete) {
+        if (stripeReady && !user.stripeOnboardingComplete) {
             await prisma.user.update({
                 where: { id: userId },
                 data: {
                     stripeOnboardingComplete: true,
+                    // Retained for audit — which account holder Stripe reported.
                     stripeAccountName: status.accountName,
-                    stripeNameMatch: match.nameMatch,
-                    stripeDobMatch: match.dobMatch,
                 },
             });
             onboardingComplete = true;
-        } else if (stripeReady && !match.overall) {
-            await prisma.user.update({
-                where: { id: userId },
-                data: {
-                    stripeAccountName: status.accountName,
-                    stripeNameMatch: match.nameMatch,
-                    stripeDobMatch: match.dobMatch,
-                },
-            });
-            logWarn('[STRIPE_CONNECT] account ready but identity mismatch — onboarding withheld', {
-                userId,
-                nameMatch: match.nameMatch,
-                dobMatch: match.dobMatch,
-            });
         }
 
         return sendSuccess(res, {
@@ -132,7 +112,6 @@ export const connectStatus = async (req: AuthRequest, res: Response) => {
                 chargesEnabled: status.chargesEnabled,
                 payoutsEnabled: status.payoutsEnabled,
                 detailsSubmitted: status.detailsSubmitted,
-                identityMismatch: stripeReady && !match.overall,
             },
         });
     } catch (error) {

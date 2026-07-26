@@ -9,8 +9,8 @@ export const exportUserData = async (userId: string) => {
         where: { id: userId },
         select: {
             id: true,
-            name: true,
-            nickName: true,
+            firstName: true,
+            lastName: true,
             salutation: true,
             gender: true,
             dob: true,
@@ -121,8 +121,8 @@ export const exportUserData = async (userId: string) => {
         exportedAt: new Date().toISOString(),
         profile: {
             id: user.id,
-            name: user.name,
-            nickName: user.nickName,
+            firstName: user.firstName,
+            lastName: user.lastName,
             salutation: user.salutation,
             gender: user.gender,
             dob: user.dob,
@@ -271,8 +271,8 @@ export const deleteUserAccount = async (userId: string) => {
     await prisma.user.update({
         where: { id: userId },
         data: {
-            name: null,
-            nickName: null,
+            firstName: null,
+            lastName: null,
             salutation: null,
             gender: null,
             dob: null,

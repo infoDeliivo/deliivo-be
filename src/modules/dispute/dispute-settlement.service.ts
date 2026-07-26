@@ -54,7 +54,7 @@ export const settleDispute = async (input: SettlementInput) => {
             booking: {
                 include: {
                     payment: true,
-                    passenger: { select: { id: true, name: true } },
+                    passenger: { select: { id: true, firstName: true } },
                     ride: {
                         select: {
                             id: true,

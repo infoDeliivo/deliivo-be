@@ -27,6 +27,10 @@ const router = Router();
    Draft auto-deletes when user creates a new Origin or after 10 min TTL.
    ============================================================ */
 
+// Step 0: What the driver still needs before a ride can be published. Always 200 —
+// `eligible: false` is a normal body, not an error.
+router.get('/eligibility', controller.publishEligibility);
+
 // Step 1: Create draft with origin + pickup point
 router.post(
     '/draft/origin',

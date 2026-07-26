@@ -10,6 +10,17 @@ const VERIFF_API_KEY = process.env.VERIFF_API_KEY || '';
 const VERIFF_SHARED_SECRET = process.env.VERIFF_SHARED_SECRET || '';
 const VERIFF_CALLBACK_URL = process.env.VERIFF_CALLBACK_URL || '';
 
+// Veriff only accepts HTTPS return URLs (API error 1302). Drop anything else
+// instead of letting the session-create call fail with a 400.
+const resolveCallbackUrl = (requested?: string): string | undefined => {
+  for (const candidate of [requested, VERIFF_CALLBACK_URL]) {
+    if (!candidate) continue;
+    if (candidate.startsWith('https://')) return candidate;
+    logWarn('Ignoring non-HTTPS Veriff callback URL', { callback: candidate });
+  }
+  return undefined;
+};
+
 interface CreateVeriffSessionOptions {
   userId: string;
   firstName: string;
@@ -68,9 +79,11 @@ export const createVeriffSession = async (
     return { success: false, reason: 'ALREADY_VERIFIED' };
   }
 
+  const callbackUrl = resolveCallbackUrl(callback);
+
   const payload: any = {
     verification: {
-      callback: callback || VERIFF_CALLBACK_URL,
+      ...(callbackUrl && { callback: callbackUrl }),
       person: {
         firstName,
         lastName,
@@ -217,13 +230,17 @@ export const handleWebhookDecision = async (body: any) => {
 
   const driver = await prisma.user.findUnique({
     where: { id: record.userId },
-    select: { name: true, dob: true, gender: true },
+    select: { firstName: true, lastName: true, dob: true, gender: true },
   });
+
+  // The profile stores the given and family name separately; Veriff returns them
+  // the same way, so both sides are compared as one joined full name.
+  const driverName = [driver?.firstName, driver?.lastName].filter(Boolean).join(' ').trim() || null;
 
   const match =
     mappedStatus === 'APPROVED'
       ? matchIdentity(
-          { name: driver?.name, dob: driver?.dob, gender: driver?.gender },
+          { name: driverName, dob: driver?.dob, gender: driver?.gender },
           { name: verifiedName, dob: verifiedDob, gender: verifiedGender },
         )
       : null;

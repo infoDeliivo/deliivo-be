@@ -22,7 +22,7 @@ const buildBody = (status: string, person: Person) => ({
     verification: { id: 'veriff-session-1', status, code: 9001, person },
 });
 
-const profile = { name: 'Jon Smith', dob: new Date('1990-05-15T00:00:00Z'), gender: 'MALE' };
+const profile = { firstName: 'Jon', lastName: 'Smith', dob: new Date('1990-05-15T00:00:00Z'), gender: 'MALE' };
 
 describe('handleWebhookDecision — identity matching (name + DOB + gender)', () => {
     beforeEach(() => {
@@ -80,13 +80,40 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
     });
 
     it('blocks with IDENTITY_MISMATCH when the name differs', async () => {
-        mockPrisma.user.findUnique.mockResolvedValue({ name: 'Jane Doe', dob: profile.dob, gender: 'FEMALE' });
+        mockPrisma.user.findUnique.mockResolvedValue({ firstName: 'Jane', lastName: 'Doe', dob: profile.dob, gender: 'FEMALE' });
         const res = await handleWebhookDecision(
             buildBody('approved', { firstName: 'John', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
         );
 
         expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
         expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('blocks with IDENTITY_MISMATCH when the profile has no last name', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({ firstName: 'Jon', lastName: null, dob: profile.dob, gender: 'MALE' });
+        const res = await handleWebhookDecision(
+            buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
+        );
+
+        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
+        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ nameMatch: false }) }),
+        );
+    });
+
+    it('joins the profile first and last name before comparing to the document', async () => {
+        const res = await handleWebhookDecision(
+            buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
+        );
+
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.findUnique).toHaveBeenCalledWith(
+            expect.objectContaining({ select: { firstName: true, lastName: true, dob: true, gender: true } }),
+        );
+        expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ nameMatch: true }) }),
+        );
     });
 
     it('verifies when name matches and DOB/gender are absent from the payload', async () => {

@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../types/auth.js';
 import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
-import { logError } from '../../utils/logger.js';
+import { logError, logInfo } from '../../utils/logger.js';
 import {
     getPresignedUploadUrl,
     headObject,
@@ -182,7 +182,12 @@ export const confirmUpload = async (req: AuthRequest, res: Response) => {
             imageKey: permanentKey,
             documentType,
         });
-        await deleteCache(cacheKeys.vehicle(vehicleId!));
+        // The list cache backs /profile/vehicle; leaving it stale hides the re-queued
+        // review status this upload just triggered.
+        await Promise.all([
+            deleteCache(cacheKeys.vehicle(vehicleId!)),
+            deleteCache(cacheKeys.userVehicles(req.user.id)),
+        ]);
         return sendSuccess(res, {
             status: HttpStatus.CREATED,
             message: 'Document uploaded successfully',
@@ -205,8 +210,23 @@ export const readUrl = async (req: AuthRequest, res: Response) => {
         // Authorize by the owner id embedded in the key. A user may only read objects
         // stored under their own owner segment. 404 (not 403) so we never confirm whether
         // someone else's key exists.
-        if (ownerIdFromKey(key) !== req.user.id) {
+        //
+        // Admins are exempt: reviewing a vehicle means opening the registry document,
+        // which is stored privately under the driver's owner segment. Every such read is
+        // logged so privileged access to private KYC documents stays auditable.
+        const isOwner = ownerIdFromKey(key) === req.user.id;
+        const isAdmin = req.user.role === 'ADMIN';
+
+        if (!isOwner && !isAdmin) {
             return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Document not found' });
+        }
+
+        if (!isOwner) {
+            logInfo('[UPLOADS] admin read of private document', {
+                adminId: req.user.id,
+                ownerId: ownerIdFromKey(key),
+                key,
+            });
         }
 
         const url = await getPresignedDownloadUrl(key, PRESIGN_TTL);
@@ -262,7 +282,10 @@ export const deleteUpload = async (req: AuthRequest, res: Response) => {
             return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Document not found' });
         }
         await reapPrevious(doc.imageKey ?? undefined, '');
-        await deleteCache(cacheKeys.vehicle(vehicleId!));
+        await Promise.all([
+            deleteCache(cacheKeys.vehicle(vehicleId!)),
+            deleteCache(cacheKeys.userVehicles(req.user.id)),
+        ]);
         return sendSuccess(res, { message: 'Document removed successfully' });
     } catch (error) {
         logError('deleteUpload controller error', error);

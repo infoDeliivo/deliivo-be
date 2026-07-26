@@ -151,10 +151,10 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "name": {
+                  "firstName": {
                     "type": "string"
                   },
-                  "nickName": {
+                  "lastName": {
                     "type": "string"
                   },
                   "salutation": {
@@ -248,12 +248,16 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "name",
+                  "firstName",
+                  "lastName",
                   "salutation",
                   "dob"
                 ],
                 "properties": {
-                  "name": {
+                  "firstName": {
+                    "type": "string"
+                  },
+                  "lastName": {
                     "type": "string"
                   },
                   "salutation": {

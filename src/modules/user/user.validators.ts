@@ -33,7 +33,8 @@ export const updateProfileSchema = z.object({
 });
 
 export const updateProfileSchemaOnBoarding = z.object({
-  name: personNameSchema,
+  firstName: personNameSchema,
+  lastName: personNameSchema,
 
   salutation: z.enum(['MR', 'MS', 'MRS', 'MX', 'OTHER']),
   gender: z.enum(['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY']),
@@ -55,13 +56,8 @@ export const avatarUploadSchema = z
 // Full profile update schema with travel preferences
 export const fullProfileUpdateSchema = z.object({
   // Basic info
-  name: personNameSchema.optional(),
-  nickName: z
-    .string()
-    .min(3)
-    .max(30)
-    .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers and underscores')
-    .optional(),
+  firstName: personNameSchema.optional(),
+  lastName: personNameSchema.optional(),
   salutation: z.enum(['MR', 'MS', 'MRS', 'MX', 'OTHER']).optional(),
   gender: z.enum(['MALE', 'FEMALE', 'NON_BINARY', 'OTHER', 'PREFER_NOT_TO_SAY']).optional(),
   dob: dobSchema.optional(),

@@ -43,9 +43,12 @@ const stripeReady = {
     accountDob: { day: 15, month: 5, year: 1990 },
 };
 
-const profileDob = new Date('1990-05-15T00:00:00Z');
-
-describe('connectStatus — identity matching (name + DOB)', () => {
+/**
+ * Identity is matched against the driving licence only. The bank account holder is never
+ * compared to the profile, so a Connect account in a different name still completes
+ * onboarding — see the Veriff webhook for the identity gate that does apply.
+ */
+describe('connectStatus — onboarding completion', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         delete process.env.STRIPE_CONNECT_MOCK_MODE;
@@ -53,12 +56,10 @@ describe('connectStatus — identity matching (name + DOB)', () => {
         mockPrisma.user.update.mockResolvedValue(undefined);
     });
 
-    it('completes onboarding when Stripe is ready and name + DOB match', async () => {
+    it('completes onboarding when Stripe reports the account ready', async () => {
         mockPrisma.user.findUnique.mockResolvedValue({
             stripeAccountId: 'acct_1',
             stripeOnboardingComplete: false,
-            name: 'John Smith',
-            dob: profileDob,
         });
 
         const { req, res } = makeReqRes();
@@ -69,48 +70,73 @@ describe('connectStatus — identity matching (name + DOB)', () => {
             data: {
                 stripeOnboardingComplete: true,
                 stripeAccountName: 'John Smith',
-                stripeNameMatch: true,
-                stripeDobMatch: true,
             },
         });
         const data = mockSendSuccess.mock.calls[0][1].data;
         expect(data.onboardingComplete).toBe(true);
-        expect(data.identityMismatch).toBe(false);
+        expect(data.identityMismatch).toBeUndefined();
     });
 
-    it('blocks onboarding when the DOB differs even though the name matches', async () => {
+    it('completes onboarding even when the account holder name differs from the profile', async () => {
         mockPrisma.user.findUnique.mockResolvedValue({
             stripeAccountId: 'acct_1',
             stripeOnboardingComplete: false,
-            name: 'John Smith',
-            dob: new Date('1985-01-01T00:00:00Z'),
         });
-
-        const { req, res } = makeReqRes();
-        await connectStatus(req, res);
-
-        expect(mockPrisma.user.update).toHaveBeenCalledWith({
-            where: { id: 'user-1' },
-            data: { stripeAccountName: 'John Smith', stripeNameMatch: true, stripeDobMatch: false },
-        });
-        const data = mockSendSuccess.mock.calls[0][1].data;
-        expect(data.onboardingComplete).toBe(false);
-        expect(data.identityMismatch).toBe(true);
-    });
-
-    it('blocks onboarding and flags mismatch when the name differs', async () => {
-        mockPrisma.user.findUnique.mockResolvedValue({
-            stripeAccountId: 'acct_1',
-            stripeOnboardingComplete: false,
-            name: 'Jane Doe',
-            dob: profileDob,
+        mockGetConnectAccountStatus.mockResolvedValue({
+            ...stripeReady,
+            accountName: 'Jane Doe',
         });
 
         const { req, res } = makeReqRes();
         await connectStatus(req, res);
 
         const data = mockSendSuccess.mock.calls[0][1].data;
+        expect(data.onboardingComplete).toBe(true);
+    });
+
+    it('leaves onboarding incomplete while Stripe still wants details', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({
+            stripeAccountId: 'acct_1',
+            stripeOnboardingComplete: false,
+        });
+        mockGetConnectAccountStatus.mockResolvedValue({
+            ...stripeReady,
+            detailsSubmitted: false,
+        });
+
+        const { req, res } = makeReqRes();
+        await connectStatus(req, res);
+
+        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        const data = mockSendSuccess.mock.calls[0][1].data;
         expect(data.onboardingComplete).toBe(false);
-        expect(data.identityMismatch).toBe(true);
+    });
+
+    it('does not re-write onboarding once already complete', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({
+            stripeAccountId: 'acct_1',
+            stripeOnboardingComplete: true,
+        });
+
+        const { req, res } = makeReqRes();
+        await connectStatus(req, res);
+
+        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        const data = mockSendSuccess.mock.calls[0][1].data;
+        expect(data.onboardingComplete).toBe(true);
+    });
+
+    it('reports not connected when no Stripe account exists', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({
+            stripeAccountId: null,
+            stripeOnboardingComplete: false,
+        });
+
+        const { req, res } = makeReqRes();
+        await connectStatus(req, res);
+
+        expect(mockGetConnectAccountStatus).not.toHaveBeenCalled();
+        const data = mockSendSuccess.mock.calls[0][1].data;
+        expect(data).toEqual({ connected: false, onboardingComplete: false });
     });
 });

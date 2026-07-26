@@ -189,13 +189,13 @@
         "type": "string",
         "format": "uuid"
       },
-      "name": {
+      "firstName": {
         "type": [
           "string",
           "null"
         ]
       },
-      "nickName": {
+      "lastName": {
         "type": [
           "string",
           "null"

@@ -33,7 +33,7 @@ export interface ConversationListItem {
     id: string;
     peer: {
         id: string;
-        name: string | null;
+        firstName: string | null;
         avatarUrl: string | null;
     };
     lastMessage: {
