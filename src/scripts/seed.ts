@@ -4,6 +4,7 @@ import { UserRole, OnboardingStatus } from '@prisma/client';
 import fs from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { ensureDefaultPricingConfig } from '../modules/pricing/pricing.service.js';
 
 async function main() {
   const adminEmail = process.env.ADMIN_SEED_EMAIL || 'admin@test.dev';
@@ -52,6 +53,9 @@ async function main() {
       });
 
   console.log(`Seeded admin user: ${admin.email} (${admin.id})`);
+
+  const pricingConfig = await ensureDefaultPricingConfig();
+  console.log(`Seeded pricing config: ${pricingConfig.regionCode} (${pricingConfig.id})`);
 
   const contentFilePath = path.resolve(process.cwd(), 'content', 'blog-posts.json');
   try {

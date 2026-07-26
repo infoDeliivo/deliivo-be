@@ -11,12 +11,16 @@ export const googleHttp = {
     radius?: number;
     types?: string;
     strictBounds?: boolean;
+    scope?: 'baltic' | 'europe';
   }): Promise<ApiResponse<any>> {
     const params: any = {
       input: payload.input,
       key: process.env.GOOGLE_MAPS_API_KEY,
-      components: 'country:ee|country:lv|country:lt',
     };
+
+    if (payload.scope !== 'europe') {
+      params.components = 'country:ee|country:lv|country:lt';
+    }
 
     if (payload.location) {
       params.location = `${payload.location.lat},${payload.location.lng}`;

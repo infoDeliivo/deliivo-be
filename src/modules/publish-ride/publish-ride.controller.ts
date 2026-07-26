@@ -110,7 +110,9 @@ export const updateDestination = async (req: AuthRequest, res: Response) => {
         });
     } catch (error: any) {
         const locationError = error.message === 'LOCATION_OUTSIDE_BALTICS'
-            ? 'Only locations in Estonia, Latvia, or Lithuania can be used to publish rides'
+            ? 'Only locations in Estonia, Latvia, or Lithuania can be used as ride origins'
+            : error.message === 'DESTINATION_OUTSIDE_EUROPE'
+                ? 'Destinations must be in Europe for outbound rides from the Baltics'
             : error.message === 'LOCATION_COUNTRY_UNVERIFIED'
                 ? 'Unable to verify the destination country. Select a suggested location and try again'
                 : null;
@@ -442,8 +444,70 @@ export const publishRide = async (req: AuthRequest, res: Response) => {
             message: 'Ride published successfully',
             data: ride,
         });
-    } catch (error) {
-        const { status, message } = resolvePublishError(error, 'Failed to publish ride');
+    } catch (error: any) {
+        logError('Failed to publish ride', error, {
+            requestId: req.headers['x-request-id'],
+            userId: req.user?.id,
+        });
+
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to publish ride';
+
+        if (error.message === 'DRAFT_NOT_FOUND') {
+            status = HttpStatus.NOT_FOUND;
+            message = 'Draft not found';
+        } else if (error.message === 'ORIGIN_AND_DESTINATION_REQUIRED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Origin and destination are required';
+        } else if (error.message === 'ROUTE_REQUIRED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Route is required before publishing';
+        } else if (error.message === 'SCHEDULE_REQUIRED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Schedule is required before publishing';
+        } else if (error.message === 'DEPARTURE_TOO_SOON') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Departure must be at least 3 hours from now';
+        } else if (error.message === 'CAPACITY_AND_PRICING_REQUIRED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Seats and pricing are required before publishing';
+        } else if (error.message === 'FEMALE_ONLY_NOT_ALLOWED') {
+            status = HttpStatus.FORBIDDEN;
+            message = 'Only female drivers can publish female-only rides';
+        } else if (error.message === 'NON_ROAD_ROUTE_NOT_ALLOWED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Routes that include ferry or water transport cannot be published';
+        } else if (error.message === 'TOS_NOT_ACCEPTED') {
+            status = HttpStatus.FORBIDDEN;
+            message = 'You must accept the Terms of Service before publishing a ride';
+        } else if (error.message === 'DRIVER_NOT_VERIFIED') {
+            status = HttpStatus.FORBIDDEN;
+            message = 'Your driving licence must be verified before publishing a ride';
+        } else if (error.message === 'VEHICLE_REQUIRED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'A vehicle is required before publishing a ride';
+        } else if (error.message === 'VEHICLE_NOT_VERIFIED') {
+            status = HttpStatus.FORBIDDEN;
+            message = 'Your vehicle must be verified before publishing a ride';
+        } else if (error.message === 'LOCATION_OUTSIDE_BALTICS') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Only locations in Estonia, Latvia, or Lithuania can be used as ride origins';
+        } else if (error.message === 'DESTINATION_OUTSIDE_EUROPE') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Destinations must be in Europe for outbound rides from the Baltics';
+        } else if (error.message === 'LOCATION_COUNTRY_UNVERIFIED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Unable to verify the route countries. Select suggested locations and try again';
+        } else if (error.message === 'MEETING_POINTS_REQUIRED') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Add at least one pickup point and one drop-off point before publishing';
+        } else if (error.message === 'MEETING_POINT_OUTSIDE_ROUTE') {
+            status = HttpStatus.BAD_REQUEST;
+            message = 'Meeting points must be within the allowed distance of the selected route';
+        } else if (String(error.message || '').startsWith('PRICE_OUT_OF_RANGE')) {
+            status = HttpStatus.BAD_REQUEST;
+            message = String(error.message).replace(/^PRICE_OUT_OF_RANGE:\s*/, '') || 'Selected price is outside the allowed pricing range';
+        }
 
         return sendError(res, { status, message });
     }

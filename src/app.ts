@@ -93,10 +93,9 @@ app.get('/health/ready', async (req, res) => {
     database: false,
     redis: false,
     authSecrets: Boolean(
-      process.env.JWT_SECRET
-      && process.env.ACCESS_TOKEN_SECRET
+      process.env.ACCESS_TOKEN_SECRET
       && process.env.REFRESH_TOKEN_SECRET
-      && process.env.SEGMENT_VIEW_TOKEN_SECRET
+      && (process.env.SEGMENT_VIEW_TOKEN_SECRET || process.env.JWT_SECRET || process.env.ACCESS_TOKEN_SECRET)
     ),
     stripe: Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET),
     firebase: Boolean(

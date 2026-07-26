@@ -26,7 +26,7 @@ import {
 } from './publish-ride.types.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
 import { assertDriverCanPublish } from './driver-eligibility.service.js';
-import { getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { DEFAULT_BALTIC_PRICING_CONFIG, getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
 import { calculatePrice, PricingConfigData } from '../pricing/pricing.calculator.js';
 import { createNotification } from '../notification/notification.service.js';
 import { googleService } from '../maps/google.service.js';
@@ -47,8 +47,14 @@ const CITY_POINT_RADIUS_METERS = Number(process.env.PUBLISH_CITY_POINT_RADIUS_ME
 const STOPOVER_POINT_RADIUS_METERS = Number(process.env.PUBLISH_STOPOVER_POINT_RADIUS_METERS || '5000');
 const ROUTE_POINT_RADIUS_METERS = Number(process.env.PUBLISH_ROUTE_POINT_RADIUS_METERS || '10000');
 const BALTIC_COUNTRY_CODES = new Set(['EE', 'LV', 'LT']);
+const EUROPE_COUNTRY_CODES = new Set([
+  'AL', 'AD', 'AT', 'BY', 'BE', 'BA', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
+  'DE', 'GR', 'HU', 'IS', 'IE', 'IT', 'XK', 'LV', 'LI', 'LT', 'LU', 'MT', 'MD', 'MC',
+  'ME', 'NL', 'MK', 'NO', 'PL', 'PT', 'RO', 'SM', 'RS', 'SK', 'SI', 'ES', 'SE', 'CH',
+  'UA', 'GB', 'VA',
+]);
 
-const validateBalticPlace = async (placeId: string) => {
+const getPlaceCountryCode = async (placeId: string) => {
   let details: any;
   try {
     details = await googleService.placeDetails(placeId);
@@ -61,7 +67,17 @@ const validateBalticPlace = async (placeId: string) => {
     ?.short_name?.toUpperCase();
 
   if (!countryCode) throw new Error('LOCATION_COUNTRY_UNVERIFIED');
+  return countryCode;
+};
+
+const validateBalticPlace = async (placeId: string) => {
+  const countryCode = await getPlaceCountryCode(placeId);
   if (!BALTIC_COUNTRY_CODES.has(countryCode)) throw new Error('LOCATION_OUTSIDE_BALTICS');
+};
+
+const validateEuropeanDestinationPlace = async (placeId: string) => {
+  const countryCode = await getPlaceCountryCode(placeId);
+  if (!EUROPE_COUNTRY_CODES.has(countryCode)) throw new Error('DESTINATION_OUTSIDE_EUROPE');
 };
 
 // ============================================================
@@ -280,7 +296,7 @@ export const updateDestination = async (
   driverId: string,
   input: UpdateDestinationInput,
 ): Promise<DraftRide> => {
-  await validateBalticPlace(input.destinationPlaceId);
+  await validateEuropeanDestinationPlace(input.destinationPlaceId);
 
   const draft = await getDraft(driverId);
   draft.destinationPlaceId = input.destinationPlaceId;
@@ -1047,16 +1063,7 @@ export const updateCapacity = async (
 //  STEP 11: GET RECOMMENDED PRICE
 // ============================================================
 
-const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = {
-  id: 'default-baltic-distance-pricing',
-  regionCode: 'BALTIC',
-  currency: 'EUR',
-  minRatePerKm: 0.06,
-  recommendedRatePerKm: 0.08,
-  maxRatePerKm: 0.12,
-  minimumSeatPrice: 3,
-  roundingStrategy: 'NEAREST_EURO',
-};
+const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = DEFAULT_BALTIC_PRICING_CONFIG;
 
 export const getRecommendedPrice = async (
   driverId: string,
@@ -1427,7 +1434,7 @@ export const publishRide = async (driverId: string) => {
 
   await Promise.all([
     validateBalticPlace(draft.originPlaceId),
-    validateBalticPlace(draft.destinationPlaceId),
+    validateEuropeanDestinationPlace(draft.destinationPlaceId),
   ]);
 
     // Re-check every requirement at publish time: a licence can expire or a Connect
@@ -1591,6 +1598,7 @@ export const publishRide = async (driverId: string) => {
                     rideId: newRide.id,
                     distanceKm,
                     selectedPricePerSeat: newRide.basePricePerSeat,
+                    tx,
                 });
                 if (!priceValidation.valid) {
                     throw new Error(`PRICE_OUT_OF_RANGE: ${priceValidation.reason}`);
