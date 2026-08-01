@@ -222,7 +222,8 @@ describe('driver publish eligibility', () => {
     });
 
     describe('bypass flags', () => {
-        it('SKIP_DL_VERIFICATION skips the licence gates but not the bank gate', async () => {
+        // DL verification is the platform's KYC: no environment flag may skip it.
+        it('never skips the licence gates, whatever the environment says', async () => {
             setEnv('SKIP_DL_VERIFICATION', 'true');
             mockPrisma.user.findUnique.mockResolvedValue({
                 ...eligibleDriver,
@@ -233,10 +234,10 @@ describe('driver publish eligibility', () => {
             const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
 
             expect(result.requirements.find((item) => item.key === 'DL_VERIFICATION')).toMatchObject(
-                { satisfied: true, skipped: true },
+                { satisfied: false, skipped: false, reason: 'DRIVER_NOT_VERIFIED' },
             );
             await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
-                'BANK_ACCOUNT_REQUIRED',
+                'DRIVER_NOT_VERIFIED',
             );
         });
 

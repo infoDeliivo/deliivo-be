@@ -57,8 +57,6 @@ export interface PublishEligibility {
  */
 export type EligibilityStage = 'START' | 'PUBLISH';
 
-const skipDlVerification = (): boolean => process.env.SKIP_DL_VERIFICATION === 'true';
-
 /**
  * Bank onboarding is meaningless when payments are bypassed or Connect is mocked, and
  * the E2E suite runs in exactly that configuration.
@@ -133,7 +131,6 @@ export const getDriverPublishEligibility = async (
     driverId: string,
     stage: EligibilityStage = 'PUBLISH',
 ): Promise<PublishEligibility> => {
-    const dlSkipped = skipDlVerification();
     const bankSkipped = skipBankCheck();
     const vehicleVerificationSkipped = skipVehicleVerification();
 
@@ -156,7 +153,7 @@ export const getDriverPublishEligibility = async (
     // the entered profile — that is withheld as IDENTITY_MISMATCH and must be reported as
     // its own reason, not as a generic "not verified".
     const identityMismatch =
-        !dlSkipped && !driver?.dlVerified
+        !driver?.dlVerified
             ? Boolean(
                   await prisma.dlVerification.findFirst({
                       where: { userId: driverId, status: 'IDENTITY_MISMATCH' },
@@ -180,19 +177,18 @@ export const getDriverPublishEligibility = async (
     }
 
     requirements.push(
+        // KYC gates — never skippable, whatever the environment.
         requirement(
             'DL_VERIFICATION',
             Boolean(driver?.dlVerified),
             'DRIVER_NOT_VERIFIED',
             '/api/v1/dl-verification',
-            dlSkipped,
         ),
         requirement(
             'IDENTITY_MATCH',
             !identityMismatch,
             'DL_IDENTITY_MISMATCH',
             '/api/v1/dl-verification',
-            dlSkipped,
         ),
         requirement(
             'BANK_ACCOUNT',
