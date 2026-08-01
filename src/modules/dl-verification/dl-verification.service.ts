@@ -68,7 +68,7 @@ export const createVeriffSession = async (
     idNumber,
     fullName,
     documentNumber,
-    documentCountry = 'IN',
+    documentCountry,
     documentValidFrom,
     documentValidUntil,
     fullAddress,
@@ -132,13 +132,20 @@ export const createVeriffSession = async (
         ...(resolvedEmail && { email: resolvedEmail }),
         ...(fullName && { fullName }),
       },
-      document: {
-        type: 'DRIVERS_LICENSE',
-        country: documentCountry,
-        ...(documentNumber && { number: documentNumber }),
-        ...(documentValidFrom && { validFrom: documentValidFrom }),
-        ...(documentValidUntil && { validUntil: documentValidUntil }),
-      },
+      // Only pinned when the caller actually knows the document. Veriff has nothing to
+      // render for a type/country combination the integration does not support, and the
+      // flow then loads as a blank frame rather than reporting an error — so a guessed
+      // country is worse than none. Left out, the driver picks their own document, which
+      // is also the only thing that works for a licence issued anywhere.
+      ...((documentCountry || documentNumber || documentValidFrom || documentValidUntil) && {
+        document: {
+          type: 'DRIVERS_LICENSE',
+          ...(documentCountry && { country: documentCountry }),
+          ...(documentNumber && { number: documentNumber }),
+          ...(documentValidFrom && { validFrom: documentValidFrom }),
+          ...(documentValidUntil && { validUntil: documentValidUntil }),
+        },
+      }),
       ...(fullAddress && {
         address: {
           fullAddress,

@@ -107,7 +107,7 @@ beforeAll(async () => {
   // Ask the server whether the approval gate is on rather than reading the test
   // process env — the flag belongs to the server under test.
   const checklist = await authed(driverToken).get('/publish-ride/eligibility');
-  approvalBypassed = Boolean(requirement(checklist.data, 'VEHICLE_VERIFICATION')?.skipped);
+  approvalBypassed = Boolean(requirement(checklist.data, 'VEHICLE')?.skipped);
 
   ready = Boolean(vehicleId);
 });
@@ -219,7 +219,7 @@ describe('TC-VVQ-004 — rejection tells the driver what to fix', () => {
     expect(rejected.status).toBe(200);
 
     const checklist = await authed(driverToken).get('/publish-ride/eligibility');
-    const check = requirement(checklist.data, 'VEHICLE_VERIFICATION');
+    const check = requirement(checklist.data, 'VEHICLE');
 
     expect(check.satisfied).toBe(false);
     expect(check.reason).toBe('VEHICLE_REJECTED');
@@ -256,7 +256,7 @@ describe('TC-VVQ-005 — a rejected driver can resubmit', () => {
     if (!ready || approvalBypassed) return;
 
     const checklist = await authed(driverToken).get('/publish-ride/eligibility');
-    const check = requirement(checklist.data, 'VEHICLE_VERIFICATION');
+    const check = requirement(checklist.data, 'VEHICLE');
 
     expect(check.reason).toBe('VEHICLE_NOT_VERIFIED');
     expect(check.vehicle).toMatchObject({ verificationStatus: 'PENDING', rejectionReason: null });
@@ -273,7 +273,7 @@ describe('TC-VVQ-006 — approval unblocks the driver', () => {
     expect(res.data.data.verificationStatus).toBe('APPROVED');
 
     const checklist = await authed(driverToken).get('/publish-ride/eligibility');
-    const check = requirement(checklist.data, 'VEHICLE_VERIFICATION');
+    const check = requirement(checklist.data, 'VEHICLE');
 
     expect(check.satisfied).toBe(true);
     expect(check.vehicle).toBeUndefined();
