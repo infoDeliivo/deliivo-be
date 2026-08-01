@@ -29,6 +29,27 @@ type ConnectPrefillUser = {
     dob: Date | null;
 };
 
+type StripeErrorDetail = { type: string; code?: string; param?: string; message: string };
+
+/**
+ * Stripe's rejection message names the offending field ("individual[dob][year]: Must be at least 13
+ * years of age"). Swallowing it behind a bare 500 leaves nothing to act on in the client or in a
+ * staging log, so it is echoed back — these messages are written for the account holder to read.
+ */
+const describeStripeError = (error: unknown): StripeErrorDetail | undefined => {
+    if (typeof error !== 'object' || error === null) return undefined;
+
+    const candidate = error as { type?: unknown; code?: unknown; param?: unknown; message?: unknown };
+    if (typeof candidate.type !== 'string' || !candidate.type.startsWith('Stripe')) return undefined;
+
+    return {
+        type: candidate.type,
+        code: typeof candidate.code === 'string' ? candidate.code : undefined,
+        param: typeof candidate.param === 'string' ? candidate.param : undefined,
+        message: typeof candidate.message === 'string' ? candidate.message : 'Stripe request failed',
+    };
+};
+
 const toPrefill = (user: ConnectPrefillUser | null): ConnectAccountPrefill => ({
     firstName: user?.firstName ?? null,
     lastName: user?.lastName ?? null,
@@ -82,6 +103,7 @@ export const connectOnboard = async (req: AuthRequest, res: Response) => {
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to create Stripe Connect onboarding link',
+            error: describeStripeError(error),
         });
     }
 };
@@ -141,6 +163,7 @@ export const connectAccountSession = async (req: AuthRequest, res: Response) => 
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to create Stripe Connect account session',
+            error: describeStripeError(error),
         });
     }
 };

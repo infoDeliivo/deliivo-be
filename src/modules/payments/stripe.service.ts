@@ -61,6 +61,49 @@ const buildBusinessProfile = (): Stripe.AccountCreateParams.BusinessProfile => (
     url: process.env.APP_BASE_URL || undefined,
 });
 
+/** Stripe rejects an account holder younger than this outright. */
+const STRIPE_MINIMUM_AGE_YEARS = 13;
+
+const cleanText = (value: string | null | undefined): string | undefined => {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : undefined;
+};
+
+/** Stripe validates the address shape; a malformed one fails account creation. */
+const cleanEmail = (value: string | null | undefined): string | undefined => {
+    const email = cleanText(value);
+    return email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : undefined;
+};
+
+/** Stripe requires E.164. Profiles hold whatever the signup form accepted, so verify, don't assume. */
+const cleanPhone = (value: string | null | undefined): string | undefined => {
+    const phone = cleanText(value)?.replace(/[\s()-]/g, '');
+    return phone && /^\+[1-9]\d{6,14}$/.test(phone) ? phone : undefined;
+};
+
+/**
+ * Prefill is a convenience — Stripe collects during onboarding whatever we leave out. So a profile
+ * value Stripe would reject has to be dropped, not forwarded: forwarding it fails accounts.create
+ * and the driver cannot open payout setup at all. A dob under Stripe's minimum age (a mistyped
+ * birth year, say) used to do exactly that.
+ */
+const cleanDob = (
+    value: Date | null | undefined
+): { day: number; month: number; year: number } | undefined => {
+    if (!value) return undefined;
+
+    const dob = new Date(value);
+    if (Number.isNaN(dob.getTime())) return undefined;
+
+    const minimumAgeCutoff = new Date();
+    minimumAgeCutoff.setUTCFullYear(minimumAgeCutoff.getUTCFullYear() - STRIPE_MINIMUM_AGE_YEARS);
+    // Compare on the date alone: a dob stored at midnight UTC is otherwise "younger" than a cutoff
+    // carrying the current time of day, which would drop a driver who turns 13 today.
+    if (dob.setUTCHours(0, 0, 0, 0) > minimumAgeCutoff.setUTCHours(0, 0, 0, 0)) return undefined;
+
+    return { day: dob.getUTCDate(), month: dob.getUTCMonth() + 1, year: dob.getUTCFullYear() };
+};
+
 /**
  * Accounts we create are controller-based (`requirement_collection: 'application'`) so onboarding
  * can render fully white-label inside our own UI. Accounts created before that switch are Express
@@ -71,7 +114,7 @@ const createConnectedAccount = async (
     prefill: ConnectAccountPrefill
 ): Promise<string> => {
     const stripe = getStripeClient();
-    const dob = prefill.dob ? new Date(prefill.dob) : null;
+    const email = cleanEmail(prefill.email);
 
     const account = await stripe.accounts.create({
         country: process.env.STRIPE_CONNECT_COUNTRY || undefined,
@@ -86,20 +129,13 @@ const createConnectedAccount = async (
         capabilities: {
             transfers: { requested: true },
         },
-        email: prefill.email ?? undefined,
+        email,
         individual: {
-            first_name: prefill.firstName ?? undefined,
-            last_name: prefill.lastName ?? undefined,
-            email: prefill.email ?? undefined,
-            phone: prefill.phone ?? undefined,
-            dob:
-                dob && !Number.isNaN(dob.getTime())
-                    ? {
-                          day: dob.getUTCDate(),
-                          month: dob.getUTCMonth() + 1,
-                          year: dob.getUTCFullYear(),
-                      }
-                    : undefined,
+            first_name: cleanText(prefill.firstName),
+            last_name: cleanText(prefill.lastName),
+            email,
+            phone: cleanPhone(prefill.phone),
+            dob: cleanDob(prefill.dob),
         },
         metadata: { userId },
     });

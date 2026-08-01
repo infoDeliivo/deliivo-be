@@ -91,6 +91,78 @@ describe('connected account creation', () => {
         expect(mockAccountsCreate.mock.calls[0][0].individual.dob).toBeUndefined();
     });
 
+    /**
+     * Prefill is a convenience: Stripe collects anything we leave out during onboarding. A profile
+     * value Stripe rejects must therefore be dropped, never forwarded — forwarding it fails
+     * accounts.create and the driver cannot reach payout setup at all.
+     */
+    describe('prefill sanitising', () => {
+        const individualOf = () => mockAccountsCreate.mock.calls[0][0].individual;
+
+        it('drops a dob below Stripe’s minimum age instead of failing the call', async () => {
+            await createConnectAccountSession('user-1', null, {
+                ...prefill,
+                dob: new Date('2018-07-11T00:00:00.000Z'),
+            });
+
+            expect(mockAccountsCreate).toHaveBeenCalledTimes(1);
+            expect(individualOf().dob).toBeUndefined();
+            expect(individualOf().first_name).toBe('John');
+        });
+
+        it('drops a dob in the future', async () => {
+            const future = new Date(Date.now() + 86_400_000);
+
+            await createConnectAccountSession('user-1', null, { ...prefill, dob: future });
+
+            expect(individualOf().dob).toBeUndefined();
+        });
+
+        it('keeps a dob exactly on the minimum age boundary', async () => {
+            const thirteenToday = new Date();
+            thirteenToday.setUTCFullYear(thirteenToday.getUTCFullYear() - 13);
+
+            await createConnectAccountSession('user-1', null, { ...prefill, dob: thirteenToday });
+
+            expect(individualOf().dob).toEqual({
+                day: thirteenToday.getUTCDate(),
+                month: thirteenToday.getUTCMonth() + 1,
+                year: thirteenToday.getUTCFullYear(),
+            });
+        });
+
+        it('drops a phone that is not in E.164 form', async () => {
+            await createConnectAccountSession('user-1', null, { ...prefill, phone: '9675123456' });
+
+            expect(individualOf().phone).toBeUndefined();
+        });
+
+        it('normalises spacing in an otherwise valid phone', async () => {
+            await createConnectAccountSession('user-1', null, {
+                ...prefill,
+                phone: '+44 1234 567 890',
+            });
+
+            expect(individualOf().phone).toBe('+441234567890');
+        });
+
+        it('drops blank names and a malformed email', async () => {
+            await createConnectAccountSession('user-1', null, {
+                firstName: '   ',
+                lastName: 'Smith',
+                email: 'not-an-email',
+                phone: null,
+                dob: null,
+            });
+
+            const params = mockAccountsCreate.mock.calls[0][0];
+            expect(params.individual.first_name).toBeUndefined();
+            expect(params.individual.last_name).toBe('Smith');
+            expect(params.individual.email).toBeUndefined();
+            expect(params.email).toBeUndefined();
+        });
+    });
+
     it('lets env override the industry and product description', async () => {
         process.env.STRIPE_CONNECT_MCC = '4789';
         process.env.STRIPE_CONNECT_PRODUCT_DESCRIPTION = 'Carpooling';

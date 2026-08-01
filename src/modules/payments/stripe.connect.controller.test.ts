@@ -278,4 +278,30 @@ describe('connectAccountSession — embedded onboarding', () => {
             message: 'Failed to create Stripe Connect account session',
         });
     });
+
+    it('echoes which field Stripe rejected instead of a bare 500', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({
+            stripeAccountId: null,
+            firstName: 'John',
+            lastName: 'Smith',
+            email: 'john@example.com',
+            phone: null,
+            dob: new Date('2018-07-11T00:00:00.000Z'),
+        });
+        const stripeError = Object.assign(new Error('Must be at least 13 years of age to use Stripe'), {
+            type: 'StripeInvalidRequestError',
+            param: 'individual[dob][year]',
+        });
+        mockCreateConnectAccountSession.mockRejectedValue(stripeError);
+
+        const { req, res } = makeReqRes();
+        await connectAccountSession(req, res);
+
+        expect(mockSendError.mock.calls[0][1].error).toEqual({
+            type: 'StripeInvalidRequestError',
+            code: undefined,
+            param: 'individual[dob][year]',
+            message: 'Must be at least 13 years of age to use Stripe',
+        });
+    });
 });
