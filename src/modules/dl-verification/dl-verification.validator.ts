@@ -3,9 +3,6 @@ import { z } from 'zod';
 // ISO date format validator (YYYY-MM-DD)
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format');
 
-// Gender enum
-const genderSchema = z.enum(['M', 'MALE', 'F', 'FEMALE']);
-
 // Consent type enum
 const consentTypeSchema = z.enum(['ine', 'bipa', 'aadhaar', 'general', 'dvs']);
 
@@ -16,15 +13,16 @@ const consentSchema = z.object({
 });
 
 export const createSessionSchema = z.object({
-  // Required fields
+  // Required: this is KYC, so the caller states the identity being verified.
+  // createVeriffSession() then rejects anything that is not the caller's own profile name.
   firstName: z.string().min(1, 'First name is required').max(100),
   lastName: z.string().min(1, 'Last name is required').max(100),
 
-  // Optional person fields
+  // Optional person fields. Date of birth and gender are not accepted here — they are
+  // taken from the profile, which is what the decision webhook enforces the document
+  // against, so letting the caller supply them would only invite a mismatch.
   email: z.string().email('Invalid email format').optional(),
   phoneNumber: z.string().min(1).max(20).optional(),
-  dateOfBirth: isoDateSchema.optional(),
-  gender: genderSchema.optional(),
   idNumber: z.string().min(1).max(50).optional(),
   fullName: z.string().min(1).max(200).optional(),
 
@@ -38,17 +36,27 @@ export const createSessionSchema = z.object({
   fullAddress: z.string().min(1).max(500).optional(),
 
   // Optional session configuration
-  // Veriff rejects non-HTTPS return URLs (error 1302), so fail fast here
-  callback: z
-    .string()
-    .url('Invalid callback URL')
-    .refine((value) => value.startsWith('https://'), {
-      message: 'Callback URL must use HTTPS',
-    })
-    .optional(),
+  // Veriff rejects non-HTTPS return URLs (error 1302), but a non-HTTPS callback is
+  // recoverable: resolveCallbackUrl() in the service drops it and falls back to
+  // VERIFF_CALLBACK_URL. Rejecting it here would 400 a request we can still serve.
+  callback: z.string().url('Invalid callback URL').optional(),
   endUserId: z.string().uuid('Invalid UUID format').optional(),
   consents: z.array(consentSchema).optional(),
   tag: z.string().min(1).max(64, 'Tag must be max 64 characters').optional(),
 });
 
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
+
+// Attaches a session the browser SDK created to the caller. `sessionId` is Veriff's
+// own verification id — the same value the webhook arrives with.
+export const registerSessionSchema = z.object({
+  sessionId: z.string().min(1, 'Session ID is required').max(100),
+  sessionUrl: z
+    .string()
+    .url('Invalid session URL')
+    .refine((value) => value.startsWith('https://'), {
+      message: 'Session URL must use HTTPS',
+    }),
+});
+
+export type RegisterSessionInput = z.infer<typeof registerSessionSchema>;

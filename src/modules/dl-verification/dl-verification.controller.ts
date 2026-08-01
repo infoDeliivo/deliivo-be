@@ -4,10 +4,12 @@ import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
 import { logError, logWarn, logDebug } from '../../utils/logger.js';
 import {
   createVeriffSession,
+  registerVeriffSession,
   handleWebhookDecision,
   validateWebhookSignature,
   getVerificationStatus,
 } from './dl-verification.service.js';
+import type { RegisterSessionInput } from './dl-verification.validator.js';
 
 // ─── POST / — Create Veriff session (protected) ───────────────────
 export const createSession = async (req: Request, res: Response) => {
@@ -19,8 +21,6 @@ export const createSession = async (req: Request, res: Response) => {
       lastName,
       email,
       phoneNumber,
-      dateOfBirth,
-      gender,
       idNumber,
       fullName,
       documentNumber,
@@ -40,8 +40,6 @@ export const createSession = async (req: Request, res: Response) => {
       lastName,
       email,
       phoneNumber,
-      dateOfBirth,
-      gender,
       idNumber,
       fullName,
       documentNumber,
@@ -56,8 +54,16 @@ export const createSession = async (req: Request, res: Response) => {
     });
 
     if (!result.success) {
-      const statusCode =
-        result.reason === 'ALREADY_VERIFIED' ? HttpStatus.CONFLICT : HttpStatus.INTERNAL_ERROR;
+      // PROFILE_INCOMPLETE and NAME_DOES_NOT_MATCH_PROFILE are the caller's to fix, so
+      // they are 400s rather than a generic failure.
+      const badRequest =
+        result.reason === 'PROFILE_INCOMPLETE' ||
+        result.reason === 'NAME_DOES_NOT_MATCH_PROFILE';
+      const statusCode = badRequest
+        ? HttpStatus.BAD_REQUEST
+        : result.reason === 'ALREADY_VERIFIED'
+          ? HttpStatus.CONFLICT
+          : HttpStatus.INTERNAL_ERROR;
       return sendError(res, {
         message: result.reason || 'Failed to create Veriff session',
         status: statusCode,
@@ -75,11 +81,59 @@ export const createSession = async (req: Request, res: Response) => {
   }
 };
 
+// ─── POST /register — Attach a browser-created session (protected) ─
+export const registerSession = async (req: Request, res: Response) => {
+  try {
+    const authReq = req as AuthRequest;
+    const userId = authReq.user.id;
+    const { sessionId, sessionUrl } = req.body as RegisterSessionInput;
+
+    const result = await registerVeriffSession({ userId, sessionId, sessionUrl });
+
+    if (!result.success) {
+      const conflict =
+        result.reason === 'ALREADY_VERIFIED' ||
+        result.reason === 'SESSION_OWNED_BY_ANOTHER_USER';
+      return sendError(res, {
+        message: result.reason || 'Failed to register Veriff session',
+        status: conflict ? HttpStatus.CONFLICT : HttpStatus.INTERNAL_ERROR,
+      });
+    }
+
+    return sendSuccess(res, {
+      status: HttpStatus.CREATED,
+      message: 'Veriff session registered successfully',
+      data: result.data,
+    });
+  } catch (err: unknown) {
+    logError('DL verification registerSession error', err);
+    return sendError(res, {
+      message: err instanceof Error ? err.message : 'Server error',
+    });
+  }
+};
+
+// Veriff signs the bytes it sent, so the signature can only be checked against the
+// raw body. This route is mounted with express.raw() before express.json(); a body
+// that is not a Buffer means that ordering was broken and the digest would be
+// computed over a re-serialisation instead.
+const getRawBody = (req: Request): Buffer | null =>
+  Buffer.isBuffer(req.body) ? req.body : null;
+
+const parseWebhookBody = (raw: Buffer): unknown => {
+  try {
+    return JSON.parse(raw.toString('utf8'));
+  } catch {
+    return null;
+  }
+};
+
 // ─── POST /webhook — Handle Veriff decision webhook (public) ──────
 export const webhook = async (req: Request, res: Response) => {
   try {
     // Validate HMAC signature
-    const signature = req.headers['x-hmac-signature'] as string;
+    const headerSignature = req.headers['x-hmac-signature'];
+    const signature = Array.isArray(headerSignature) ? headerSignature[0] : headerSignature;
 
     if (!signature) {
       return sendError(res, {
@@ -88,7 +142,16 @@ export const webhook = async (req: Request, res: Response) => {
       });
     }
 
-    const rawBody = JSON.stringify(req.body);
+    const rawBody = getRawBody(req);
+
+    if (!rawBody) {
+      logError('Veriff webhook: raw body unavailable — check the express.raw() mount order');
+      return sendError(res, {
+        message: 'Invalid webhook payload',
+        status: HttpStatus.BAD_REQUEST,
+      });
+    }
+
     const isValid = validateWebhookSignature(rawBody, signature);
 
     if (!isValid) {
@@ -99,7 +162,14 @@ export const webhook = async (req: Request, res: Response) => {
       });
     }
 
-    const result = await handleWebhookDecision(req.body);
+    const body = parseWebhookBody(rawBody);
+
+    if (body === null || typeof body !== 'object') {
+      logWarn('Veriff webhook: signed payload is not valid JSON');
+      return res.status(200).json({ received: true, warning: 'INVALID_PAYLOAD' });
+    }
+
+    const result = await handleWebhookDecision(body);
 
     if (!result.success) {
       logWarn('Veriff webhook processing failed', { reason: result.reason });

@@ -16,7 +16,6 @@ import {
 } from './driver-eligibility.service.js';
 
 const eligibleDriver = {
-    tosAcceptedAt: new Date(),
     dlVerified: true,
     stripeOnboardingComplete: true,
 };
@@ -56,26 +55,18 @@ describe('driver publish eligibility', () => {
     });
 
     it('reports a fully onboarded driver as eligible', async () => {
-        const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
+        const result = await getDriverPublishEligibility('driver-1');
 
         expect(result.eligible).toBe(true);
         expect(result.requirements.every((item) => item.satisfied)).toBe(true);
-        await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).resolves.toBeUndefined();
+        await expect(assertDriverCanPublish('driver-1')).resolves.toBeUndefined();
     });
 
     describe('individual gates', () => {
-        it('blocks when Terms of Service are not accepted', async () => {
-            mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, tosAcceptedAt: null });
-
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
-                'TOS_NOT_ACCEPTED',
-            );
-        });
-
         it('blocks when the driving licence is not verified', async () => {
             mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, dlVerified: false });
 
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow(
                 'DRIVER_NOT_VERIFIED',
             );
         });
@@ -86,7 +77,7 @@ describe('driver publish eligibility', () => {
                 stripeOnboardingComplete: false,
             });
 
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow(
                 'BANK_ACCOUNT_REQUIRED',
             );
         });
@@ -94,7 +85,7 @@ describe('driver publish eligibility', () => {
         it('blocks when the driver has no vehicle', async () => {
             mockPrisma.vehicle.findFirst.mockResolvedValue(null);
 
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow(
                 'VEHICLE_REQUIRED',
             );
         });
@@ -105,7 +96,7 @@ describe('driver publish eligibility', () => {
                 verificationStatus: 'PENDING',
             });
 
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow(
                 'VEHICLE_NOT_VERIFIED',
             );
         });
@@ -119,7 +110,7 @@ describe('driver publish eligibility', () => {
                 rejectionReason: 'Registry document is unreadable',
             });
 
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow(
                 'VEHICLE_REJECTED',
             );
         });
@@ -131,13 +122,31 @@ describe('driver publish eligibility', () => {
                 rejectionReason: 'Registry document is unreadable',
             });
 
-            const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
-            const check = result.requirements.find((item) => item.key === 'VEHICLE_VERIFICATION');
+            const result = await getDriverPublishEligibility('driver-1');
+            const check = result.requirements.find((item) => item.key === 'VEHICLE');
 
             expect(check?.reason).toBe('VEHICLE_REJECTED');
             expect(check?.vehicle).toEqual({
                 verificationStatus: 'REJECTED',
                 rejectionReason: 'Registry document is unreadable',
+            });
+        });
+
+        it('reports an added-but-unreviewed vehicle once, not as missing as well', async () => {
+            mockPrisma.vehicle.findFirst.mockResolvedValue({
+                id: 'vehicle-1',
+                verificationStatus: 'PENDING',
+                rejectionReason: null,
+            });
+
+            const result = await getDriverPublishEligibility('driver-1');
+            const vehicleChecks = result.requirements.filter((item) => item.key === 'VEHICLE');
+
+            expect(vehicleChecks).toHaveLength(1);
+            expect(vehicleChecks[0]).toMatchObject({
+                satisfied: false,
+                reason: 'VEHICLE_NOT_VERIFIED',
+                actionUrl: '/api/v1/vehicles',
             });
         });
 
@@ -148,16 +157,16 @@ describe('driver publish eligibility', () => {
                 rejectionReason: null,
             });
 
-            const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
-            const check = result.requirements.find((item) => item.key === 'VEHICLE_VERIFICATION');
+            const result = await getDriverPublishEligibility('driver-1');
+            const check = result.requirements.find((item) => item.key === 'VEHICLE');
 
             expect(check?.reason).toBe('VEHICLE_NOT_VERIFIED');
             expect(check?.vehicle).toEqual({ verificationStatus: 'PENDING', rejectionReason: null });
         });
 
         it('attaches no review context once the vehicle is approved', async () => {
-            const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
-            const check = result.requirements.find((item) => item.key === 'VEHICLE_VERIFICATION');
+            const result = await getDriverPublishEligibility('driver-1');
+            const check = result.requirements.find((item) => item.key === 'VEHICLE');
 
             expect(check?.satisfied).toBe(true);
             expect(check?.vehicle).toBeUndefined();
@@ -171,8 +180,8 @@ describe('driver publish eligibility', () => {
                 rejectionReason: 'Registry document is unreadable',
             });
 
-            const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
-            const check = result.requirements.find((item) => item.key === 'VEHICLE_VERIFICATION');
+            const result = await getDriverPublishEligibility('driver-1');
+            const check = result.requirements.find((item) => item.key === 'VEHICLE');
 
             expect(check?.skipped).toBe(true);
             expect(check?.satisfied).toBe(true);
@@ -181,48 +190,37 @@ describe('driver publish eligibility', () => {
     });
 
     describe('identity mismatch', () => {
-        it('reports DL_IDENTITY_MISMATCH rather than a plain unverified licence', async () => {
+        // The mismatch is why the licence gate failed, not a gate of its own: the driver
+        // fixes it in the same place, so it rides on DL_VERIFICATION as its reason.
+        it('reports DL_IDENTITY_MISMATCH as the licence gate reason', async () => {
             mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, dlVerified: false });
             mockPrisma.dlVerification.findFirst.mockResolvedValue({ id: 'dlv-1' });
 
-            const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
+            const result = await getDriverPublishEligibility('driver-1');
 
-            expect(reasonFor(result.requirements, 'IDENTITY_MATCH')).toBe('DL_IDENTITY_MISMATCH');
+            expect(reasonFor(result.requirements, 'DL_VERIFICATION')).toBe('DL_IDENTITY_MISMATCH');
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow('DL_IDENTITY_MISMATCH');
+        });
+
+        it('falls back to DRIVER_NOT_VERIFIED when nothing mismatched', async () => {
+            mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, dlVerified: false });
+            mockPrisma.dlVerification.findFirst.mockResolvedValue(null);
+
+            const result = await getDriverPublishEligibility('driver-1');
+
             expect(reasonFor(result.requirements, 'DL_VERIFICATION')).toBe('DRIVER_NOT_VERIFIED');
         });
 
         it('does not query for a mismatch once the licence is verified', async () => {
-            await getDriverPublishEligibility('driver-1', 'PUBLISH');
+            await getDriverPublishEligibility('driver-1');
 
             expect(mockPrisma.dlVerification.findFirst).not.toHaveBeenCalled();
         });
     });
 
-    describe('stages', () => {
-        it('omits the ToS gate at the start of the flow but enforces it at publish', async () => {
-            mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, tosAcceptedAt: null });
-
-            const start = await getDriverPublishEligibility('driver-1', 'START');
-            expect(start.eligible).toBe(true);
-            expect(start.requirements.some((item) => item.key === 'TOS')).toBe(false);
-            await expect(assertDriverCanPublish('driver-1', 'START')).resolves.toBeUndefined();
-
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
-                'TOS_NOT_ACCEPTED',
-            );
-        });
-
-        it('evaluates every non-ToS gate identically in both stages', async () => {
-            mockPrisma.vehicle.findFirst.mockResolvedValue(null);
-
-            await expect(assertDriverCanPublish('driver-1', 'START')).rejects.toThrow(
-                'VEHICLE_REQUIRED',
-            );
-        });
-    });
-
     describe('bypass flags', () => {
-        it('SKIP_DL_VERIFICATION skips the licence gates but not the bank gate', async () => {
+        // DL verification is the platform's KYC: no environment flag may skip it.
+        it('never skips the licence gates, whatever the environment says', async () => {
             setEnv('SKIP_DL_VERIFICATION', 'true');
             mockPrisma.user.findUnique.mockResolvedValue({
                 ...eligibleDriver,
@@ -230,13 +228,13 @@ describe('driver publish eligibility', () => {
                 stripeOnboardingComplete: false,
             });
 
-            const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
+            const result = await getDriverPublishEligibility('driver-1');
 
             expect(result.requirements.find((item) => item.key === 'DL_VERIFICATION')).toMatchObject(
-                { satisfied: true, skipped: true },
+                { satisfied: false, skipped: false, reason: 'DRIVER_NOT_VERIFIED' },
             );
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
-                'BANK_ACCOUNT_REQUIRED',
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow(
+                'DRIVER_NOT_VERIFIED',
             );
         });
 
@@ -248,13 +246,13 @@ describe('driver publish eligibility', () => {
                 stripeOnboardingComplete: false,
             });
 
-            const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
+            const result = await getDriverPublishEligibility('driver-1');
 
             expect(result.requirements.find((item) => item.key === 'BANK_ACCOUNT')).toMatchObject({
                 satisfied: true,
                 skipped: true,
             });
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow(
                 'DRIVER_NOT_VERIFIED',
             );
         });
@@ -266,7 +264,7 @@ describe('driver publish eligibility', () => {
                 stripeOnboardingComplete: false,
             });
 
-            const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
+            const result = await getDriverPublishEligibility('driver-1');
 
             expect(result.eligible).toBe(true);
         });
@@ -278,35 +276,45 @@ describe('driver publish eligibility', () => {
                 verificationStatus: 'PENDING',
             });
 
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).resolves.toBeUndefined();
+            await expect(assertDriverCanPublish('driver-1')).resolves.toBeUndefined();
 
             mockPrisma.vehicle.findFirst.mockResolvedValue(null);
-            await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow(
                 'VEHICLE_REQUIRED',
             );
         });
     });
 
+    // Three gates, one per task the driver has left. Anything finer is a reason code.
+    it('reports exactly the licence, payout and vehicle gates', async () => {
+        const result = await getDriverPublishEligibility('driver-1');
+
+        expect(result.requirements.map((item) => item.key)).toEqual([
+            'DL_VERIFICATION',
+            'BANK_ACCOUNT',
+            'VEHICLE',
+        ]);
+    });
+
     it('reports the first unmet requirement when several fail at once', async () => {
         mockPrisma.user.findUnique.mockResolvedValue({
-            tosAcceptedAt: null,
             dlVerified: false,
             stripeOnboardingComplete: false,
         });
         mockPrisma.vehicle.findFirst.mockResolvedValue(null);
 
-        await expect(assertDriverCanPublish('driver-1', 'PUBLISH')).rejects.toThrow(
-            'TOS_NOT_ACCEPTED',
-        );
+        await expect(assertDriverCanPublish('driver-1')).rejects.toThrow('DRIVER_NOT_VERIFIED');
     });
 
     it('treats a missing user as failing every gate rather than throwing', async () => {
         mockPrisma.user.findUnique.mockResolvedValue(null);
         mockPrisma.vehicle.findFirst.mockResolvedValue(null);
 
-        const result = await getDriverPublishEligibility('driver-1', 'PUBLISH');
+        const result = await getDriverPublishEligibility('driver-1');
 
         expect(result.eligible).toBe(false);
-        expect(reasonFor(result.requirements, 'TOS')).toBe('TOS_NOT_ACCEPTED');
+        expect(reasonFor(result.requirements, 'DL_VERIFICATION')).toBe('DRIVER_NOT_VERIFIED');
+        expect(reasonFor(result.requirements, 'BANK_ACCOUNT')).toBe('BANK_ACCOUNT_REQUIRED');
+        expect(reasonFor(result.requirements, 'VEHICLE')).toBe('VEHICLE_REQUIRED');
     });
 });

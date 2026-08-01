@@ -236,9 +236,9 @@ export const createWithOrigin = async (
   input: CreateOriginInput,
 ): Promise<DraftRide> => {
   // Gate the flow at its entry point so a driver is not walked through twelve steps
-  // before learning they cannot publish. ToS is deliberately not required here — it is
-  // accepted at the final publish step.
-  await assertDriverCanPublish(driverId, 'START');
+  // before learning they cannot publish. The same three gates are re-checked at publish,
+  // because a licence or a Connect account can change state while the draft is alive.
+  await assertDriverCanPublish(driverId);
 
   await validateBalticPlace(input.originPlaceId);
 
@@ -1440,7 +1440,7 @@ export const publishRide = async (driverId: string) => {
     // Re-check every requirement at publish time: a licence can expire or a Connect
     // account can be restricted while the draft is alive. Unlike the START stage, ToS is
     // enforced here — it is the consent given when committing the ride.
-    await assertDriverCanPublish(driverId, 'PUBLISH');
+    await assertDriverCanPublish(driverId);
 
     const driver = await prisma.user.findUnique({
         where: { id: driverId },

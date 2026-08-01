@@ -57,6 +57,26 @@ export const namesMatch = (
   return overlap >= 2;
 };
 
+/**
+ * Exact name equality after normalization: same tokens, same order, no extras.
+ * Accent, case and punctuation variance is still tolerated (that is spelling, not
+ * identity), but a reordered name or an extra middle name is a mismatch.
+ * Returns false if either name is missing/empty.
+ */
+export const exactNamesMatch = (
+  enteredName: string | null | undefined,
+  verifiedName: string | null | undefined,
+): boolean => {
+  if (!enteredName || !verifiedName) return false;
+
+  const entered = normalizeName(enteredName);
+  const verified = normalizeName(verifiedName);
+
+  if (entered.length === 0 || verified.length === 0) return false;
+
+  return entered.join(' ') === verified.join(' ');
+};
+
 /** Normalize any accepted DOB form to a `YYYY-MM-DD` string (UTC), or null. */
 const toYmd = (input: DateInput | DobParts): string | null => {
   if (!input) return null;
@@ -94,7 +114,7 @@ export const datesOfBirthMatch = (
 };
 
 /** Normalize a gender value to MALE / FEMALE, or null when not a binary/known value. */
-const normalizeGender = (input: string | null | undefined): 'MALE' | 'FEMALE' | null => {
+export const normalizeGender = (input: string | null | undefined): 'MALE' | 'FEMALE' | null => {
   if (!input) return null;
   const value = input.trim().toUpperCase();
   if (value === 'M' || value === 'MALE') return 'MALE';
@@ -141,4 +161,20 @@ export const matchIdentity = (entered: IdentityFields, verified: IdentityFields)
   const genderMatch = gendersMatch(entered.gender, verified.gender);
   const overall = nameMatch && dobMatch !== false && genderMatch !== false;
   return { nameMatch, dobMatch, genderMatch, overall };
+};
+
+/**
+ * KYC-grade match, used for driving-licence verification: the name must match
+ * exactly and DOB and gender must both be present on both sides and equal. Unlike
+ * `matchIdentity`, a field missing on either side is a mismatch, not "not
+ * comparable" — a KYC gate must never pass on a partial comparison.
+ */
+export const matchIdentityStrict = (
+  entered: IdentityFields,
+  verified: IdentityFields,
+): IdentityMatchResult => {
+  const nameMatch = exactNamesMatch(entered.name, verified.name);
+  const dobMatch = datesOfBirthMatch(entered.dob, verified.dob) === true;
+  const genderMatch = gendersMatch(entered.gender, verified.gender) === true;
+  return { nameMatch, dobMatch, genderMatch, overall: nameMatch && dobMatch && genderMatch };
 };

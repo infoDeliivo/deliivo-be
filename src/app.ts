@@ -21,6 +21,7 @@ import {
   notificationRouter,
   ratingsRouter,
   dlVerificationRouter,
+  dlVerificationWebhookRouter,
   adminRouter,
   rideOperationsRouter,
   bookingOperationsRouter,
