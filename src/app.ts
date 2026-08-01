@@ -59,8 +59,13 @@ app.use(requestContext);
 app.use(rateLimiter);
 
 // ⚠️ IMPORTANT: Webhook route MUST come BEFORE express.json()
-// Stripe needs the raw body for signature verification
-app.use('/api/v1/payments', express.raw({ type: 'application/json' }), paymentsWebhookRouter);
+// Stripe needs the raw body for signature verification.
+// The raw parser is scoped to the webhook path alone: on the whole /api/v1/payments prefix it
+// swallows every payments request body as a Buffer, and express.json() below then skips them
+// because body-parser leaves an already-parsed body alone. That left the JSON connect routes
+// seeing no fields at all.
+app.use('/api/v1/payments/stripe/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/v1/payments', paymentsWebhookRouter);
 
 // Now apply JSON parsing for all other routes
 app.use(express.json({ limit: '50kb' }));
