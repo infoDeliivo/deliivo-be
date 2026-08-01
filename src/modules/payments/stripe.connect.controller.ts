@@ -2,11 +2,20 @@ import { Response } from 'express';
 import { prisma } from '../../config/index.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import {
+    acceptConnectTerms,
+    attachConnectBankAccount,
     createConnectAccountSession,
     createConnectOnboardingLink,
+    ensureConnectedAccount,
     getConnectAccountStatus,
+    getConnectRequirements,
+    updateConnectPersonalDetails,
 } from './stripe.service.js';
-import { ConnectAccountPrefill } from './stripe.types.js';
+import {
+    ConnectAccountPrefill,
+    ConnectPersonalDetails,
+    ConnectRequirements,
+} from './stripe.types.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
 import { logError } from '../../utils/logger.js';
 
@@ -163,6 +172,132 @@ export const connectAccountSession = async (req: AuthRequest, res: Response) => 
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to create Stripe Connect account session',
+            error: describeStripeError(error),
+        });
+    }
+};
+
+/* ================= CUSTOM ONBOARDING ================= */
+/**
+ * The driver-facing onboarding is rendered by our own UI, so these three endpoints replace the
+ * Stripe-hosted screens: the client asks what is outstanding, files the identity details, attaches
+ * a tokenised bank account and records terms acceptance. Only possible because accounts are
+ * controller-based (`requirement_collection: 'application'`) — see stripe.service.ts.
+ */
+const resolveAccountId = async (userId: string): Promise<string> => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: CONNECT_PREFILL_SELECT,
+    });
+
+    const { accountId, created } = await ensureConnectedAccount(
+        userId,
+        user?.stripeAccountId ?? null,
+        toPrefill(user)
+    );
+
+    if (created) {
+        await prisma.user.update({ where: { id: userId }, data: { stripeAccountId: accountId } });
+    }
+
+    return accountId;
+};
+
+/**
+ * Marks onboarding complete the moment Stripe says the account can take charges, mirroring
+ * connectStatus so the two endpoints cannot disagree about a driver's state.
+ */
+const syncOnboardingComplete = async (userId: string, requirements: ConnectRequirements) => {
+    if (!requirements.detailsSubmitted || !requirements.chargesEnabled) return;
+
+    await prisma.user.updateMany({
+        where: { id: userId, stripeOnboardingComplete: false },
+        data: { stripeOnboardingComplete: true },
+    });
+};
+
+export const connectRequirements = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user.id;
+        const accountId = await resolveAccountId(userId);
+        const requirements = await getConnectRequirements(accountId);
+        await syncOnboardingComplete(userId, requirements);
+
+        return sendSuccess(res, { message: 'Connect requirements fetched', data: requirements });
+    } catch (error) {
+        logError('[STRIPE_CONNECT] requirements failed', error, { userId: req.user?.id });
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to fetch Stripe Connect requirements',
+            error: describeStripeError(error),
+        });
+    }
+};
+
+export const connectUpdateDetails = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user.id;
+        const details = req.body as ConnectPersonalDetails;
+        const accountId = await resolveAccountId(userId);
+        const requirements = await updateConnectPersonalDetails(accountId, details);
+        await syncOnboardingComplete(userId, requirements);
+
+        return sendSuccess(res, { message: 'Connect details saved', data: requirements });
+    } catch (error) {
+        logError('[STRIPE_CONNECT] details update failed', error, { userId: req.user?.id });
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to save Stripe Connect details',
+            error: describeStripeError(error),
+        });
+    }
+};
+
+export const connectBankAccount = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user.id;
+        const { token } = req.body as { token: string };
+        const accountId = await resolveAccountId(userId);
+        const requirements = await attachConnectBankAccount(accountId, token);
+        await syncOnboardingComplete(userId, requirements);
+
+        return sendSuccess(res, { message: 'Bank account added', data: requirements });
+    } catch (error) {
+        logError('[STRIPE_CONNECT] bank account failed', error, { userId: req.user?.id });
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to add bank account',
+            error: describeStripeError(error),
+        });
+    }
+};
+
+export const connectAcceptTerms = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user.id;
+        // Stripe stores the IP the driver accepted from as evidence; a proxy address would make
+        // that record worthless, so trust proxy must stay configured for req.ip to be the client.
+        const ip = req.ip;
+        if (!ip) {
+            return sendError(res, {
+                status: HttpStatus.BAD_REQUEST,
+                message: 'Could not determine your IP address to record acceptance',
+            });
+        }
+
+        const accountId = await resolveAccountId(userId);
+        const requirements = await acceptConnectTerms(accountId, {
+            ip,
+            userAgent: req.get('user-agent') ?? null,
+        });
+        await syncOnboardingComplete(userId, requirements);
+
+        return sendSuccess(res, { message: 'Terms acceptance recorded', data: requirements });
+    } catch (error) {
+        logError('[STRIPE_CONNECT] terms acceptance failed', error, { userId: req.user?.id });
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to record terms acceptance',
             error: describeStripeError(error),
         });
     }

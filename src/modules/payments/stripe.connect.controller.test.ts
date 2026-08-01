@@ -2,10 +2,16 @@ const mockPrisma = {
     user: {
         findUnique: jest.fn(),
         update: jest.fn().mockResolvedValue(undefined),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
 };
 
 const mockGetConnectAccountStatus = jest.fn();
+const mockEnsureConnectedAccount = jest.fn();
+const mockGetConnectRequirements = jest.fn();
+const mockUpdatePersonalDetails = jest.fn();
+const mockAttachBankAccount = jest.fn();
+const mockAcceptTerms = jest.fn();
 const mockCreateConnectAccountSession = jest.fn();
 const mockSendSuccess = jest.fn();
 const mockSendError = jest.fn();
@@ -20,16 +26,28 @@ jest.mock('./stripe.service.js', () => ({
     createConnectOnboardingLink: jest.fn(),
     createConnectAccountSession: (...args: unknown[]) => mockCreateConnectAccountSession(...args),
     getConnectAccountStatus: (...args: unknown[]) => mockGetConnectAccountStatus(...args),
+    ensureConnectedAccount: (...args: unknown[]) => mockEnsureConnectedAccount(...args),
+    getConnectRequirements: (...args: unknown[]) => mockGetConnectRequirements(...args),
+    updateConnectPersonalDetails: (...args: unknown[]) => mockUpdatePersonalDetails(...args),
+    attachConnectBankAccount: (...args: unknown[]) => mockAttachBankAccount(...args),
+    acceptConnectTerms: (...args: unknown[]) => mockAcceptTerms(...args),
 }));
 
 jest.mock('../../utils/index.js', () => ({
     __esModule: true,
-    HttpStatus: { INTERNAL_ERROR: 'INTERNAL_ERROR' },
+    HttpStatus: { INTERNAL_ERROR: 'INTERNAL_ERROR', BAD_REQUEST: 'BAD_REQUEST' },
     sendError: (...args: unknown[]) => mockSendError(...args),
     sendSuccess: (...args: unknown[]) => mockSendSuccess(...args),
 }));
 
-import { connectAccountSession, connectStatus } from './stripe.connect.controller.js';
+import {
+    connectAcceptTerms,
+    connectAccountSession,
+    connectBankAccount,
+    connectRequirements,
+    connectStatus,
+    connectUpdateDetails,
+} from './stripe.connect.controller.js';
 
 const makeReqRes = () => {
     const req: any = { user: { id: 'user-1' } };
@@ -302,6 +320,179 @@ describe('connectAccountSession — embedded onboarding', () => {
             code: undefined,
             param: 'individual[dob][year]',
             message: 'Must be at least 13 years of age to use Stripe',
+        });
+    });
+});
+
+/**
+ * These endpoints are the whole onboarding flow — the driver never reaches a Stripe-hosted page.
+ * Each one has to resolve the account from the token alone, persist a newly created account id,
+ * and hand the client back the outstanding requirements so it knows what to ask next.
+ */
+describe('custom onboarding endpoints', () => {
+    const requirements = {
+        accountId: 'acct_1',
+        requirementCollection: 'application' as const,
+        chargesEnabled: false,
+        payoutsEnabled: false,
+        detailsSubmitted: false,
+        disabledReason: 'requirements.currently_due',
+        currentDeadline: null,
+        currentlyDue: ['external_account'],
+        pastDue: [],
+        eventuallyDue: [],
+        pendingVerification: [],
+        errors: [],
+        termsAccepted: false,
+        externalAccount: null,
+    };
+
+    const details = {
+        firstName: 'John',
+        lastName: 'Smith',
+        email: 'john@example.com',
+        phone: '+37255512345',
+        dob: { day: 4, month: 3, year: 2000 },
+        address: {
+            line1: '12 Pikk',
+            line2: null,
+            city: 'Tallinn',
+            postalCode: '10123',
+            state: null,
+            country: 'EE',
+        },
+    };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        delete process.env.STRIPE_CONNECT_MOCK_MODE;
+        mockPrisma.user.findUnique.mockResolvedValue({
+            stripeAccountId: 'acct_1',
+            firstName: 'John',
+            lastName: 'Smith',
+            email: 'john@example.com',
+            phone: null,
+            dob: null,
+        });
+        mockPrisma.user.update.mockResolvedValue(undefined);
+        mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+        mockEnsureConnectedAccount.mockResolvedValue({ accountId: 'acct_1', created: false });
+        mockGetConnectRequirements.mockResolvedValue(requirements);
+        mockUpdatePersonalDetails.mockResolvedValue(requirements);
+        mockAttachBankAccount.mockResolvedValue(requirements);
+        mockAcceptTerms.mockResolvedValue(requirements);
+    });
+
+    it('returns the outstanding requirements for the caller’s account', async () => {
+        const { req, res } = makeReqRes();
+        await connectRequirements(req, res);
+
+        expect(mockGetConnectRequirements).toHaveBeenCalledWith('acct_1');
+        expect(mockSendSuccess.mock.calls[0][1].data).toEqual(requirements);
+    });
+
+    it('persists an account created on the first requirements call', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({
+            stripeAccountId: null,
+            firstName: 'John',
+            lastName: 'Smith',
+            email: 'john@example.com',
+            phone: null,
+            dob: null,
+        });
+        mockEnsureConnectedAccount.mockResolvedValue({ accountId: 'acct_new', created: true });
+
+        const { req, res } = makeReqRes();
+        await connectRequirements(req, res);
+
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({
+            where: { id: 'user-1' },
+            data: { stripeAccountId: 'acct_new' },
+        });
+    });
+
+    it('files the submitted details against the caller’s account', async () => {
+        const { req, res } = makeReqRes();
+        req.body = details;
+        await connectUpdateDetails(req, res);
+
+        expect(mockUpdatePersonalDetails).toHaveBeenCalledWith('acct_1', details);
+        expect(mockSendSuccess.mock.calls[0][1].data).toEqual(requirements);
+    });
+
+    it('attaches the bank token to the caller’s account, ignoring any account id in the body', async () => {
+        const { req, res } = makeReqRes();
+        req.body = { token: 'btok_1abc', account: 'acct_notMine' };
+        await connectBankAccount(req, res);
+
+        expect(mockAttachBankAccount).toHaveBeenCalledWith('acct_1', 'btok_1abc');
+    });
+
+    it('records terms acceptance with the request IP and user agent', async () => {
+        const { req, res } = makeReqRes();
+        req.body = { accepted: true };
+        req.ip = '81.90.1.2';
+        req.get = (header: string) => (header === 'user-agent' ? 'Mozilla/5.0' : undefined);
+        await connectAcceptTerms(req, res);
+
+        expect(mockAcceptTerms).toHaveBeenCalledWith('acct_1', {
+            ip: '81.90.1.2',
+            userAgent: 'Mozilla/5.0',
+        });
+    });
+
+    it('refuses to record acceptance when the IP is unknown', async () => {
+        const { req, res } = makeReqRes();
+        req.body = { accepted: true };
+        req.ip = undefined;
+        req.get = () => undefined;
+        await connectAcceptTerms(req, res);
+
+        expect(mockAcceptTerms).not.toHaveBeenCalled();
+        expect(mockSendError.mock.calls[0][1].status).toBe('BAD_REQUEST');
+    });
+
+    it('marks onboarding complete once Stripe reports the account can take charges', async () => {
+        mockAttachBankAccount.mockResolvedValue({
+            ...requirements,
+            detailsSubmitted: true,
+            chargesEnabled: true,
+            currentlyDue: [],
+        });
+
+        const { req, res } = makeReqRes();
+        req.body = { token: 'btok_1abc' };
+        await connectBankAccount(req, res);
+
+        expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
+            where: { id: 'user-1', stripeOnboardingComplete: false },
+            data: { stripeOnboardingComplete: true },
+        });
+    });
+
+    it('leaves onboarding incomplete while requirements are outstanding', async () => {
+        const { req, res } = makeReqRes();
+        req.body = { token: 'btok_1abc' };
+        await connectBankAccount(req, res);
+
+        expect(mockPrisma.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('echoes the Stripe field error when filing details fails', async () => {
+        mockUpdatePersonalDetails.mockRejectedValue(
+            Object.assign(new Error('Invalid postal code'), {
+                type: 'StripeInvalidRequestError',
+                param: 'individual[address][postal_code]',
+            })
+        );
+
+        const { req, res } = makeReqRes();
+        req.body = details;
+        await connectUpdateDetails(req, res);
+
+        expect(mockSendError.mock.calls[0][1].error).toMatchObject({
+            param: 'individual[address][postal_code]',
+            message: 'Invalid postal code',
         });
     });
 });

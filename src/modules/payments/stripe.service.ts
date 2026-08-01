@@ -5,7 +5,10 @@ import {
     ConnectAccountPrefill,
     ConnectAccountSessionResult,
     ConnectAccountStatus,
+    ConnectExternalAccount,
+    ConnectPersonalDetails,
     ConnectRequirementCollection,
+    ConnectRequirements,
     CreatePaymentIntentInput,
     CreatePaymentIntentResult,
 } from './stripe.types.js';
@@ -143,6 +146,21 @@ const createConnectedAccount = async (
     return account.id;
 };
 
+/**
+ * Returns the driver's connected account, creating it on first use. The custom onboarding flow
+ * needs an account before it can file any detail, so every entry point resolves through here
+ * rather than each one duplicating the create-then-persist dance.
+ */
+export const ensureConnectedAccount = async (
+    userId: string,
+    stripeAccountId: string | null,
+    prefill: ConnectAccountPrefill = {}
+): Promise<{ accountId: string; created: boolean }> => {
+    if (stripeAccountId) return { accountId: stripeAccountId, created: false };
+
+    return { accountId: await createConnectedAccount(userId, prefill), created: true };
+};
+
 const readRequirementCollection = (account: Stripe.Account): ConnectRequirementCollection =>
     account.controller?.requirement_collection === 'application' ? 'application' : 'stripe';
 
@@ -184,6 +202,129 @@ export const createConnectAccountSession = async (
         expiresAt: session.expires_at,
         requirementCollection,
     };
+};
+
+const toExternalAccount = (account: Stripe.Account): ConnectExternalAccount | null => {
+    const bank = account.external_accounts?.data?.find(
+        (entry): entry is Stripe.BankAccount => entry.object === 'bank_account'
+    );
+    if (!bank) return null;
+
+    return {
+        id: bank.id,
+        bankName: bank.bank_name ?? null,
+        last4: bank.last4 ?? null,
+        currency: bank.currency ?? null,
+        country: bank.country ?? null,
+        defaultForCurrency: bank.default_for_currency ?? false,
+    };
+};
+
+const toRequirements = (account: Stripe.Account): ConnectRequirements => {
+    const requirements = account.requirements;
+
+    return {
+        accountId: account.id,
+        requirementCollection: readRequirementCollection(account),
+        chargesEnabled: account.charges_enabled,
+        payoutsEnabled: account.payouts_enabled,
+        detailsSubmitted: account.details_submitted,
+        disabledReason: requirements?.disabled_reason ?? null,
+        currentDeadline: requirements?.current_deadline ?? null,
+        currentlyDue: requirements?.currently_due ?? [],
+        pastDue: requirements?.past_due ?? [],
+        eventuallyDue: requirements?.eventually_due ?? [],
+        pendingVerification: requirements?.pending_verification ?? [],
+        errors: (requirements?.errors ?? []).map((issue) => ({
+            requirement: issue.requirement,
+            code: issue.code,
+            reason: issue.reason,
+        })),
+        termsAccepted: Boolean(account.tos_acceptance?.date),
+        externalAccount: toExternalAccount(account),
+    };
+};
+
+/**
+ * What Stripe still wants before payouts run. On controller-based accounts nothing is collected by
+ * Stripe, so this list is what the custom onboarding UI renders — there is no hosted screen to fall
+ * back on if we guess the fields ourselves.
+ */
+export const getConnectRequirements = async (accountId: string): Promise<ConnectRequirements> => {
+    const stripe = getStripeClient();
+    const account = await stripe.accounts.retrieve(accountId);
+
+    return toRequirements(account);
+};
+
+/** Files the identity details the platform collected in its own form. */
+export const updateConnectPersonalDetails = async (
+    accountId: string,
+    details: ConnectPersonalDetails
+): Promise<ConnectRequirements> => {
+    const stripe = getStripeClient();
+
+    const account = await stripe.accounts.update(accountId, {
+        business_type: 'individual',
+        email: details.email,
+        individual: {
+            first_name: details.firstName,
+            last_name: details.lastName,
+            email: details.email,
+            phone: cleanPhone(details.phone),
+            dob: details.dob,
+            address: {
+                line1: details.address.line1,
+                line2: cleanText(details.address.line2),
+                city: details.address.city,
+                postal_code: details.address.postalCode,
+                state: cleanText(details.address.state),
+                country: details.address.country,
+            },
+        },
+    });
+
+    return toRequirements(account);
+};
+
+/**
+ * Attaches a bank account from a Stripe.js token. Only the token reaches this server — raw IBANs
+ * are tokenised in the browser and never land in our request logs or database.
+ */
+export const attachConnectBankAccount = async (
+    accountId: string,
+    bankAccountToken: string
+): Promise<ConnectRequirements> => {
+    const stripe = getStripeClient();
+
+    await stripe.accounts.createExternalAccount(accountId, {
+        external_account: bankAccountToken,
+        default_for_currency: true,
+    });
+
+    return getConnectRequirements(accountId);
+};
+
+/**
+ * Records the driver's acceptance of Stripe's agreement. The platform owns this step on
+ * controller-based accounts, and Stripe requires the date and the IP it was accepted from —
+ * without it the account stays disabled however complete the rest of the details are.
+ */
+export const acceptConnectTerms = async (
+    accountId: string,
+    acceptance: { ip: string; userAgent?: string | null }
+): Promise<ConnectRequirements> => {
+    const stripe = getStripeClient();
+
+    const account = await stripe.accounts.update(accountId, {
+        tos_acceptance: {
+            date: Math.floor(Date.now() / 1000),
+            ip: acceptance.ip,
+            user_agent: cleanText(acceptance.userAgent),
+        },
+    });
+
+    return toRequirements(account);
 };
 
 export const createConnectOnboardingLink = async (

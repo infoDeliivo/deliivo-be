@@ -44,6 +44,775 @@
           "description": "Raw Stripe event payload."
         }
       }
+    },
+    "/api/v1/payments/connect/requirements": {
+      "get": {
+        "operationId": "paymentsGetConnectRequirements",
+        "summary": "Outstanding Connect requirements",
+        "description": "Returns what Stripe still needs from the driver. Creates the connected account on first call. The custom onboarding UI renders its next step from `currentlyDue`.",
+        "tags": [
+          "Payments"
+        ],
+        "responses": {
+          "200": {
+            "description": "Requirements fetched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "OK"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "What Stripe still needs before payouts can run. Drives which step the custom onboarding form renders.",
+                      "properties": {
+                        "accountId": {
+                          "type": "string",
+                          "example": "acct_1Tzb..."
+                        },
+                        "requirementCollection": {
+                          "type": "string",
+                          "enum": [
+                            "application",
+                            "stripe"
+                          ],
+                          "description": "'application' means the platform collects requirements in its own UI; 'stripe' is a legacy Express account."
+                        },
+                        "chargesEnabled": {
+                          "type": "boolean"
+                        },
+                        "payoutsEnabled": {
+                          "type": "boolean"
+                        },
+                        "detailsSubmitted": {
+                          "type": "boolean"
+                        },
+                        "disabledReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "example": "requirements.past_due"
+                        },
+                        "currentDeadline": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Unix time by which currentlyDue must be satisfied."
+                        },
+                        "currentlyDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "example": [
+                            "individual.address.city",
+                            "external_account"
+                          ]
+                        },
+                        "pastDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "eventuallyDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "pendingVerification": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "requirement": {
+                                "type": "string"
+                              },
+                              "code": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "termsAccepted": {
+                          "type": "boolean"
+                        },
+                        "externalAccount": {
+                          "type": "object",
+                          "nullable": true,
+                          "description": "The payout bank account, masked. Full account numbers are never stored or returned.",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "bankName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "last4": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currency": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "country": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "defaultForCurrency": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/payments/connect/details": {
+      "put": {
+        "operationId": "paymentsPutConnectDetails",
+        "summary": "File the driver's personal details",
+        "description": "Submits the identity details collected in the platform's own form. The account is resolved from the bearer token; any account id in the body is ignored.",
+        "tags": [
+          "Payments"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "firstName",
+                  "lastName",
+                  "email",
+                  "dob",
+                  "address"
+                ],
+                "properties": {
+                  "firstName": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "example": "John"
+                  },
+                  "lastName": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "example": "Smith"
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true,
+                    "pattern": "^\\+[1-9]\\d{6,14}$",
+                    "description": "E.164 only. Omit rather than send a local format.",
+                    "example": "+37255512345"
+                  },
+                  "dob": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD. Must be at least 13 years ago \u2014 Stripe rejects younger account holders.",
+                    "example": "2000-03-04"
+                  },
+                  "address": {
+                    "type": "object",
+                    "required": [
+                      "line1",
+                      "city",
+                      "postalCode"
+                    ],
+                    "properties": {
+                      "line1": {
+                        "type": "string",
+                        "example": "12 Pikk"
+                      },
+                      "line2": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "city": {
+                        "type": "string",
+                        "example": "Tallinn"
+                      },
+                      "postalCode": {
+                        "type": "string",
+                        "example": "10123"
+                      },
+                      "state": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "country": {
+                        "type": "string",
+                        "description": "Must equal STRIPE_CONNECT_COUNTRY; payouts are single-country. Defaults to it when omitted.",
+                        "example": "EE"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Details saved; updated requirements returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "OK"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "What Stripe still needs before payouts can run. Drives which step the custom onboarding form renders.",
+                      "properties": {
+                        "accountId": {
+                          "type": "string",
+                          "example": "acct_1Tzb..."
+                        },
+                        "requirementCollection": {
+                          "type": "string",
+                          "enum": [
+                            "application",
+                            "stripe"
+                          ],
+                          "description": "'application' means the platform collects requirements in its own UI; 'stripe' is a legacy Express account."
+                        },
+                        "chargesEnabled": {
+                          "type": "boolean"
+                        },
+                        "payoutsEnabled": {
+                          "type": "boolean"
+                        },
+                        "detailsSubmitted": {
+                          "type": "boolean"
+                        },
+                        "disabledReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "example": "requirements.past_due"
+                        },
+                        "currentDeadline": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Unix time by which currentlyDue must be satisfied."
+                        },
+                        "currentlyDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "example": [
+                            "individual.address.city",
+                            "external_account"
+                          ]
+                        },
+                        "pastDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "eventuallyDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "pendingVerification": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "requirement": {
+                                "type": "string"
+                              },
+                              "code": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "termsAccepted": {
+                          "type": "boolean"
+                        },
+                        "externalAccount": {
+                          "type": "object",
+                          "nullable": true,
+                          "description": "The payout bank account, masked. Full account numbers are never stored or returned.",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "bankName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "last4": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currency": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "country": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "defaultForCurrency": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/payments/connect/bank-account": {
+      "post": {
+        "operationId": "paymentsPostConnectBankAccount",
+        "summary": "Attach a payout bank account",
+        "description": "Accepts only a Stripe.js bank account token. Raw account numbers are rejected so bank credentials never reach this server, its logs or the database. The attached account becomes the payout default for its currency.",
+        "tags": [
+          "Payments"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "pattern": "^btok_[A-Za-z0-9]+$",
+                    "description": "Token from Stripe.js createToken('bank_account').",
+                    "example": "btok_1MzExample"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bank account added; updated requirements returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "OK"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "What Stripe still needs before payouts can run. Drives which step the custom onboarding form renders.",
+                      "properties": {
+                        "accountId": {
+                          "type": "string",
+                          "example": "acct_1Tzb..."
+                        },
+                        "requirementCollection": {
+                          "type": "string",
+                          "enum": [
+                            "application",
+                            "stripe"
+                          ],
+                          "description": "'application' means the platform collects requirements in its own UI; 'stripe' is a legacy Express account."
+                        },
+                        "chargesEnabled": {
+                          "type": "boolean"
+                        },
+                        "payoutsEnabled": {
+                          "type": "boolean"
+                        },
+                        "detailsSubmitted": {
+                          "type": "boolean"
+                        },
+                        "disabledReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "example": "requirements.past_due"
+                        },
+                        "currentDeadline": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Unix time by which currentlyDue must be satisfied."
+                        },
+                        "currentlyDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "example": [
+                            "individual.address.city",
+                            "external_account"
+                          ]
+                        },
+                        "pastDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "eventuallyDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "pendingVerification": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "requirement": {
+                                "type": "string"
+                              },
+                              "code": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "termsAccepted": {
+                          "type": "boolean"
+                        },
+                        "externalAccount": {
+                          "type": "object",
+                          "nullable": true,
+                          "description": "The payout bank account, masked. Full account numbers are never stored or returned.",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "bankName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "last4": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currency": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "country": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "defaultForCurrency": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/payments/connect/terms": {
+      "post": {
+        "operationId": "paymentsPostConnectTerms",
+        "summary": "Record Stripe terms acceptance",
+        "description": "Records the driver's acceptance of Stripe's agreement together with the IP it was accepted from. Required on controller-based accounts \u2014 without it the account stays disabled however complete the details are.",
+        "tags": [
+          "Payments"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accepted"
+                ],
+                "properties": {
+                  "accepted": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ],
+                    "example": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Acceptance recorded; updated requirements returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "OK"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "What Stripe still needs before payouts can run. Drives which step the custom onboarding form renders.",
+                      "properties": {
+                        "accountId": {
+                          "type": "string",
+                          "example": "acct_1Tzb..."
+                        },
+                        "requirementCollection": {
+                          "type": "string",
+                          "enum": [
+                            "application",
+                            "stripe"
+                          ],
+                          "description": "'application' means the platform collects requirements in its own UI; 'stripe' is a legacy Express account."
+                        },
+                        "chargesEnabled": {
+                          "type": "boolean"
+                        },
+                        "payoutsEnabled": {
+                          "type": "boolean"
+                        },
+                        "detailsSubmitted": {
+                          "type": "boolean"
+                        },
+                        "disabledReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "example": "requirements.past_due"
+                        },
+                        "currentDeadline": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Unix time by which currentlyDue must be satisfied."
+                        },
+                        "currentlyDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "example": [
+                            "individual.address.city",
+                            "external_account"
+                          ]
+                        },
+                        "pastDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "eventuallyDue": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "pendingVerification": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "requirement": {
+                                "type": "string"
+                              },
+                              "code": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "termsAccepted": {
+                          "type": "boolean"
+                        },
+                        "externalAccount": {
+                          "type": "object",
+                          "nullable": true,
+                          "description": "The payout bank account, masked. Full account numbers are never stored or returned.",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "bankName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "last4": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currency": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "country": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "defaultForCurrency": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
     }
   }
 }
