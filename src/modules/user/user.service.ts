@@ -296,10 +296,34 @@ export const completeOnBoardingStep1Service = async (
 };
 
 // ====================== LEGACY UPDATE PROFILE SERVICE ======================
+// PUT /users/me carries no request validator, so the payload is whatever the client
+// sent. Only these columns may be written from it — spreading the body into
+// prisma.user.update let a caller set role, isBanned, dlVerified or isVerified.
+const UPDATABLE_PROFILE_FIELDS = ['firstName', 'lastName', 'salutation', 'gender'] as const;
+
 export const updateProfileService = async (userId: string, payload: Record<string, unknown>) => {
   try {
-    // `username` used to map onto the lastName handle, which no longer exists.
-    const { username: _username, ...userData } = payload;
+    const userData: Record<string, unknown> = {};
+
+    for (const field of UPDATABLE_PROFILE_FIELDS) {
+      if (payload[field] !== undefined) userData[field] = payload[field];
+    }
+
+    // dob arrives as YYYY-MM-DD, which Prisma rejects as a DateTime. The full-profile
+    // service parses it the same way; without this the whole update failed with a
+    // generic 'Internal server error'.
+    if (payload.dob !== undefined) {
+      const parsedDob =
+        typeof payload.dob === 'string' ? parseDateOnlyAsUtc(payload.dob) : null;
+      if (!parsedDob) {
+        return { success: false, reason: 'INVALID_DATE_OF_BIRTH' };
+      }
+      userData.dob = parsedDob;
+    }
+
+    if (Object.keys(userData).length === 0) {
+      return { success: false, reason: 'NO_UPDATABLE_FIELDS' };
+    }
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },

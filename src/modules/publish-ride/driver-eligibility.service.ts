@@ -14,17 +14,17 @@ import { prisma } from '../../config/index.js';
  * still alive.
  */
 
-export type PublishRequirementKey =
-    | 'TOS'
-    | 'DL_VERIFICATION'
-    | 'IDENTITY_MATCH'
-    | 'BANK_ACCOUNT'
-    | 'VEHICLE'
-    | 'VEHICLE_VERIFICATION';
+/**
+ * Three gates, one per thing the driver has to do: verify a licence, set up payouts, get a
+ * vehicle on the road. Anything finer — which half of the licence check failed, whether the
+ * vehicle is missing or merely unreviewed — is a reason code on one of these, not a gate of
+ * its own. A driver reading the list should count the tasks left, not decode the model.
+ */
+export type PublishRequirementKey = 'DL_VERIFICATION' | 'BANK_ACCOUNT' | 'VEHICLE';
 
 /**
- * Review state for an unsatisfied VEHICLE_VERIFICATION requirement. A reason code alone
- * cannot carry the admin's free-text rejection note, so the note travels alongside it.
+ * Review state for an unsatisfied VEHICLE requirement. A reason code alone cannot carry the
+ * admin's free-text rejection note, so the note travels alongside it.
  */
 export interface VehicleVerificationContext {
     verificationStatus: VehicleVerificationStatus;
@@ -40,7 +40,7 @@ export interface PublishRequirement {
     reason: string | null;
     /** Where the app should send the driver to resolve it. */
     actionUrl: string | null;
-    /** Set only on an unsatisfied VEHICLE_VERIFICATION; absent everywhere else. */
+    /** Set only on an unsatisfied VEHICLE that exists; absent everywhere else. */
     vehicle?: VehicleVerificationContext;
 }
 
@@ -48,16 +48,6 @@ export interface PublishEligibility {
     eligible: boolean;
     requirements: PublishRequirement[];
 }
-
-/**
- * `START` is the entry point of the publish flow (POST /publish-ride/draft/origin) and
- * omits the Terms of Service gate — accepting the terms is the consent given when
- * committing the ride, not a prerequisite for drafting one. `PUBLISH` evaluates
- * everything.
- */
-export type EligibilityStage = 'START' | 'PUBLISH';
-
-const skipDlVerification = (): boolean => process.env.SKIP_DL_VERIFICATION === 'true';
 
 /**
  * Bank onboarding is meaningless when payments are bypassed or Connect is mocked, and
@@ -85,43 +75,54 @@ const requirement = (
 });
 
 /**
- * Built inline rather than through `requirement()` because this is the one gate whose
- * reason code varies with the review outcome, and the only one that carries context back
- * to the driver: a rejected vehicle needs a different code and the admin's note, so the
- * driver knows what to fix instead of waiting on an approval that will never come.
+ * Built inline rather than through `requirement()` because this gate covers a driver's whole
+ * road to a usable vehicle — none added, one awaiting review, one an admin turned down — and
+ * each step needs its own code and destination. Reporting them as two requirements told a
+ * driver with no vehicle that it was both missing and unverified, which is one problem stated
+ * twice.
+ *
+ * `skipped` only bypasses the admin approval half: a vehicle must always exist.
  */
-const buildVehicleVerificationRequirement = (
+const buildVehicleRequirement = (
     vehicle: { verificationStatus: VehicleVerificationStatus; rejectionReason: string | null } | null,
-    skipped: boolean,
+    approvalSkipped: boolean,
 ): PublishRequirement => {
-    const satisfied = vehicle?.verificationStatus === VehicleVerificationStatus.APPROVED;
-
-    if (skipped || satisfied) {
+    if (!vehicle) {
         return {
-            key: 'VEHICLE_VERIFICATION',
+            key: 'VEHICLE',
+            satisfied: false,
+            skipped: false,
+            reason: 'VEHICLE_REQUIRED',
+            actionUrl: '/api/v1/vehicles/draft',
+        };
+    }
+
+    const approved = vehicle.verificationStatus === VehicleVerificationStatus.APPROVED;
+
+    if (approvalSkipped || approved) {
+        return {
+            key: 'VEHICLE',
             satisfied: true,
-            skipped,
+            skipped: approvalSkipped && !approved,
             reason: null,
             actionUrl: null,
         };
     }
 
-    const rejected = vehicle?.verificationStatus === VehicleVerificationStatus.REJECTED;
+    const rejected = vehicle.verificationStatus === VehicleVerificationStatus.REJECTED;
 
     return {
-        key: 'VEHICLE_VERIFICATION',
+        key: 'VEHICLE',
         satisfied: false,
         skipped: false,
+        // A rejected vehicle needs its own code and the admin's note, so the driver knows what
+        // to fix instead of waiting on an approval that will never come.
         reason: rejected ? 'VEHICLE_REJECTED' : 'VEHICLE_NOT_VERIFIED',
         actionUrl: '/api/v1/vehicles',
-        ...(vehicle
-            ? {
-                  vehicle: {
-                      verificationStatus: vehicle.verificationStatus,
-                      rejectionReason: vehicle.rejectionReason,
-                  },
-              }
-            : {}),
+        vehicle: {
+            verificationStatus: vehicle.verificationStatus,
+            rejectionReason: vehicle.rejectionReason,
+        },
     };
 };
 
@@ -131,9 +132,7 @@ const buildVehicleVerificationRequirement = (
  */
 export const getDriverPublishEligibility = async (
     driverId: string,
-    stage: EligibilityStage = 'PUBLISH',
 ): Promise<PublishEligibility> => {
-    const dlSkipped = skipDlVerification();
     const bankSkipped = skipBankCheck();
     const vehicleVerificationSkipped = skipVehicleVerification();
 
@@ -141,7 +140,6 @@ export const getDriverPublishEligibility = async (
         prisma.user.findUnique({
             where: { id: driverId },
             select: {
-                tosAcceptedAt: true,
                 dlVerified: true,
                 stripeOnboardingComplete: true,
             },
@@ -152,11 +150,12 @@ export const getDriverPublishEligibility = async (
         }),
     ]);
 
-    // A Veriff decision can come back approved while the document identity does not match
-    // the entered profile — that is withheld as IDENTITY_MISMATCH and must be reported as
-    // its own reason, not as a generic "not verified".
+    // A Veriff decision can come back approved while the document identity does not match the
+    // entered profile — that is withheld as IDENTITY_MISMATCH. It is the reason the licence
+    // gate failed, not a second gate: the driver fixes it in the same place, so it rides on
+    // DL_VERIFICATION as a distinct code rather than a generic "not verified".
     const identityMismatch =
-        !dlSkipped && !driver?.dlVerified
+        !driver?.dlVerified
             ? Boolean(
                   await prisma.dlVerification.findFirst({
                       where: { userId: driverId, status: 'IDENTITY_MISMATCH' },
@@ -166,33 +165,13 @@ export const getDriverPublishEligibility = async (
               )
             : false;
 
-    const requirements: PublishRequirement[] = [];
-
-    if (stage === 'PUBLISH') {
-        requirements.push(
-            requirement(
-                'TOS',
-                Boolean(driver?.tosAcceptedAt),
-                'TOS_NOT_ACCEPTED',
-                '/api/v1/auth/accept-tos',
-            ),
-        );
-    }
-
-    requirements.push(
+    const requirements: PublishRequirement[] = [
+        // KYC gate — never skippable, whatever the environment.
         requirement(
             'DL_VERIFICATION',
             Boolean(driver?.dlVerified),
-            'DRIVER_NOT_VERIFIED',
+            identityMismatch ? 'DL_IDENTITY_MISMATCH' : 'DRIVER_NOT_VERIFIED',
             '/api/v1/dl-verification',
-            dlSkipped,
-        ),
-        requirement(
-            'IDENTITY_MATCH',
-            !identityMismatch,
-            'DL_IDENTITY_MISMATCH',
-            '/api/v1/dl-verification',
-            dlSkipped,
         ),
         requirement(
             'BANK_ACCOUNT',
@@ -201,10 +180,8 @@ export const getDriverPublishEligibility = async (
             '/api/v1/payments/connect/onboard',
             bankSkipped,
         ),
-        // A vehicle must always exist. Only the admin approval of it can be bypassed.
-        requirement('VEHICLE', Boolean(vehicle), 'VEHICLE_REQUIRED', '/api/v1/vehicles/draft'),
-        buildVehicleVerificationRequirement(vehicle, vehicleVerificationSkipped),
-    );
+        buildVehicleRequirement(vehicle, vehicleVerificationSkipped),
+    ];
 
     return {
         eligible: requirements.every((item) => item.satisfied),
@@ -216,11 +193,8 @@ export const getDriverPublishEligibility = async (
  * Throw the first unmet requirement's error code. Codes are plain Error messages to match
  * the convention the publish-ride controllers already map to HTTP statuses.
  */
-export const assertDriverCanPublish = async (
-    driverId: string,
-    stage: EligibilityStage,
-): Promise<void> => {
-    const { eligible, requirements } = await getDriverPublishEligibility(driverId, stage);
+export const assertDriverCanPublish = async (driverId: string): Promise<void> => {
+    const { eligible, requirements } = await getDriverPublishEligibility(driverId);
     if (eligible) return;
 
     const blocker = requirements.find((item) => !item.satisfied);

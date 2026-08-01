@@ -106,7 +106,8 @@ const assertDecisionWindowOpen = (deadlineAt: Date | null) => {
 export const acceptBooking = async (driverId: string, bookingId: string): Promise<DriverBookingResult> => {
     const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
 
-    if (!(booking.ride.driver as any).dlVerified && process.env.SKIP_DL_VERIFICATION !== 'true') {
+    // DL verification is the platform's KYC — there is no environment bypass.
+    if (!(booking.ride.driver as any).dlVerified) {
         throw new Error('DRIVER_NOT_VERIFIED');
     }
 

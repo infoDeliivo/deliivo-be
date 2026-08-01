@@ -104,3 +104,46 @@ describe('TC-IDM-002 — approved DL with a matching name verifies the user', ()
     expect(await readUserDlVerified()).toBe(true);
   });
 });
+
+// A session the browser SDK created but never registered leaves the backend with no
+// row to key the decision off. vendorData is set by Veriff at session creation, so it
+// is the fallback identity — and the reason such a decision is not simply lost.
+describe('TC-IDM-003 — decision for an unregistered session resolves by vendorData', () => {
+  it('creates the record from vendorData alone and verifies the user', async () => {
+    if (!ready) return;
+
+    // Own driver: the shared one is already dlVerified by TC-IDM-002.
+    const email = `e2e-vendordata-${state.runId}@test.local`;
+    const account = toAccountState(await signupAndVerifyEmail(email), email);
+    await authed(account.accessToken).put('/users/me', {
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      salutation: 'MS',
+    });
+
+    const sessionId = `sess-unregistered-${state.runId}`;
+    const res = await signedWebhook({
+      verification: {
+        id: sessionId,
+        status: 'approved',
+        code: 9001,
+        vendorData: account.id,
+        person: { firstName: 'Ada', lastName: 'Lovelace' },
+      },
+    });
+    expect(res.status).toBe(200);
+
+    const statusRes = await authed(account.accessToken).get('/dl-verification/status');
+    const data = statusRes.data.data ?? statusRes.data;
+    expect(data.sessionId).toBe(sessionId);
+    expect(data.status).toBe('APPROVED');
+
+    const db = getDb();
+    try {
+      const user = await db.user.findUnique({ where: { id: account.id }, select: { dlVerified: true } });
+      expect(user?.dlVerified).toBe(true);
+    } finally {
+      await db.$disconnect();
+    }
+  });
+});

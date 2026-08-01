@@ -73,8 +73,12 @@ describe('TC-ELG-001 — eligibility checklist', () => {
 
     expect(res.status).toBe(200);
     expect(res.data.data.eligible).toBe(false);
-    // ToS is reported so the app can show it, even though it only blocks at publish.
-    expect(requirement(res.data, 'TOS')).toMatchObject({ satisfied: false });
+    // Three gates, one per task the driver has left: licence, payouts, vehicle.
+    expect(res.data.data.requirements.map((item: { key: string }) => item.key)).toEqual([
+      'DL_VERIFICATION',
+      'BANK_ACCOUNT',
+      'VEHICLE',
+    ]);
     expect(requirement(res.data, 'VEHICLE')).toMatchObject({
       satisfied: false,
       reason: 'VEHICLE_REQUIRED',
@@ -173,7 +177,7 @@ describe('TC-ELG-004 — vehicle review state controls publishing', () => {
     // Ask the server whether the approval gate is enabled rather than guessing from
     // the test process env — the flag belongs to the server under test.
     const checklist = await authed(driverToken).get('/publish-ride/eligibility');
-    const bypassed = requirement(checklist.data, 'VEHICLE_VERIFICATION')?.skipped === true;
+    const bypassed = requirement(checklist.data, 'VEHICLE')?.skipped === true;
 
     const origin = {
       originPlaceId: 'ChIJdd4hrwug2EcRmSrV3Vo6llI',
@@ -203,13 +207,13 @@ describe('TC-ELG-004 — vehicle review state controls publishing', () => {
       await setVehicleStatus('PENDING');
       return authed(driverToken).get('/publish-ride/eligibility');
     })();
-    expect(requirement(beforeApproval.data, 'VEHICLE_VERIFICATION')).toMatchObject(
+    expect(requirement(beforeApproval.data, 'VEHICLE')).toMatchObject(
       bypassed ? { satisfied: true, skipped: true } : { reason: 'VEHICLE_NOT_VERIFIED' },
     );
 
     await setVehicleStatus('APPROVED');
     const afterApproval = await authed(driverToken).get('/publish-ride/eligibility');
-    expect(requirement(afterApproval.data, 'VEHICLE_VERIFICATION')).toMatchObject({
+    expect(requirement(afterApproval.data, 'VEHICLE')).toMatchObject({
       satisfied: true,
     });
   });

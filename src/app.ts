@@ -21,6 +21,7 @@ import {
   notificationRouter,
   ratingsRouter,
   dlVerificationRouter,
+  dlVerificationWebhookRouter,
   adminRouter,
   rideOperationsRouter,
   bookingOperationsRouter,
@@ -58,9 +59,14 @@ app.use(helmet());
 app.use(requestContext);
 app.use(rateLimiter);
 
-// ⚠️ IMPORTANT: Webhook route MUST come BEFORE express.json()
-// Stripe needs the raw body for signature verification
-app.use('/api/v1/payments', express.raw({ type: 'application/json' }), paymentsWebhookRouter);
+// ⚠️ IMPORTANT: Webhook routes MUST come BEFORE express.json()
+// Stripe and Veriff both sign the raw body; a re-serialised body breaks the signature
+// The raw parser is scoped to the webhook path alone: on the whole /api/v1/payments
+// prefix it would hand paymentRouter's JSON routes a Buffer, because body-parser skips
+// a body another parser already read.
+app.use('/api/v1/payments/stripe/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/v1/payments', paymentsWebhookRouter);
+app.use('/api/v1/dl-verification/webhook', express.raw({ type: 'application/json', limit: '50kb' }), dlVerificationWebhookRouter);
 
 // Now apply JSON parsing for all other routes
 app.use(express.json({ limit: '50kb' }));

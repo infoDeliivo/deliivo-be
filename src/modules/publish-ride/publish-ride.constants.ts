@@ -13,10 +13,6 @@ export interface PublishErrorMapping {
  */
 export const PUBLISH_ERROR_MAP: Record<string, PublishErrorMapping> = {
     // ---- Driver eligibility ----
-    TOS_NOT_ACCEPTED: {
-        status: HttpStatus.FORBIDDEN,
-        message: 'You must accept the Terms of Service before publishing a ride',
-    },
     DRIVER_NOT_VERIFIED: {
         status: HttpStatus.FORBIDDEN,
         message: 'Your driving licence must be verified before publishing a ride',
@@ -94,6 +90,10 @@ export const PUBLISH_ERROR_MAP: Record<string, PublishErrorMapping> = {
         status: HttpStatus.BAD_REQUEST,
         message: 'Only locations in Estonia, Latvia, or Lithuania can be used to publish rides',
     },
+    DESTINATION_OUTSIDE_EUROPE: {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Destinations must be in Europe for outbound rides from the Baltics',
+    },
     LOCATION_COUNTRY_UNVERIFIED: {
         status: HttpStatus.BAD_REQUEST,
         message: 'Unable to verify the route countries. Select suggested locations and try again',
@@ -109,6 +109,18 @@ export const resolvePublishError = (
     fallbackMessage: string,
 ): PublishErrorMapping => {
     const code = error instanceof Error ? error.message : String(error);
+
+    // The only code that carries its own message: the pricing service appends the allowed
+    // range, which no static table can hold.
+    if (code.startsWith('PRICE_OUT_OF_RANGE')) {
+        return {
+            status: HttpStatus.BAD_REQUEST,
+            message:
+                code.replace(/^PRICE_OUT_OF_RANGE:\s*/, '') ||
+                'Selected price is outside the allowed pricing range',
+        };
+    }
+
     return (
         PUBLISH_ERROR_MAP[code] ?? {
             status: HttpStatus.INTERNAL_ERROR,
