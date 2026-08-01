@@ -330,6 +330,18 @@
     },
     "/socket.io/events": {
       "$ref": "./paths/websocket.yaml#/paths/~1socket.io~1events"
+    },
+    "/api/v1/payments/connect/requirements": {
+      "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1connect~1requirements"
+    },
+    "/api/v1/payments/connect/details": {
+      "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1connect~1details"
+    },
+    "/api/v1/payments/connect/bank-account": {
+      "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1connect~1bank-account"
+    },
+    "/api/v1/payments/connect/terms": {
+      "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1connect~1terms"
     }
   },
   "components": {
