@@ -1,11 +1,12 @@
 /**
  * E2E — Stripe Connect (Driver Payouts Onboarding)
- * Covers: TC-CONNECT-001 through TC-CONNECT-004
+ * Covers: TC-CONNECT-001 through TC-CONNECT-005
  *
- * These tests verify the Stripe Connect onboarding flow endpoints.
+ * These tests verify the Stripe Connect onboarding flow endpoints — both the
+ * embedded AccountSession path and the legacy hosted Account Link fallback.
  * Full onboarding requires a real Stripe call, so the tests verify
  * the API contract (correct status codes, response shapes) rather than
- * completing the full Stripe redirect flow.
+ * completing an actual onboarding.
  *
  * The price breakdown serviceFee field is also tested here because it
  * is part of the Stripe Connect feature (platform fee).
@@ -54,6 +55,46 @@ describe('TC-CONNECT-002 — Initiate Connect onboarding', () => {
     const body = res.data.data ?? res.data;
     expect(typeof body.url).toBe('string');
     expect(body.url).toMatch(/https?:\/\//);
+  });
+});
+
+// ── TC-CONNECT-005: Embedded onboarding account session ─────────────────────
+describe('TC-CONNECT-005 — Create an AccountSession for embedded onboarding', () => {
+  it('returns a client secret, or a mock stub when Connect is mocked', async () => {
+    const res = await da.post('/payments/connect/account-session', {});
+    // Stripe may not be configured in the test environment
+    if (res.status === 500 || res.status === 503) {
+      console.warn('TC-CONNECT-005: Stripe not configured — skipping client secret assertion');
+      return;
+    }
+    expect([200, 201]).toContain(res.status);
+    const body = res.data.data ?? res.data;
+
+    if (body.mock === true) {
+      // STRIPE_CONNECT_MOCK_MODE=true — no Stripe call is made
+      expect(body.clientSecret).toBeNull();
+      return;
+    }
+
+    expect(typeof body.clientSecret).toBe('string');
+    expect(typeof body.accountId).toBe('string');
+    expect(['application', 'stripe']).toContain(body.requirementCollection);
+  });
+
+  it('ignores a caller-supplied account id', async () => {
+    const res = await da.post('/payments/connect/account-session', {
+      account: 'acct_notMine',
+      accountId: 'acct_notMine',
+    });
+    if (res.status === 500 || res.status === 503) return;
+    const body = res.data.data ?? res.data;
+    expect(body.accountId).not.toBe('acct_notMine');
+  });
+
+  it('returns 401 for unauthenticated request', async () => {
+    const { api } = await import('../helpers/api.client');
+    const res = await api.post('/payments/connect/account-session', {});
+    expect(res.status).toBe(401);
   });
 });
 

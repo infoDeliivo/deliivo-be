@@ -1,7 +1,14 @@
 // @ts-ignore — stripe v21 types bundled via package exports; not resolved by "Node" moduleResolution
 import Stripe from 'stripe';
 import { STRIPE_CURRENCY_DEFAULT, STRIPE_METADATA_KEYS } from './stripe.constants.js';
-import { ConnectAccountStatus, CreatePaymentIntentInput, CreatePaymentIntentResult } from './stripe.types.js';
+import {
+    ConnectAccountPrefill,
+    ConnectAccountSessionResult,
+    ConnectAccountStatus,
+    ConnectRequirementCollection,
+    CreatePaymentIntentInput,
+    CreatePaymentIntentResult,
+} from './stripe.types.js';
 
 let stripeClient: Stripe | null = null;
 
@@ -39,22 +46,120 @@ export const getStripeClient = (): Stripe => {
     return stripeClient;
 };
 
+/**
+ * Stripe collects an industry + product description for every connected account, individuals
+ * included — that is the "Professional details / Business information" step drivers otherwise see.
+ * The platform knows the answer (drivers all sell the same thing), so we send it up front and the
+ * driver is left with identity details and a bank account. MCC 4121 = Taxicabs and Limousines, the
+ * closest code for ridesharing.
+ */
+const buildBusinessProfile = (): Stripe.AccountCreateParams.BusinessProfile => ({
+    mcc: process.env.STRIPE_CONNECT_MCC || '4121',
+    product_description:
+        process.env.STRIPE_CONNECT_PRODUCT_DESCRIPTION ||
+        'Shared car journeys — the driver carries passengers on a route they are already taking and receives a share of the trip cost.',
+    url: process.env.APP_BASE_URL || undefined,
+});
+
+/**
+ * Accounts we create are controller-based (`requirement_collection: 'application'`) so onboarding
+ * can render fully white-label inside our own UI. Accounts created before that switch are Express
+ * (`'stripe'`) and are not convertible — Stripe still authenticates those users inside the frame.
+ */
+const createConnectedAccount = async (
+    userId: string,
+    prefill: ConnectAccountPrefill
+): Promise<string> => {
+    const stripe = getStripeClient();
+    const dob = prefill.dob ? new Date(prefill.dob) : null;
+
+    const account = await stripe.accounts.create({
+        country: process.env.STRIPE_CONNECT_COUNTRY || undefined,
+        controller: {
+            stripe_dashboard: { type: 'none' },
+            fees: { payer: 'application' },
+            losses: { payments: 'application' },
+            requirement_collection: 'application',
+        },
+        business_type: 'individual',
+        business_profile: buildBusinessProfile(),
+        capabilities: {
+            transfers: { requested: true },
+        },
+        email: prefill.email ?? undefined,
+        individual: {
+            first_name: prefill.firstName ?? undefined,
+            last_name: prefill.lastName ?? undefined,
+            email: prefill.email ?? undefined,
+            phone: prefill.phone ?? undefined,
+            dob:
+                dob && !Number.isNaN(dob.getTime())
+                    ? {
+                          day: dob.getUTCDate(),
+                          month: dob.getUTCMonth() + 1,
+                          year: dob.getUTCFullYear(),
+                      }
+                    : undefined,
+        },
+        metadata: { userId },
+    });
+
+    return account.id;
+};
+
+const readRequirementCollection = (account: Stripe.Account): ConnectRequirementCollection =>
+    account.controller?.requirement_collection === 'application' ? 'application' : 'stripe';
+
+/**
+ * Mints a short-lived AccountSession for the embedded onboarding component. Connect refetches the
+ * secret whenever it expires, so this must always create a fresh session — never cache one.
+ */
+export const createConnectAccountSession = async (
+    userId: string,
+    stripeAccountId: string | null,
+    prefill: ConnectAccountPrefill = {}
+): Promise<ConnectAccountSessionResult> => {
+    const stripe = getStripeClient();
+
+    const accountId = stripeAccountId ?? (await createConnectedAccount(userId, prefill));
+    const account = await stripe.accounts.retrieve(accountId);
+    const requirementCollection = readRequirementCollection(account);
+
+    const session = await stripe.accountSessions.create({
+        account: accountId,
+        components: {
+            account_onboarding: {
+                enabled: true,
+                features: {
+                    external_account_collection: true,
+                    // Only permitted on controller-based accounts; Express accounts keep the
+                    // Stripe-hosted authentication step inside the embedded frame.
+                    ...(requirementCollection === 'application'
+                        ? { disable_stripe_user_authentication: true }
+                        : {}),
+                },
+            },
+        },
+    });
+
+    return {
+        accountId,
+        clientSecret: session.client_secret,
+        expiresAt: session.expires_at,
+        requirementCollection,
+    };
+};
+
 export const createConnectOnboardingLink = async (
     userId: string,
     stripeAccountId: string | null,
     returnUrl: string,
-    refreshUrl: string
+    refreshUrl: string,
+    prefill: ConnectAccountPrefill = {}
 ): Promise<{ accountId: string; onboardingUrl: string }> => {
     const stripe = getStripeClient();
 
-    let accountId = stripeAccountId;
-    if (!accountId) {
-        const account = await stripe.accounts.create({
-            type: 'express',
-            metadata: { userId },
-        });
-        accountId = account.id;
-    }
+    const accountId = stripeAccountId ?? (await createConnectedAccount(userId, prefill));
 
     const accountLink = await stripe.accountLinks.create({
         account: accountId,
@@ -63,7 +168,7 @@ export const createConnectOnboardingLink = async (
         type: 'account_onboarding',
     });
 
-    return { accountId: accountId as string, onboardingUrl: accountLink.url ?? '' };
+    return { accountId, onboardingUrl: accountLink.url ?? '' };
 };
 
 export const getConnectAccountStatus = async (
@@ -85,6 +190,7 @@ export const getConnectAccountStatus = async (
         detailsSubmitted: account.details_submitted,
         accountName,
         accountDob,
+        requirementCollection: readRequirementCollection(account),
     };
 };
 
