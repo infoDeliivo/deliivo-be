@@ -151,6 +151,12 @@
     "/api/v1/admin/vehicles/{id}/reject": {
       "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1vehicles~1{id}~1reject"
     },
+    "/api/v1/admin/users/{id}/dl/verify": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users~1{id}~1dl~1verify"
+    },
+    "/api/v1/admin/users/{id}/dl/unverify": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users~1{id}~1dl~1unverify"
+    },
     "/api/v1/publish-ride/draft/destination": {
       "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1destination"
     },

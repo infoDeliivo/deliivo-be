@@ -140,7 +140,8 @@ model User {
   notifications Notification[]
 
   // DL Verification relations
-  dlVerifications DlVerification[]
+  dlVerifications         DlVerification[]
+  dlVerificationsReviewed DlVerification[] @relation("DlVerificationsReviewed")
 
   // Report / Block relations
   reportsMade     UserReport[] @relation("ReportsMade")
@@ -1023,9 +1024,19 @@ model DlVerification {
   dobMatch         Boolean?
   genderMatch      Boolean?
 
+  // Manual admin review. A driver who does not complete Veriff can upload a licence
+  // photo instead; an admin reads it and approves or declines with a reason. The
+  // image is a private S3 key served only through GET /uploads/read.
+  documentImageKey String?
+  declineReason    String?
+  reviewedById     String?
+  reviewedBy       User?     @relation("DlVerificationsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt       DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([veriffSessionId])
+  @@index([status])
 }

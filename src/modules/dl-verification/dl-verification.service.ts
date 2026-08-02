@@ -546,8 +546,78 @@ export const getVerificationStatus = async (userId: string) => {
       verificationId: latest.id,
       sessionId: latest.veriffSessionId,
       sessionUrl: latest.veriffSessionUrl,
+      // Set only on the manual-review path: an admin declined and said why, so the
+      // driver can fix the problem and re-upload.
+      declineReason: latest.declineReason,
+      hasDocument: latest.documentImageKey !== null,
       createdAt: latest.createdAt,
       updatedAt: latest.updatedAt,
     },
   };
+};
+
+// ─── Admin test override ───────────────────────────────────────────
+// Marks a user DL-verified (or clears it) without a Veriff round trip, so the
+// flows gated on `user.dlVerified` can be exercised on a test device. Admin-only
+// at the route layer. The synthetic row is keyed on a deterministic session id so
+// repeated calls update one row instead of piling up, and every synthetic row is
+// findable by `decisionPayload->>'source' = 'ADMIN_TEST'`.
+export const setDlVerificationForTest = async (
+  userId: string,
+  verified: boolean,
+  adminId: string | null,
+) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { firstName: true, lastName: true, dob: true, gender: true },
+  });
+
+  if (!user) throw new Error('USER_NOT_FOUND');
+
+  // Copied from the profile so the row satisfies the same identity-match invariant
+  // a genuine approved decision does.
+  const verifiedName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || null;
+  const verifiedDob = user.dob ? user.dob.toISOString().slice(0, 10) : null;
+  const verifiedGender = user.gender ?? null;
+
+  const veriffSessionId = `admin-test:${userId}`;
+  const status: DlVerificationStatus = verified ? 'APPROVED' : 'DECLINED';
+
+  const fields = {
+    status,
+    decisionCode: null,
+    reasonCode: null,
+    decisionPayload: {
+      source: 'ADMIN_TEST',
+      adminId,
+      at: new Date().toISOString(),
+    } as Prisma.InputJsonValue,
+    verifiedName,
+    verifiedDob,
+    verifiedGender,
+    nameMatch: verified,
+    dobMatch: verified,
+    genderMatch: verified,
+  };
+
+  const [record] = await prisma.$transaction([
+    prisma.dlVerification.upsert({
+      where: { veriffSessionId },
+      create: {
+        userId,
+        veriffSessionId,
+        veriffSessionUrl: `https://admin-test.local/dl/${userId}`,
+        ...fields,
+      },
+      update: fields,
+    }),
+    prisma.user.update({
+      where: { id: userId },
+      data: { dlVerified: verified },
+    }),
+  ]);
+
+  logWarn('ADMIN_TEST_DL', { adminId, targetUserId: userId, verified });
+
+  return { record, dlVerified: verified };
 };

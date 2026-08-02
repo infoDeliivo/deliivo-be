@@ -60,3 +60,34 @@ export const registerSessionSchema = z.object({
 });
 
 export type RegisterSessionInput = z.infer<typeof registerSessionSchema>;
+
+// The driver's uploaded licence photo, for manual admin review. The value is the
+// private S3 key returned by the vehicle_draft_document_private upload target — a
+// public URL would defeat the point of storing KYC documents privately.
+export const submitDlDocumentSchema = z.object({
+  documentImageKey: z
+    .string()
+    .min(1, 'A document image key is required')
+    .max(500)
+    .refine((value) => value.startsWith('uploads/vehicle-documents/'), {
+      message: 'Document must be uploaded as a private document (uploads/vehicle-documents/…)',
+    }),
+});
+
+export type SubmitDlDocumentInput = z.infer<typeof submitDlDocumentSchema>;
+
+// Admin decision on a submitted licence.
+export const dlUserIdParamSchema = z.object({
+  userId: z.string().uuid('A valid user id is required'),
+});
+
+export const declineDlSchema = z.object({
+  // Shown to the driver verbatim so they know what to re-upload, so it must say something.
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'A decline reason is required')
+    .max(500, 'Decline reason must be 500 characters or fewer'),
+});
+
+export type DeclineDlInput = z.infer<typeof declineDlSchema>;

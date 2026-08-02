@@ -196,6 +196,70 @@
           }
         }
       }
+    },
+    "/api/v1/admin/users/{id}/dl/verify": {
+      "post": {
+        "operationId": "adminVerifyDlForTest",
+        "summary": "POST admin/users/{id}/dl/verify",
+        "description": "Test-only override: marks a user's driving licence verified without a Veriff round trip. Upserts a synthetic APPROVED `DlVerification` row (identifiable by `decisionPayload.source = \"ADMIN_TEST\"`) and sets `user.dlVerified` to true. Genuine Veriff records are never modified.",
+        "tags": ["Admin"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope" }
+              }
+            }
+          },
+          "400": { "$ref": "../components/responses/errors.yaml#/BadRequest" },
+          "401": { "$ref": "../components/responses/errors.yaml#/Unauthorized" },
+          "403": { "$ref": "../components/responses/errors.yaml#/Forbidden" },
+          "404": { "$ref": "../components/responses/errors.yaml#/NotFound" },
+          "500": { "$ref": "../components/responses/errors.yaml#/ServerError" }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/dl/unverify": {
+      "post": {
+        "operationId": "adminUnverifyDlForTest",
+        "summary": "POST admin/users/{id}/dl/unverify",
+        "description": "Test-only override: clears a user's driving-licence verification. Moves the synthetic `DlVerification` row to DECLINED and sets `user.dlVerified` to false. A genuine APPROVED Veriff record is left as-is, so the flag and the record can legitimately disagree after this call — the flag is the authority.",
+        "tags": ["Admin"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope" }
+              }
+            }
+          },
+          "400": { "$ref": "../components/responses/errors.yaml#/BadRequest" },
+          "401": { "$ref": "../components/responses/errors.yaml#/Unauthorized" },
+          "403": { "$ref": "../components/responses/errors.yaml#/Forbidden" },
+          "404": { "$ref": "../components/responses/errors.yaml#/NotFound" },
+          "500": { "$ref": "../components/responses/errors.yaml#/ServerError" }
+        }
+      }
     }
   }
 }
