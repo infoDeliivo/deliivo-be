@@ -80,6 +80,10 @@ enum DlVerificationStatus {
   RESUBMISSION_REQUESTED
   EXPIRED
   IDENTITY_MISMATCH
+  // A manual submission closed out because Veriff approved the same driver first.
+  // Veriff is the authority, so an admin must not be able to decline it afterwards
+  // and revoke a verification that was legitimately granted.
+  SUPERSEDED
 }
 
 model User {

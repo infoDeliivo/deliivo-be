@@ -58,6 +58,9 @@ export const submitDlDocument = async (userId: string, documentImageKey: string)
 
   if (!user) throw new Error('USER_NOT_FOUND');
   if (user.dlVerified) throw new Error('ALREADY_VERIFIED');
+  // Also refuse when a Veriff approval stands but the flag was cleared (an admin test
+  // override, say) — matches the guard createVeriffSession applies to a new session.
+  if (await isVerifiedElsewhere(userId)) throw new Error('ALREADY_VERIFIED');
 
   const veriffSessionId = manualSessionId(userId);
 
@@ -102,7 +105,9 @@ export const listDlReviewQueue = async (query: DlReviewQueueQuery = {}) => {
 
   const where: Prisma.DlVerificationWhereInput = {
     documentImageKey: { not: null },
-    ...(query.status ? { status: query.status } : {}),
+    // Superseded submissions are settled — hidden by default, but still reachable by
+    // asking for them explicitly.
+    ...(query.status ? { status: query.status } : { status: { not: 'SUPERSEDED' } }),
   };
 
   const [rows, total] = await prisma.$transaction([
@@ -150,15 +155,40 @@ export const listDlReviewQueue = async (query: DlReviewQueueQuery = {}) => {
   };
 };
 
-/** Loads the manual row an admin decision applies to, or throws. */
+/**
+ * True when the user holds an APPROVED verification that is NOT their manual row —
+ * i.e. Veriff (or an admin test override) already verified them through another path.
+ */
+const isVerifiedElsewhere = async (userId: string): Promise<boolean> => {
+  const existing = await prisma.dlVerification.findFirst({
+    where: {
+      userId,
+      status: 'APPROVED',
+      veriffSessionId: { not: manualSessionId(userId) },
+    },
+    select: { id: true },
+  });
+  return existing !== null;
+};
+
+/**
+ * Loads the manual row an admin decision applies to, or throws.
+ *
+ * The two verification guards matter because Veriff is the authority: acting on a
+ * submission it already settled would let a decline revoke a verification that was
+ * legitimately granted. The `isVerifiedElsewhere` check also closes the race where the
+ * webhook lands between an admin loading the queue and clicking Decline.
+ */
 const loadPendingRow = async (userId: string) => {
   const row = await prisma.dlVerification.findUnique({
     where: { veriffSessionId: manualSessionId(userId) },
-    select: { id: true, documentImageKey: true },
+    select: { id: true, documentImageKey: true, status: true },
   });
 
   if (!row) throw new Error('DL_SUBMISSION_NOT_FOUND');
   if (!row.documentImageKey) throw new Error('DL_DOCUMENT_MISSING');
+  if (row.status === 'SUPERSEDED') throw new Error('DL_SUBMISSION_SUPERSEDED');
+  if (await isVerifiedElsewhere(userId)) throw new Error('DL_VERIFIED_ELSEWHERE');
 
   return row;
 };

@@ -7,11 +7,15 @@ const mockPrisma = {
         findFirst: jest.fn(),
         create: jest.fn(),
         update: jest.fn().mockResolvedValue(undefined),
+        // An approval also closes any open manual submission, in one transaction with
+        // the user update.
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     user: {
         findUnique: jest.fn(),
         update: jest.fn().mockResolvedValue(undefined),
     },
+    $transaction: jest.fn((operations: unknown[]) => Promise.all(operations)),
 };
 
 jest.mock('../../config/index.js', () => ({

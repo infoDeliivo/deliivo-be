@@ -16,6 +16,8 @@ const STATUS_BY_CODE: Record<string, HttpStatus> = {
   DL_SUBMISSION_NOT_FOUND: HttpStatus.NOT_FOUND,
   DL_DOCUMENT_MISSING: HttpStatus.BAD_REQUEST,
   ALREADY_VERIFIED: HttpStatus.CONFLICT,
+  DL_SUBMISSION_SUPERSEDED: HttpStatus.CONFLICT,
+  DL_VERIFIED_ELSEWHERE: HttpStatus.CONFLICT,
 };
 
 const MESSAGE_BY_CODE: Record<string, string> = {
@@ -23,6 +25,10 @@ const MESSAGE_BY_CODE: Record<string, string> = {
   DL_SUBMISSION_NOT_FOUND: 'No licence submission found for this user',
   DL_DOCUMENT_MISSING: 'This submission has no licence image to review',
   ALREADY_VERIFIED: 'This driving licence is already verified',
+  DL_SUBMISSION_SUPERSEDED:
+    'This submission was closed because the driver verified through Veriff — reload the queue',
+  DL_VERIFIED_ELSEWHERE:
+    'This driver is already verified through Veriff, so this submission cannot be decided',
 };
 
 /** Maps the service's thrown codes onto HTTP, falling back to a 500. */
