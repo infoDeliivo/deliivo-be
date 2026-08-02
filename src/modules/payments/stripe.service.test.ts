@@ -263,6 +263,8 @@ describe('custom onboarding', () => {
     const accountWithRequirements = {
         id: 'acct_1',
         controller: { requirement_collection: 'application' },
+        country: 'DE',
+        default_currency: 'eur',
         charges_enabled: false,
         payouts_enabled: false,
         details_submitted: false,
@@ -331,6 +333,76 @@ describe('custom onboarding', () => {
         ]);
     });
 
+    it('reports the account country and payout currency the client must collect against', async () => {
+        const requirements = await getConnectRequirements('acct_1');
+
+        expect(requirements.country).toBe('DE');
+        expect(requirements.defaultCurrency).toBe('eur');
+    });
+
+    /**
+     * Stripe fixes an account's country at creation — a platform enabled for one country gets
+     * that country whatever it configured — and then rejects an address from anywhere else with
+     * `account_country_invalid_address`.
+     */
+    it('files the address against the account country, not the submitted one', async () => {
+        await updateConnectPersonalDetails('acct_1', {
+            ...details,
+            address: { ...details.address, country: 'EE' },
+        });
+
+        expect(mockAccountsUpdate.mock.calls[0][1].individual.address.country).toBe('DE');
+    });
+
+    it('falls back to the submitted country when Stripe reports none', async () => {
+        mockAccountsRetrieve.mockResolvedValue({ ...accountWithRequirements, country: undefined });
+
+        await updateConnectPersonalDetails('acct_1', details);
+
+        expect(mockAccountsUpdate.mock.calls[0][1].individual.address.country).toBe('EE');
+    });
+
+    /**
+     * Accounts opened before the platform took over requirement collection are Stripe's to own.
+     * Writing to one comes back as an opaque StripePermissionError, so they are refused up front
+     * with a code the client can act on.
+     */
+    describe('accounts Stripe collects requirements for', () => {
+        beforeEach(() => {
+            mockAccountsRetrieve.mockResolvedValue({
+                ...accountWithRequirements,
+                controller: { requirement_collection: 'stripe' },
+            });
+        });
+
+        it('refuses to file details', async () => {
+            await expect(updateConnectPersonalDetails('acct_1', details)).rejects.toThrow(
+                'CONNECT_ACCOUNT_NOT_EDITABLE'
+            );
+            expect(mockAccountsUpdate).not.toHaveBeenCalled();
+        });
+
+        it('refuses to attach a bank account', async () => {
+            await expect(attachConnectBankAccount('acct_1', 'btok_1abc')).rejects.toThrow(
+                'CONNECT_ACCOUNT_NOT_EDITABLE'
+            );
+            expect(mockCreateExternalAccount).not.toHaveBeenCalled();
+        });
+
+        it('refuses to record terms acceptance', async () => {
+            await expect(acceptConnectTerms('acct_1', { ip: '81.90.1.2' })).rejects.toThrow(
+                'CONNECT_ACCOUNT_NOT_EDITABLE'
+            );
+            expect(mockAccountsUpdate).not.toHaveBeenCalled();
+        });
+
+        it('still reports their requirements, so the client can offer the Stripe flow', async () => {
+            const requirements = await getConnectRequirements('acct_1');
+
+            expect(requirements.requirementCollection).toBe('stripe');
+        });
+    });
+
     it('files the personal details collected in our own form', async () => {
         await updateConnectPersonalDetails('acct_1', details);
 
@@ -345,10 +417,12 @@ describe('custom onboarding', () => {
                 line1: '12 Pikk',
                 city: 'Tallinn',
                 postal_code: '10123',
-                country: 'EE',
+                // The account's country, not the one submitted with the form.
+                country: 'DE',
             },
         });
         expect(params.individual.address.line2).toBeUndefined();
+        expect(params.individual.address.country).toBe('DE');
     });
 
     it('drops a phone the profile stored in a local format rather than failing the update', async () => {

@@ -1,12 +1,5 @@
 import { z } from 'zod';
 
-/**
- * Payouts are single-country, as the driver-facing form states up front. Everything below is
- * validated against that one country: an address or bank account from anywhere else is rejected
- * here rather than by Stripe, so the driver sees a field error instead of a failed submission.
- */
-export const connectCountry = (): string => (process.env.STRIPE_CONNECT_COUNTRY || 'EE').toUpperCase();
-
 /** Stripe rejects an account holder younger than this outright. */
 const MINIMUM_AGE_YEARS = 13;
 /** Anything older is a mistyped year, not a driver. */
@@ -74,19 +67,18 @@ const dobSchema = z
         return { day, month, year };
     });
 
+/**
+ * Accepted but not authoritative. Stripe fixes a connected account's country when the account is
+ * created and will not honour a different one afterwards, so the service files the address
+ * against the account's own country and ignores this. Validating it against a platform-wide
+ * setting rejected every driver whose account was opened in another country.
+ */
 const countrySchema = z
     .string()
     .trim()
     .toUpperCase()
-    .default(connectCountry())
-    .superRefine((value, ctx) => {
-        if (value !== connectCountry()) {
-            ctx.addIssue({
-                code: 'custom',
-                message: `Payouts are only supported for ${connectCountry()} accounts`,
-            });
-        }
-    });
+    .regex(/^[A-Z]{2}$/, 'Country must be a two-letter ISO code')
+    .optional();
 
 export const connectPersonalDetailsSchema = z.object({
     firstName: requiredText('First name', 100),

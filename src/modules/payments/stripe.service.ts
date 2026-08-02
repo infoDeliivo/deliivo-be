@@ -226,6 +226,8 @@ const toRequirements = (account: Stripe.Account): ConnectRequirements => {
     return {
         accountId: account.id,
         requirementCollection: readRequirementCollection(account),
+        country: account.country ?? null,
+        defaultCurrency: account.default_currency ?? null,
         chargesEnabled: account.charges_enabled,
         payoutsEnabled: account.payouts_enabled,
         detailsSubmitted: account.details_submitted,
@@ -246,6 +248,20 @@ const toRequirements = (account: Stripe.Account): ConnectRequirements => {
 };
 
 /**
+ * Accounts created before the platform took over requirement collection are Stripe's to own, and
+ * are not convertible. Refusing them up front turns an opaque `StripePermissionError` into a code
+ * the client can act on by falling back to Stripe's own onboarding.
+ */
+const assertAccountIsPlatformCollected = async (accountId: string): Promise<void> => {
+    const stripe = getStripeClient();
+    const account = await stripe.accounts.retrieve(accountId);
+
+    if (readRequirementCollection(account) !== 'application') {
+        throw new Error('CONNECT_ACCOUNT_NOT_EDITABLE');
+    }
+};
+
+/**
  * What Stripe still wants before payouts run. On controller-based accounts nothing is collected by
  * Stripe, so this list is what the custom onboarding UI renders — there is no hosted screen to fall
  * back on if we guess the fields ourselves.
@@ -257,12 +273,31 @@ export const getConnectRequirements = async (accountId: string): Promise<Connect
     return toRequirements(account);
 };
 
-/** Files the identity details the platform collected in its own form. */
+/**
+ * Files the identity details the platform collected in its own form.
+ *
+ * Two things are taken from the account rather than from the request:
+ *
+ * - The address country. Stripe fixes an account's country at creation — and a platform enabled
+ *   for only one country gets that country whatever it asked for — then rejects an address from
+ *   anywhere else with `account_country_invalid_address`. Trusting a configured country broke
+ *   every driver whose account was opened somewhere else.
+ * - Whether the platform may write these fields at all. On an account Stripe collects
+ *   requirements for, `individual`, `email` and `business_type` are Stripe's to own, and writing
+ *   them fails with a permission error that says nothing useful to the driver.
+ */
 export const updateConnectPersonalDetails = async (
     accountId: string,
     details: ConnectPersonalDetails
 ): Promise<ConnectRequirements> => {
     const stripe = getStripeClient();
+
+    const existing = await stripe.accounts.retrieve(accountId);
+    if (readRequirementCollection(existing) !== 'application') {
+        throw new Error('CONNECT_ACCOUNT_NOT_EDITABLE');
+    }
+
+    const country = existing.country ?? details.address.country;
 
     const account = await stripe.accounts.update(accountId, {
         business_type: 'individual',
@@ -279,7 +314,7 @@ export const updateConnectPersonalDetails = async (
                 city: details.address.city,
                 postal_code: details.address.postalCode,
                 state: cleanText(details.address.state),
-                country: details.address.country,
+                country,
             },
         },
     });
@@ -296,6 +331,7 @@ export const attachConnectBankAccount = async (
     bankAccountToken: string
 ): Promise<ConnectRequirements> => {
     const stripe = getStripeClient();
+    await assertAccountIsPlatformCollected(accountId);
 
     await stripe.accounts.createExternalAccount(accountId, {
         external_account: bankAccountToken,
@@ -315,6 +351,7 @@ export const acceptConnectTerms = async (
     acceptance: { ip: string; userAgent?: string | null }
 ): Promise<ConnectRequirements> => {
     const stripe = getStripeClient();
+    await assertAccountIsPlatformCollected(accountId);
 
     const account = await stripe.accounts.update(accountId, {
         tos_acceptance: {
