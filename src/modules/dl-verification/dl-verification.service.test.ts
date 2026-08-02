@@ -533,6 +533,21 @@ describe('getVerificationStatus', () => {
         );
     });
 
+    // Caught end-to-end: closing a manual submission bumps its updatedAt past the
+    // Veriff row that closed it, so ordering alone reported a verified driver as
+    // SUPERSEDED and every client would have read that as unverified.
+    it('never reports a superseded row as the driver state', async () => {
+        mockPrisma.dlVerification.findMany.mockResolvedValue([]);
+
+        await getVerificationStatus('user-1');
+
+        expect(mockPrisma.dlVerification.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { userId: 'user-1', status: { not: 'SUPERSEDED' } },
+            }),
+        );
+    });
+
     it('reports NOT_STARTED when the driver has no rows', async () => {
         mockPrisma.dlVerification.findMany.mockResolvedValue([]);
 

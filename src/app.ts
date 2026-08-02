@@ -68,6 +68,13 @@ app.use(rateLimiter);
 app.use('/api/v1/payments/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use('/api/v1/payments', paymentsWebhookRouter);
 
+// Veriff signs the exact bytes it sends, so its HMAC can only be checked against an
+// unparsed body — same constraint as Stripe, same placement. The raw parser is scoped
+// to this one path so the authenticated JSON routes under /api/v1/dl-verification
+// still receive parsed bodies.
+app.use('/api/v1/dl-verification/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/v1/dl-verification/webhook', dlVerificationWebhookRouter);
+
 // Now apply JSON parsing for all other routes
 app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));

@@ -544,8 +544,12 @@ export const getVerificationStatus = async (userId: string) => {
   // never moves off the first submission, so a re-upload or a fresh decline would
   // otherwise lose to an older-but-newer-created Veriff row and the driver would
   // never see why they were declined. Matches the admin queue's ordering.
+  // SUPERSEDED is excluded, not merely out-ranked: closing a manual submission bumps
+  // its updatedAt past the Veriff row that closed it, so ordering alone would report a
+  // verified driver as SUPERSEDED and every client reading this would treat them as
+  // unverified. A superseded row is a closed side-record, never the driver's state.
   const records = await prisma.dlVerification.findMany({
-    where: { userId },
+    where: { userId, status: { not: 'SUPERSEDED' } },
     orderBy: { updatedAt: 'desc' },
     take: 1,
   });
