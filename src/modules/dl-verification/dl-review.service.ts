@@ -58,8 +58,8 @@ export const submitDlDocument = async (userId: string, documentImageKey: string)
 
   if (!user) throw new Error('USER_NOT_FOUND');
   if (user.dlVerified) throw new Error('ALREADY_VERIFIED');
-  // Also refuse when a Veriff approval stands but the flag was cleared (an admin test
-  // override, say) — matches the guard createVeriffSession applies to a new session.
+  // Also refuse when a Veriff approval stands but the flag was cleared — matches the
+  // guard createVeriffSession applies to a new session.
   if (await isVerifiedElsewhere(userId)) throw new Error('ALREADY_VERIFIED');
 
   const veriffSessionId = manualSessionId(userId);
@@ -157,7 +157,7 @@ export const listDlReviewQueue = async (query: DlReviewQueueQuery = {}) => {
 
 /**
  * True when the user holds an APPROVED verification that is NOT their manual row —
- * i.e. Veriff (or an admin test override) already verified them through another path.
+ * i.e. Veriff already verified them through another path.
  */
 const isVerifiedElsewhere = async (userId: string): Promise<boolean> => {
   const existing = await prisma.dlVerification.findFirst({
