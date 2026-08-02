@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { prisma } from '../../config/index.js';
 import { logError, logWarn, logDebug } from '../../utils/logger.js';
 import { exactNamesMatch, matchIdentityStrict, normalizeGender } from '../../utils/nameMatch.js';
+import { manualSessionId } from './dl-review.service.js';
 import type { DlVerificationStatus, Prisma } from '@prisma/client';
 
 const VERIFF_BASE_URL = process.env.VERIFF_BASE_URL || 'https://stationapi.veriff.com/v1';
@@ -508,10 +509,22 @@ export const handleWebhookDecision = async (body: unknown) => {
 
   // Only mark the user DL-verified when approved AND the identity matches.
   if (approvedAndMatched) {
-    await prisma.user.update({
-      where: { id: userId },
-      data: { dlVerified: true },
-    });
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: userId },
+        data: { dlVerified: true },
+      }),
+      // Close any open manual submission. Veriff is the authority, so leaving the
+      // upload PENDING would keep it in the admin queue where a decline would
+      // revoke the verification just granted. Scoped to PENDING so a manual row an
+      // admin already decided stays as the historical record it is. updateMany
+      // rather than update: most drivers have no manual row, and this must be a
+      // no-op rather than a throw when nothing matches.
+      prisma.dlVerification.updateMany({
+        where: { veriffSessionId: manualSessionId(userId), status: 'PENDING' },
+        data: { status: 'SUPERSEDED' },
+      }),
+    ]);
   } else if (mappedStatus === 'APPROVED') {
     logWarn('Veriff webhook: DL approved but identity mismatch — verification withheld', {
       sessionId,
@@ -527,9 +540,17 @@ export const handleWebhookDecision = async (body: unknown) => {
 
 // ─── Get DL verification status for a user ─────────────────────────
 export const getVerificationStatus = async (userId: string) => {
+  // Ordered by updatedAt, not createdAt: the manual row is an upsert whose createdAt
+  // never moves off the first submission, so a re-upload or a fresh decline would
+  // otherwise lose to an older-but-newer-created Veriff row and the driver would
+  // never see why they were declined. Matches the admin queue's ordering.
+  // SUPERSEDED is excluded, not merely out-ranked: closing a manual submission bumps
+  // its updatedAt past the Veriff row that closed it, so ordering alone would report a
+  // verified driver as SUPERSEDED and every client reading this would treat them as
+  // unverified. A superseded row is a closed side-record, never the driver's state.
   const records = await prisma.dlVerification.findMany({
-    where: { userId },
-    orderBy: { createdAt: 'desc' },
+    where: { userId, status: { not: 'SUPERSEDED' } },
+    orderBy: { updatedAt: 'desc' },
     take: 1,
   });
 

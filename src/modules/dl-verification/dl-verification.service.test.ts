@@ -3,8 +3,11 @@ const mockPrisma = {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
         create: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn().mockResolvedValue(undefined),
         upsert: jest.fn(),
+        // A Veriff approval closes any open manual submission.
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     user: {
         findUnique: jest.fn(),
@@ -19,6 +22,7 @@ jest.mock('../../config/index.js', () => ({
 }));
 
 import {
+    getVerificationStatus,
     handleWebhookDecision,
     registerVeriffSession,
     setDlVerificationForTest,
@@ -61,6 +65,36 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
                 }),
             }),
         );
+    });
+
+    // Without this, a manual submission left open after Veriff approves stays in the
+    // admin queue, where declining it would revoke the verification just granted.
+    it('closes an open manual submission when it verifies the driver', async () => {
+        await handleWebhookDecision(
+            buildBody('approved', { firstName: 'Jón', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
+        );
+
+        expect(mockPrisma.dlVerification.updateMany).toHaveBeenCalledWith({
+            where: { veriffSessionId: 'manual:user-1', status: 'PENDING' },
+            data: { status: 'SUPERSEDED' },
+        });
+    });
+
+    it('leaves a manual submission an admin already decided alone', async () => {
+        await handleWebhookDecision(
+            buildBody('approved', { firstName: 'Jón', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
+        );
+
+        // Scoped to PENDING, so a DECLINED or APPROVED manual row stays as the record it is.
+        expect(mockPrisma.dlVerification.updateMany.mock.calls[0][0].where.status).toBe('PENDING');
+    });
+
+    it('supersedes nothing when the identity does not match', async () => {
+        await handleWebhookDecision(
+            buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1991-05-15', gender: 'M' }),
+        );
+
+        expect(mockPrisma.dlVerification.updateMany).not.toHaveBeenCalled();
     });
 
     it('blocks with IDENTITY_MISMATCH when the DOB differs', async () => {
@@ -477,6 +511,71 @@ describe('setDlVerificationForTest — admin test override', () => {
             verifiedName: null,
             verifiedDob: null,
             verifiedGender: null,
+        });
+    });
+});
+
+describe('getVerificationStatus', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    // The manual row is an upsert, so its createdAt never moves off the first
+    // submission. Ordering by createdAt would let an older-but-newer-created Veriff
+    // row win, and a driver re-declined today would never see why.
+    it('reads the most recently updated row, not the most recently created', async () => {
+        mockPrisma.dlVerification.findMany.mockResolvedValue([]);
+
+        await getVerificationStatus('user-1');
+
+        expect(mockPrisma.dlVerification.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({ orderBy: { updatedAt: 'desc' }, take: 1 }),
+        );
+    });
+
+    // Caught end-to-end: closing a manual submission bumps its updatedAt past the
+    // Veriff row that closed it, so ordering alone reported a verified driver as
+    // SUPERSEDED and every client would have read that as unverified.
+    it('never reports a superseded row as the driver state', async () => {
+        mockPrisma.dlVerification.findMany.mockResolvedValue([]);
+
+        await getVerificationStatus('user-1');
+
+        expect(mockPrisma.dlVerification.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { userId: 'user-1', status: { not: 'SUPERSEDED' } },
+            }),
+        );
+    });
+
+    it('reports NOT_STARTED when the driver has no rows', async () => {
+        mockPrisma.dlVerification.findMany.mockResolvedValue([]);
+
+        const res = await getVerificationStatus('user-1');
+
+        expect(res.data).toEqual({ status: 'NOT_STARTED', record: null });
+    });
+
+    it('surfaces the decline reason and whether an image is on file', async () => {
+        mockPrisma.dlVerification.findMany.mockResolvedValue([
+            {
+                id: 'rec-1',
+                status: 'DECLINED',
+                veriffSessionId: 'manual:user-1',
+                veriffSessionUrl: '',
+                declineReason: 'Photo is blurred',
+                documentImageKey: 'uploads/vehicle-documents/user-1/dl.jpg',
+                createdAt: new Date('2026-01-01T00:00:00Z'),
+                updatedAt: new Date('2026-08-01T00:00:00Z'),
+            },
+        ]);
+
+        const res = await getVerificationStatus('user-1');
+
+        expect(res.data).toMatchObject({
+            status: 'DECLINED',
+            declineReason: 'Photo is blurred',
+            hasDocument: true,
         });
     });
 });
