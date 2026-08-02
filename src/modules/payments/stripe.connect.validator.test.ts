@@ -24,10 +24,6 @@ const validDetails = {
 };
 
 describe('connectPersonalDetailsSchema', () => {
-    beforeEach(() => {
-        process.env.STRIPE_CONNECT_COUNTRY = 'EE';
-    });
-
     it('accepts a complete submission and splits the dob for Stripe', () => {
         const parsed = connectPersonalDetailsSchema.parse(validDetails);
 
@@ -36,7 +32,12 @@ describe('connectPersonalDetailsSchema', () => {
         expect(parsed.firstName).toBe('John');
     });
 
-    it('defaults the address country to the configured payout country', () => {
+    /**
+     * The country here is advisory: Stripe fixes it on the connected account at creation, so the
+     * service files the address against the account's own country. Validating it against a
+     * configured country rejected every driver whose account was opened elsewhere.
+     */
+    it('accepts a submission with no country at all', () => {
         const { address, ...rest } = validDetails;
         const { country: _country, ...addressWithoutCountry } = address;
 
@@ -45,17 +46,26 @@ describe('connectPersonalDetailsSchema', () => {
             address: addressWithoutCountry,
         });
 
-        expect(parsed.address.country).toBe('EE');
+        expect(parsed.address.country).toBeUndefined();
     });
 
-    it('rejects an address outside the payout country', () => {
+    it('accepts a country other than the configured one, upper-cased', () => {
         const result = connectPersonalDetailsSchema.safeParse({
             ...validDetails,
-            address: { ...validDetails.address, country: 'CA' },
+            address: { ...validDetails.address, country: 'de' },
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.data?.address.country).toBe('DE');
+    });
+
+    it('rejects something that is not a two-letter country code', () => {
+        const result = connectPersonalDetailsSchema.safeParse({
+            ...validDetails,
+            address: { ...validDetails.address, country: 'Estonia' },
         });
 
         expect(result.success).toBe(false);
-        expect(result.error?.issues[0].message).toContain('EE');
     });
 
     it('rejects a driver under Stripe’s minimum age', () => {

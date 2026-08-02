@@ -47,7 +47,12 @@ export interface ConnectPersonalDetails {
         city: string;
         postalCode: string;
         state?: string | null;
-        country: string;
+        /**
+         * Optional and advisory. Stripe fixes a connected account's country when the account is
+         * created, so the service files the address against the account's own country and
+         * ignores whatever arrives here.
+         */
+        country?: string;
     };
 }
 
@@ -69,6 +74,14 @@ export interface ConnectExternalAccount {
 export interface ConnectRequirements {
     accountId: string;
     requirementCollection: ConnectRequirementCollection;
+    /**
+     * The connected account's own country and payout currency. Stripe fixes both when the account
+     * is created — a platform cannot choose a country it is not enabled for, so a configured
+     * preference may be silently overridden — and then rejects an address or bank account from
+     * anywhere else. The client must collect against these, never against a platform-wide setting.
+     */
+    country: string | null;
+    defaultCurrency: string | null;
     chargesEnabled: boolean;
     payoutsEnabled: boolean;
     detailsSubmitted: boolean;

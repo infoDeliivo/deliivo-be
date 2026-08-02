@@ -59,6 +59,23 @@ const describeStripeError = (error: unknown): StripeErrorDetail | undefined => {
     };
 };
 
+/**
+ * An account Stripe collects requirements for cannot be filled in through our own form. It is a
+ * 409 rather than a 500 because nothing failed — the client simply has to send this driver to
+ * Stripe's embedded onboarding instead, which `requirementCollection` on the requirements
+ * response tells it in advance.
+ */
+const isNotEditable = (error: unknown): boolean =>
+    error instanceof Error && error.message === 'CONNECT_ACCOUNT_NOT_EDITABLE';
+
+const notEditableResponse = (res: Response) =>
+    sendError(res, {
+        status: HttpStatus.CONFLICT,
+        message:
+            'This payout account is managed by Stripe. Continue in the Stripe onboarding window to finish setup.',
+        error: { code: 'CONNECT_ACCOUNT_NOT_EDITABLE' },
+    });
+
 const toPrefill = (user: ConnectPrefillUser | null): ConnectAccountPrefill => ({
     firstName: user?.firstName ?? null,
     lastName: user?.lastName ?? null,
@@ -245,6 +262,7 @@ export const connectUpdateDetails = async (req: AuthRequest, res: Response) => {
         return sendSuccess(res, { message: 'Connect details saved', data: requirements });
     } catch (error) {
         logError('[STRIPE_CONNECT] details update failed', error, { userId: req.user?.id });
+        if (isNotEditable(error)) return notEditableResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to save Stripe Connect details',
@@ -264,6 +282,7 @@ export const connectBankAccount = async (req: AuthRequest, res: Response) => {
         return sendSuccess(res, { message: 'Bank account added', data: requirements });
     } catch (error) {
         logError('[STRIPE_CONNECT] bank account failed', error, { userId: req.user?.id });
+        if (isNotEditable(error)) return notEditableResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to add bank account',
@@ -295,6 +314,7 @@ export const connectAcceptTerms = async (req: AuthRequest, res: Response) => {
         return sendSuccess(res, { message: 'Terms acceptance recorded', data: requirements });
     } catch (error) {
         logError('[STRIPE_CONNECT] terms acceptance failed', error, { userId: req.user?.id });
+        if (isNotEditable(error)) return notEditableResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to record terms acceptance',
