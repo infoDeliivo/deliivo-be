@@ -546,6 +546,10 @@ export const getVerificationStatus = async (userId: string) => {
       verificationId: latest.id,
       sessionId: latest.veriffSessionId,
       sessionUrl: latest.veriffSessionUrl,
+      // Set only on the manual-review path: an admin declined and said why, so the
+      // driver can fix the problem and re-upload.
+      declineReason: latest.declineReason,
+      hasDocument: latest.documentImageKey !== null,
       createdAt: latest.createdAt,
       updatedAt: latest.updatedAt,
     },

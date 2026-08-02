@@ -8,6 +8,7 @@ import {
 } from './vehicle.types.js';
 import { DocumentType, VehicleVerificationStatus } from '@prisma/client';
 import { isPrivateDocumentType } from './vehicle-documents.util.js';
+import { hasDlDocumentOnFile } from '../dl-verification/dl-review.service.js';
 import {
     REQUIRED_DOCUMENT_TYPES,
     isPrimaryImageDocumentType,
@@ -189,6 +190,13 @@ export const saveVehicle = async (userId: string) => {
         const missing = REQUIRED_DOCUMENT_TYPES.filter((type) => !supplied.has(type));
         if (missing.length > 0) {
             throw new Error(`VEHICLE_DOCUMENTS_REQUIRED:${missing.join(',')}`);
+        }
+
+        // The driving licence belongs to the person, not the car: it is checked
+        // against the user, not this draft, so a second vehicle does not ask for it
+        // again. An already-verified driver (Veriff or manual) needs no image.
+        if (!user.dlVerified && !(await hasDlDocumentOnFile(userId))) {
+            throw new Error('DL_DOCUMENT_REQUIRED');
         }
     }
 

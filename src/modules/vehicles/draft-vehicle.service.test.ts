@@ -7,6 +7,9 @@ const mockRedis = {
 const mockPrisma = {
     user: { findUnique: jest.fn() },
     vehicle: { count: jest.fn(), create: jest.fn() },
+    // The licence gate reads this: a driver must have a licence image on file (or
+    // already be DL-verified) before a document-required country accepts a vehicle.
+    dlVerification: { findFirst: jest.fn() },
 };
 
 jest.mock('../../cache/redis.js', () => ({
@@ -50,9 +53,12 @@ describe('saveVehicle', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         delete process.env.SKIP_VEHICLE_VERIFICATION;
-        mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-1' });
+        mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-1', dlVerified: false });
         mockPrisma.vehicle.count.mockResolvedValue(0);
         mockPrisma.vehicle.create.mockResolvedValue({ id: 'vehicle-1', documents: [] });
+        // Default: the driver has a licence on file, so the gate is out of the way of
+        // the tests that are about something else.
+        mockPrisma.dlVerification.findFirst.mockResolvedValue({ id: 'dl-1' });
     });
 
     const createArgs = () => mockPrisma.vehicle.create.mock.calls[0][0];
@@ -181,6 +187,44 @@ describe('saveVehicle', () => {
                 isVerified: true,
             });
             expect(createArgs().data.reviewedAt).toBeInstanceOf(Date);
+        });
+    });
+
+    describe('driving licence gate', () => {
+        const fullSet = [frontPhoto, backPhoto, registryDocument];
+
+        it('rejects a document-required country when the driver has no licence on file', async () => {
+            mockRedis.get.mockResolvedValue(draftWith('EE', fullSet));
+            mockPrisma.dlVerification.findFirst.mockResolvedValue(null);
+
+            await expect(DraftVehicleService.saveVehicle('user-1')).rejects.toThrow(
+                'DL_DOCUMENT_REQUIRED',
+            );
+            expect(mockPrisma.vehicle.create).not.toHaveBeenCalled();
+        });
+
+        it('accepts a licence uploaded for an earlier vehicle — it is not asked for again', async () => {
+            mockRedis.get.mockResolvedValue(draftWith('EE', fullSet));
+            mockPrisma.dlVerification.findFirst.mockResolvedValue({ id: 'dl-1' });
+
+            await expect(DraftVehicleService.saveVehicle('user-1')).resolves.toBeDefined();
+            expect(mockPrisma.vehicle.create).toHaveBeenCalled();
+        });
+
+        it('skips the gate for an already DL-verified driver, who has no uploaded image', async () => {
+            mockRedis.get.mockResolvedValue(draftWith('EE', fullSet));
+            mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-1', dlVerified: true });
+            mockPrisma.dlVerification.findFirst.mockResolvedValue(null);
+
+            await expect(DraftVehicleService.saveVehicle('user-1')).resolves.toBeDefined();
+            expect(mockPrisma.dlVerification.findFirst).not.toHaveBeenCalled();
+        });
+
+        it('does not gate a country outside the document-required set', async () => {
+            mockRedis.get.mockResolvedValue(draftWith('GB', []));
+            mockPrisma.dlVerification.findFirst.mockResolvedValue(null);
+
+            await expect(DraftVehicleService.saveVehicle('user-1')).resolves.toBeDefined();
         });
     });
 

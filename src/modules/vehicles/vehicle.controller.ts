@@ -293,12 +293,14 @@ export const saveVehicleFromDraft = async (req: AuthRequest, res: Response) => {
       LICENSE_REQUIRED: HttpStatus.BAD_REQUEST,
       MAX_VEHICLE_LIMIT_REACHED: HttpStatus.CONFLICT,
       VEHICLE_DOCUMENTS_REQUIRED: HttpStatus.BAD_REQUEST,
+      DL_DOCUMENT_REQUIRED: HttpStatus.BAD_REQUEST,
     };
     const messageMap: Record<string, string> = {
       DRAFT_NOT_FOUND: 'No vehicle draft found',
       USER_NOT_FOUND: 'User not found — please sign up or log in again',
       LICENSE_REQUIRED: 'License info is required before saving',
       MAX_VEHICLE_LIMIT_REACHED: 'Maximum vehicle limit reached',
+      DL_DOCUMENT_REQUIRED: 'Upload a photo of your driving licence before adding a vehicle',
     };
 
     // VEHICLE_DOCUMENTS_REQUIRED carries the missing types after a colon so the app can
