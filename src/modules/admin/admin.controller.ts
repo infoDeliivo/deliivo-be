@@ -5,7 +5,6 @@ import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
 import { logError } from '../../utils/logger.js';
 import * as AdminService from './admin.service.js';
 import { createPricingConfig as createPricingConfigService, listPricingConfigs as listPricingConfigsService, updatePricingConfig as updatePricingConfigService } from '../pricing/pricing.service.js';
-import { setDlVerificationForTest } from '../dl-verification/dl-verification.service.js';
 
 /* ================= LIST USERS ================= */
 export const listUsers = async (req: AuthRequest, res: Response) => {
@@ -49,37 +48,6 @@ export const unbanUser = async (req: AuthRequest, res: Response) => {
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to unban user' });
     }
 };
-
-/* ================= TEST DL VERIFICATION ================= */
-// Marks a user's driving licence verified without a Veriff round trip. Admin-only —
-// the router applies authorize('ADMIN') to every route in this module.
-const applyTestDlVerification = async (req: AuthRequest, res: Response, verified: boolean) => {
-    try {
-        const result = await setDlVerificationForTest(
-            req.params.id as string,
-            verified,
-            req.user?.id ?? null,
-        );
-        return sendSuccess(res, {
-            message: verified ? 'DL marked verified' : 'DL verification cleared',
-            data: result,
-        });
-    } catch (error: unknown) {
-        if (error instanceof Error && error.message === 'USER_NOT_FOUND')
-            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
-        logError('Admin test DL verification failed', error);
-        return sendError(res, {
-            status: HttpStatus.INTERNAL_ERROR,
-            message: 'Failed to update DL verification',
-        });
-    }
-};
-
-export const verifyDlForTest = (req: AuthRequest, res: Response) =>
-    applyTestDlVerification(req, res, true);
-
-export const unverifyDlForTest = (req: AuthRequest, res: Response) =>
-    applyTestDlVerification(req, res, false);
 
 /* ================= STATS ================= */
 export const getStats = async (req: AuthRequest, res: Response) => {

@@ -4,7 +4,7 @@
       "get": {
         "operationId": "adminGetVehicles",
         "summary": "GET admin/vehicles",
-        "description": "Vehicle review queue, oldest first. Private documents (the vehicle registry) are returned as `previewKey` only — exchange the key for a short-lived signed URL via `GET /api/v1/uploads/read`, which admins may call for any owner's key.",
+        "description": "Vehicle review queue, oldest first. Private documents (the vehicle registry) are returned as `previewKey` only \u2014 exchange the key for a short-lived signed URL via `GET /api/v1/uploads/read`, which admins may call for any owner's key.",
         "tags": [
           "Admin"
         ],
@@ -197,19 +197,53 @@
         }
       }
     },
-    "/api/v1/admin/users/{id}/dl/verify": {
-      "post": {
-        "operationId": "adminVerifyDlForTest",
-        "summary": "POST admin/users/{id}/dl/verify",
-        "description": "Test-only override: marks a user's driving licence verified without a Veriff round trip. Upserts a synthetic APPROVED `DlVerification` row (identifiable by `decisionPayload.source = \"ADMIN_TEST\"`) and sets `user.dlVerified` to true. Genuine Veriff records are never modified.",
-        "tags": ["Admin"],
-        "security": [{ "BearerAuth": [] }],
+    "/api/v1/admin/dl-verifications": {
+      "get": {
+        "operationId": "adminListDlSubmissions",
+        "summary": "GET admin/dl-verifications",
+        "description": "Driving-licence review queue, oldest first. Only submissions carrying an uploaded image are listed \u2014 a Veriff record has nothing for an admin to look at. The photo is returned as `previewKey`: a private object key exchanged for a short-lived signed URL via `GET /api/v1/uploads/read`. Superseded submissions are hidden unless requested by name.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "format": "uuid" }
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "APPROVED",
+                "DECLINED",
+                "SUPERSEDED",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
           }
         ],
         "responses": {
@@ -217,31 +251,52 @@
             "description": "Success",
             "content": {
               "application/json": {
-                "schema": { "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope" }
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
               }
             }
           },
-          "400": { "$ref": "../components/responses/errors.yaml#/BadRequest" },
-          "401": { "$ref": "../components/responses/errors.yaml#/Unauthorized" },
-          "403": { "$ref": "../components/responses/errors.yaml#/Forbidden" },
-          "404": { "$ref": "../components/responses/errors.yaml#/NotFound" },
-          "500": { "$ref": "../components/responses/errors.yaml#/ServerError" }
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
         }
       }
     },
-    "/api/v1/admin/users/{id}/dl/unverify": {
+    "/api/v1/admin/dl-verifications/{userId}/approve": {
       "post": {
-        "operationId": "adminUnverifyDlForTest",
-        "summary": "POST admin/users/{id}/dl/unverify",
-        "description": "Test-only override: clears a user's driving-licence verification. Moves the synthetic `DlVerification` row to DECLINED and sets `user.dlVerified` to false. A genuine APPROVED Veriff record is left as-is, so the flag and the record can legitimately disagree after this call — the flag is the authority.",
-        "tags": ["Admin"],
-        "security": [{ "BearerAuth": [] }],
+        "operationId": "adminApproveDlSubmission",
+        "summary": "POST admin/dl-verifications/{userId}/approve",
+        "description": "Approves a manually reviewed driving licence. Marks the record APPROVED, stamps the reviewing admin, and sets `user.dlVerified`. The identity match flags are set true because a human read the document against the profile \u2014 that is the identity check on this path.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
-            "name": "id",
+            "name": "userId",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "format": "uuid" }
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -249,15 +304,107 @@
             "description": "Success",
             "content": {
               "application/json": {
-                "schema": { "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope" }
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
               }
             }
           },
-          "400": { "$ref": "../components/responses/errors.yaml#/BadRequest" },
-          "401": { "$ref": "../components/responses/errors.yaml#/Unauthorized" },
-          "403": { "$ref": "../components/responses/errors.yaml#/Forbidden" },
-          "404": { "$ref": "../components/responses/errors.yaml#/NotFound" },
-          "500": { "$ref": "../components/responses/errors.yaml#/ServerError" }
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          },
+          "409": {
+            "description": "The submission was already settled \u2014 it was superseded by a Veriff approval, or the driver is verified through another record"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/dl-verifications/{userId}/decline": {
+      "post": {
+        "operationId": "adminDeclineDlSubmission",
+        "summary": "POST admin/dl-verifications/{userId}/decline",
+        "description": "Declines a manually reviewed driving licence. The reason is shown to the driver verbatim so they know what to re-upload, so it must be non-empty. Clears `user.dlVerified`.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "example": "The photo is blurred \u2014 please re-upload a clear image of the front of your licence."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          },
+          "409": {
+            "description": "The submission was already settled \u2014 it was superseded by a Veriff approval, or the driver is verified through another record"
+          }
         }
       }
     }
