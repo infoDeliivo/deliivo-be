@@ -15,3 +15,7 @@ export const rejectVehicleSchema = z.object({
 });
 
 export type RejectVehicleInput = z.infer<typeof rejectVehicleSchema>;
+
+export const userIdParamSchema = z.object({
+    id: z.string().uuid('A valid user id is required'),
+});
