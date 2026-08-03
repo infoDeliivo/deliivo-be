@@ -267,13 +267,20 @@ export const completeOnBoardingStep1Service = async (
       return { success: false, user: null, reason: 'User not found' };
     }
 
-    if (existingUser.onboardingStatus === enums.OnboardingStatus.COMPLETED) {
-      return { success: false, reason: 'Onboarding already completed' };
-    }
-
     const dob = parseDateOnlyAsUtc(data.dob);
     if (!dob) {
       return { success: false, user: null, reason: 'Invalid date of birth' };
+    }
+
+    if (
+      existingUser.onboardingStatus === enums.OnboardingStatus.COMPLETED &&
+      existingUser.firstName &&
+      existingUser.lastName &&
+      existingUser.salutation &&
+      existingUser.gender &&
+      existingUser.dob
+    ) {
+      return { success: true, user: existingUser, alreadyCompleted: true };
     }
 
     const user = await prisma.user.update({

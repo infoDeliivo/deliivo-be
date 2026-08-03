@@ -192,9 +192,13 @@ export const completeOnBoardingStep1 = async (req: AuthRequest, res: Response) =
       data: {
         id: user!.id,
         firstName: user!.firstName,
+        lastName: user!.lastName,
+        salutation: user!.salutation,
         email: user!.email,
         gender: user!.gender,
+        dob: user!.dob,
         role: user!.role,
+        onboardingStatus: user!.onboardingStatus,
       },
     });
   } catch (error) {
