@@ -381,6 +381,27 @@ const mapRideInfo = (ride: RideWithDetails) => ({
     } : null,
 });
 
+const LEGACY_BOOKING_STATUS_ALIASES: Record<string, BookingStatus> = {
+    PENDING: BookingStatus.DRIVER_PENDING,
+    ACCEPTED: BookingStatus.CONFIRMED,
+    WITHDRAWN: BookingStatus.CANCELLED,
+    REJECTED: BookingStatus.CANCELLED,
+    EXPIRED: BookingStatus.CANCELLED,
+};
+
+const normalizeBookingStatusFilter = (status: unknown): BookingStatus[] => {
+    if (!status) return [];
+    const validStatuses = new Set(Object.values(BookingStatus));
+    return Array.from(new Set(
+        String(status)
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .map((item) => LEGACY_BOOKING_STATUS_ALIASES[item] || item)
+            .filter((item): item is BookingStatus => validStatuses.has(item as BookingStatus))
+    ));
+};
+
 const mapSegmentRideInfo = (
     ride: RideWithDetails,
     pickupWaypointId: string | null,
@@ -1511,9 +1532,7 @@ export const listUserBookings = async (
     query: ListBookingsQuery
 ): Promise<BookingListResponse> => {
     const { status, page = 1, limit = 10 } = query;
-    const statuses = status
-        ? String(status).split(',').filter(Boolean) as BookingStatus[]
-        : [];
+    const statuses = normalizeBookingStatusFilter(status);
 
     const where: Prisma.RideBookingWhereInput = {
         passengerId,
