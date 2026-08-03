@@ -8,6 +8,80 @@ import { createNotification } from '../notification/notification.service.js';
 import { markBookingPaymentRefunded } from '../payments/payment.service.js';
 import { formatBookingReference } from '../../utils/booking-reference.js';
 
+const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
+const UNSTARTED_RIDE_STATUSES = [RideStatus.PUBLISHED, RideStatus.SCHEDULED, RideStatus.READY_TO_START];
+const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
+    BookingStatus.PAYMENT_PENDING,
+    BookingStatus.DRIVER_PENDING,
+    BookingStatus.CONFIRMED,
+    BookingStatus.WAITING_FOR_PICKUP,
+    BookingStatus.DRIVER_ARRIVED,
+    BookingStatus.OTP_PENDING,
+    BookingStatus.ONBOARD,
+    BookingStatus.DROP_PENDING,
+    BookingStatus.IN_PROGRESS,
+];
+
+const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date | null => {
+    const [hoursRaw, minutesRaw] = departureTime.split(':');
+    const hours = Number(hoursRaw);
+    const minutes = Number(minutesRaw);
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        return null;
+    }
+    return new Date(Date.UTC(
+        departureDate.getUTCFullYear(),
+        departureDate.getUTCMonth(),
+        departureDate.getUTCDate(),
+        hours,
+        minutes,
+        0,
+        0,
+    ));
+};
+
+const reconcileDriverRideListStatuses = async (driverId: string) => {
+    const now = new Date();
+    const candidates = await prisma.ride.findMany({
+        where: {
+            driverId,
+            status: { in: UNSTARTED_RIDE_STATUSES },
+            actualStartTime: null,
+            departureDate: { lte: now },
+        },
+        select: {
+            id: true,
+            status: true,
+            departureDate: true,
+            departureTime: true,
+            bookings: { select: { status: true } },
+        },
+    });
+
+    await Promise.all(candidates.map(async (ride) => {
+        const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
+        if (!departureAt || now < departureAt) return;
+
+        const autoCloseAt = new Date(departureAt.getTime() + OVERDUE_CANCEL_AFTER_MINUTES * 60 * 1000);
+        const hasActiveBookings = ride.bookings.some((booking) => ACTIVE_BOOKING_STATUSES.includes(booking.status));
+
+        if (now >= autoCloseAt && !hasActiveBookings) {
+            await prisma.ride.updateMany({
+                where: { id: ride.id, driverId, status: { in: UNSTARTED_RIDE_STATUSES }, actualStartTime: null },
+                data: { status: RideStatus.EXPIRED },
+            });
+            return;
+        }
+
+        if (ride.status === RideStatus.PUBLISHED || ride.status === RideStatus.SCHEDULED) {
+            await prisma.ride.updateMany({
+                where: { id: ride.id, driverId, status: { in: [RideStatus.PUBLISHED, RideStatus.SCHEDULED] }, actualStartTime: null },
+                data: { status: RideStatus.READY_TO_START },
+            });
+        }
+    }));
+};
+
 /* ============================================================
    PUBLISHED RIDE OPERATIONS — DB ONLY
    Draft operations have moved to draft-ride.service.ts (Redis)
@@ -15,6 +89,8 @@ import { formatBookingReference } from '../../utils/booking-reference.js';
 
 /* ================= GET USER RIDES ================= */
 export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
+    await reconcileDriverRideListStatuses(driverId);
+
     const { status } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 10;
