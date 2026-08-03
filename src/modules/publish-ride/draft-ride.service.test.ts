@@ -27,6 +27,9 @@ const mockPrisma = {
     dlVerification: {
         findFirst: jest.fn().mockResolvedValue(null),
     },
+    ride: {
+        findMany: jest.fn().mockResolvedValue([]),
+    },
     $transaction: jest.fn(),
 };
 
@@ -73,6 +76,7 @@ describe('publishRide', () => {
         mockPrisma.user.findUnique.mockResolvedValue(eligibleDriver);
         mockPrisma.vehicle.findFirst.mockResolvedValue(approvedVehicle);
         mockPrisma.dlVerification.findFirst.mockResolvedValue(null);
+        mockPrisma.ride.findMany.mockResolvedValue([]);
         mockGoogleService.placeDetails.mockResolvedValue({
             address_components: [{ short_name: 'EE', types: ['country'] }],
         });
@@ -304,6 +308,44 @@ describe('publishRide', () => {
         await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('FEMALE_ONLY_NOT_ALLOWED');
     });
 
+    it('rejects publishing when the driver already has an overlapping ride', async () => {
+        const departureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        departureDate.setUTCHours(0, 0, 0, 0);
+        const draft = {
+            userId: 'driver-1',
+            step: 13,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originPlaceId: 'origin-place',
+            originAddress: 'Origin',
+            originLat: 10,
+            originLng: 20,
+            destinationPlaceId: 'destination-place',
+            destinationAddress: 'Destination',
+            destinationLat: 11,
+            destinationLng: 21,
+            routePolyline: polyline.encode([[10, 20], [11, 21]]),
+            routeDurationSeconds: 7200,
+            departureDate: departureDate.toISOString(),
+            departureTime: '09:30',
+            totalSeats: 3,
+            basePricePerSeat: 40,
+            pickups: [{ placeId: 'pickup-a', address: 'Pickup A', lat: 10, lng: 20 }],
+            dropoffs: [{ placeId: 'dropoff-a', address: 'Drop-off A', lat: 11, lng: 21 }],
+        };
+
+        mockRedis.get.mockResolvedValue(JSON.stringify(draft));
+        mockPrisma.ride.findMany.mockResolvedValue([{
+            id: 'existing-ride',
+            departureDate,
+            departureTime: '09:30',
+            routeDurationSeconds: 3600,
+        }]);
+
+        await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('DRIVER_RIDE_TIME_CONFLICT');
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it('marks ferry routes as not publishable and blocks final publish', async () => {
         const draft = {
             userId: 'driver-1',
@@ -393,6 +435,40 @@ describe('publishRide', () => {
 
             await DraftRideService.selectRoute('driver-1', 0);
             await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('NON_ROAD_ROUTE_NOT_ALLOWED');
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('queries stopover suggestion points across the full route', async () => {
+        const routePoints = Array.from({ length: 21 }, (_, index) => [index * 0.1, 20] as [number, number]);
+        mockRedis.get.mockResolvedValue(JSON.stringify({
+            userId: 'driver-1',
+            step: 7,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originLat: 0,
+            originLng: 20,
+            routePolyline: polyline.encode(routePoints),
+            routeDistanceMeters: 222000,
+        }));
+
+        const fetchMock = jest.fn().mockResolvedValue({
+            json: async () => ({ results: [] }),
+        });
+        const originalFetch = global.fetch;
+        global.fetch = fetchMock as any;
+
+        try {
+            await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            expect(fetchMock).toHaveBeenCalledTimes(8);
+            const queriedLatitudes = fetchMock.mock.calls.map(([url]) => {
+                const location = new URL(url as string).searchParams.get('location') || '';
+                return Number(location.split(',')[0]);
+            });
+            expect(Math.min(...queriedLatitudes)).toBeLessThan(0.3);
+            expect(Math.max(...queriedLatitudes)).toBeGreaterThan(1.8);
         } finally {
             global.fetch = originalFetch;
         }

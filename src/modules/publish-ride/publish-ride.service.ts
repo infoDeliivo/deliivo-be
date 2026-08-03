@@ -6,6 +6,7 @@ import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-polic
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
 import { createNotification } from '../notification/notification.service.js';
 import { markBookingPaymentRefunded } from '../payments/payment.service.js';
+import { formatBookingReference } from '../../utils/booking-reference.js';
 
 /* ============================================================
    PUBLISHED RIDE OPERATIONS — DB ONLY
@@ -93,7 +94,7 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
     const now = new Date();
     const enhancedRides = rides.map((ride: any) => {
         const enhancedBookings = ride.bookings.map((booking: any) => {
-            const enhanced: any = { ...booking };
+            const enhanced: any = { ...booking, bookingReference: formatBookingReference(booking.id) };
 
             // Add decision deadline info for DRIVER_PENDING bookings
             if (booking.status === 'DRIVER_PENDING' && booking.driverDecisionDeadlineAt) {
@@ -256,7 +257,7 @@ export const getRideById = async (driverId: string, rideId: string) => {
     // Enhance bookings with decision deadline info and stopover times
     const now = new Date();
     const enhancedBookings = ride.bookings.map((booking: any) => {
-        const enhanced: any = { ...booking };
+        const enhanced: any = { ...booking, bookingReference: formatBookingReference(booking.id) };
         const existingDriverRating = ratingByBookingId.get(booking.id);
 
         enhanced.hasDriverRatedPassenger = Boolean(existingDriverRating);

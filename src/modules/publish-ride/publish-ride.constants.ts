@@ -64,6 +64,10 @@ export const PUBLISH_ERROR_MAP: Record<string, PublishErrorMapping> = {
         status: HttpStatus.BAD_REQUEST,
         message: 'Departure must be at least 3 hours from now',
     },
+    DRIVER_RIDE_TIME_CONFLICT: {
+        status: HttpStatus.CONFLICT,
+        message: 'You already have a ride scheduled at this time',
+    },
     CAPACITY_AND_PRICING_REQUIRED: {
         status: HttpStatus.BAD_REQUEST,
         message: 'Seats and pricing are required before publishing',

@@ -1,5 +1,5 @@
 import { prisma } from '../../config/index.js';
-import { BookingStatus } from '@prisma/client';
+import { BookingStatus, RideStatus } from '@prisma/client';
 import type { SendMessageInput, ImagePayload, LocationPayload } from './chat.types.js';
 
 // ============ HELPERS ============
@@ -35,10 +35,23 @@ const getMessagePreview = (type: string, text?: string | null): string => {
  * One user must be the passenger and the other must be the driver of the ride.
  * Only allows chat for CONFIRMED bookings — blocked after ride completion or cancellation.
  */
-export const hasConfirmedBooking = async (userId1: string, userId2: string): Promise<boolean> => {
+const CHAT_ENABLED_BOOKING_STATUSES = [
+    BookingStatus.CONFIRMED,
+    BookingStatus.WAITING_FOR_PICKUP,
+    BookingStatus.DRIVER_ARRIVED,
+    BookingStatus.OTP_PENDING,
+    BookingStatus.IN_PROGRESS,
+    BookingStatus.ONBOARD,
+    BookingStatus.DROP_PENDING,
+    BookingStatus.DRIVER_DROPPED,
+    BookingStatus.COMPLETED,
+];
+
+export const hasActiveRideChat = async (userId1: string, userId2: string): Promise<boolean> => {
     const booking = await prisma.rideBooking.findFirst({
         where: {
-            status: BookingStatus.CONFIRMED,
+            status: { in: CHAT_ENABLED_BOOKING_STATUSES },
+            ride: { status: RideStatus.IN_PROGRESS },
             OR: [
                 // userId1 is passenger, userId2 is driver
                 {
@@ -150,7 +163,14 @@ export const getConversations = async (
         };
     });
 
-    return { items, nextCursor, hasMore };
+    const itemsWithAvailability = await Promise.all(
+        items.map(async (item) => ({
+            ...item,
+            chatAvailable: await hasActiveRideChat(userId, item.peer.id),
+        })),
+    );
+
+    return { conversations: itemsWithAvailability, items: itemsWithAvailability, nextCursor, hasMore };
 };
 
 // ============ MESSAGE OPERATIONS ============
@@ -173,9 +193,9 @@ export const sendMessage = async (senderId: string, data: SendMessageInput) => {
     }
 
     // Check booking authorization — only rider↔driver with a confirmed booking can chat
-    const canChat = await hasConfirmedBooking(senderId, receiverId);
+    const canChat = await hasActiveRideChat(senderId, receiverId);
     if (!canChat) {
-        throw new Error('NO_CONFIRMED_BOOKING');
+        throw new Error('CHAT_NOT_ACTIVE');
     }
 
     // Validate message content based on type
@@ -281,7 +301,10 @@ export const getMessages = async (
     const results = hasMore ? messages.slice(0, limit) : messages;
     const nextCursor = hasMore ? results[results.length - 1].id : null;
 
-    return { messages: results, nextCursor, hasMore };
+    const peerId = conversation.userAId === userId ? conversation.userBId : conversation.userAId;
+    const chatAvailable = await hasActiveRideChat(userId, peerId);
+
+    return { messages: results, nextCursor, hasMore, chatAvailable, peerId };
 };
 
 // ============ RECEIPT OPERATIONS ============

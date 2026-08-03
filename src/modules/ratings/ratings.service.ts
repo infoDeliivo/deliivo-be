@@ -3,6 +3,12 @@ import { prisma } from '../../config/index.js';
 import { SubmitRatingInput, SubmittedRating } from './ratings.types.js';
 
 const round2 = (value: number): number => Number(value.toFixed(2));
+const isDuplicateRatingConstraint = (error: any): boolean => {
+  if (error?.code !== 'P2002') return false;
+  const target = error?.meta?.target;
+  if (!Array.isArray(target)) return true;
+  return target.includes('bookingId') && target.includes('raterId');
+};
 const rateableBookingStatuses: BookingStatus[] = [
   BookingStatus.COMPLETED,
   BookingStatus.NO_SHOW,
@@ -68,48 +74,55 @@ export const submitBookingRating = async (
 
   // Transactional write: create rating + update stats
   const created = await prisma.$transaction(async (tx) => {
-    // Create rating event
-    const rating = await tx.rideRating.create({
-      data: {
-        bookingId: booking.id,
-        rideId: booking.rideId,
-        raterId,
-        rateeId,
-        stars: input.stars,
-        reviewText,
-      },
-    });
-
-    // Query existing stats for ratee
-    const existingStats = await tx.userRatingStats.findUnique({
-      where: { userId: rateeId },
-    });
-
-    if (!existingStats) {
-      // First rating: create stats row
-      await tx.userRatingStats.create({
+    try {
+      // Create rating event
+      const rating = await tx.rideRating.create({
         data: {
-          userId: rateeId,
-          totalRatings: 1,
-          totalStars: input.stars,
-          averageRating: round2(input.stars),
+          bookingId: booking.id,
+          rideId: booking.rideId,
+          raterId,
+          rateeId,
+          stars: input.stars,
+          reviewText,
         },
       });
-    } else {
-      // Subsequent rating: update stats
-      const totalRatings = existingStats.totalRatings + 1;
-      const totalStars = existingStats.totalStars + input.stars;
-      await tx.userRatingStats.update({
+
+      // Query existing stats for ratee
+      const existingStats = await tx.userRatingStats.findUnique({
         where: { userId: rateeId },
-        data: {
-          totalRatings,
-          totalStars,
-          averageRating: round2(totalStars / totalRatings),
-        },
       });
-    }
 
-    return rating;
+      if (!existingStats) {
+        // First rating: create stats row
+        await tx.userRatingStats.create({
+          data: {
+            userId: rateeId,
+            totalRatings: 1,
+            totalStars: input.stars,
+            averageRating: round2(input.stars),
+          },
+        });
+      } else {
+        // Subsequent rating: update stats
+        const totalRatings = existingStats.totalRatings + 1;
+        const totalStars = existingStats.totalStars + input.stars;
+        await tx.userRatingStats.update({
+          where: { userId: rateeId },
+          data: {
+            totalRatings,
+            totalStars,
+            averageRating: round2(totalStars / totalRatings),
+          },
+        });
+      }
+
+      return rating;
+    } catch (error: any) {
+      if (isDuplicateRatingConstraint(error)) {
+        throw new Error('RATING_ALREADY_SUBMITTED');
+      }
+      throw error;
+    }
   });
 
   return {

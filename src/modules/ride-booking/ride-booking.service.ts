@@ -42,6 +42,7 @@ import {
 } from '../payments/payment.service.js';
 import { emitToUsers } from '../../socket/index.js';
 import { calculateAgeYears, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
+import { formatBookingReference } from '../../utils/booking-reference.js';
 import { isBookingWindowClosed } from './booking-window.js';
 
 type RideWaypointDetails = {
@@ -110,6 +111,12 @@ type BookingWithRideDetails = {
     stripePaymentIntentId: string | null;
     paymentCurrency: string | null;
     ride: RideWithDetails;
+    ratings?: Array<{
+        id: string;
+        stars: number;
+        reviewText: string | null;
+        createdAt: Date;
+    }>;
 };
 
 const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
@@ -485,6 +492,7 @@ const mapBookingResponse = (
 
     return {
         id: booking.id,
+        bookingReference: formatBookingReference(booking.id),
         rideId: booking.rideId,
         passengerId: booking.passengerId,
         seatsBooked: booking.seatsBooked,
@@ -553,6 +561,22 @@ const resolveSegmentAddress = (
 ): string => {
     if (!waypointId) return defaultAddress;
     return waypoints.find((waypoint) => waypoint.id === waypointId)?.address ?? defaultAddress;
+};
+
+const assertExplicitMeetingPointsSelected = (
+    ride: { waypoints?: Array<{ waypointType: string }> },
+    resolvedPickupWaypointId: string | null,
+    resolvedDropoffWaypointId: string | null
+) => {
+    const hasConcretePickup = ride.waypoints?.some((waypoint) => waypoint.waypointType === 'PICKUP') ?? false;
+    const hasConcreteDropoff = ride.waypoints?.some((waypoint) => waypoint.waypointType === 'DROPOFF') ?? false;
+
+    if (hasConcretePickup && !resolvedPickupWaypointId) {
+        throw new Error('PICKUP_POINT_REQUIRED');
+    }
+    if (hasConcreteDropoff && !resolvedDropoffWaypointId) {
+        throw new Error('DROPOFF_POINT_REQUIRED');
+    }
 };
 
 const notifyRiderBookingState = async (params: {
@@ -750,6 +774,7 @@ export const createBooking = async (
 
         const resolvedPickupWaypointId = riderView.bookingContext.pickupWaypointId;
         const resolvedDropoffWaypointId = riderView.bookingContext.dropoffWaypointId;
+        assertExplicitMeetingPointsSelected(ride, resolvedPickupWaypointId, resolvedDropoffWaypointId);
 
         // Resolve segment positions for per-segment capacity tracking
         const pickupPoint = points.find(p => p.waypointId === resolvedPickupWaypointId && resolvedPickupWaypointId !== null)
@@ -1418,6 +1443,16 @@ export const getBookingById = async (
                     },
                 },
             },
+            ratings: {
+                where: { raterId: passengerId },
+                select: {
+                    id: true,
+                    stars: true,
+                    reviewText: true,
+                    createdAt: true,
+                },
+                take: 1,
+            },
         },
     });
 
@@ -1431,6 +1466,7 @@ export const getBookingById = async (
         dropOtp: (booking as any).dropOtp ?? null,
         pickupOtpVerifiedAt: booking.pickupOtpVerifiedAt,
         dropOtpVerifiedAt: booking.dropOtpVerifiedAt,
+        ratingByViewer: booking.ratings?.[0] ?? null,
     };
 };
 
@@ -1632,6 +1668,11 @@ export const getBookingPricePreview = async (
     if (!riderView) {
         throw new Error('INVALID_BOOKING_SEGMENT');
     }
+    assertExplicitMeetingPointsSelected(
+        ride,
+        riderView.bookingContext.pickupWaypointId,
+        riderView.bookingContext.dropoffWaypointId
+    );
 
     // Calculate price breakdown
     const priceBreakdown = calculateBookingPrice(

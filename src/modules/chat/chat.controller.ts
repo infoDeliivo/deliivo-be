@@ -74,8 +74,9 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
                 message = 'You cannot send a message to yourself';
                 break;
             case 'NO_CONFIRMED_BOOKING':
+            case 'CHAT_NOT_ACTIVE':
                 status = HttpStatus.FORBIDDEN;
-                message = 'Chat is only available after a booking is confirmed between rider and driver';
+                message = 'Chat is available only while the ride is active';
                 break;
             case 'TEXT_REQUIRED':
                 status = HttpStatus.BAD_REQUEST;
@@ -129,8 +130,9 @@ export const sendImage = async (req: AuthRequest, res: Response) => {
                 message = 'You cannot send a message to yourself';
                 break;
             case 'NO_CONFIRMED_BOOKING':
+            case 'CHAT_NOT_ACTIVE':
                 status = HttpStatus.FORBIDDEN;
-                message = 'Chat is only available after a booking is confirmed between rider and driver';
+                message = 'Chat is available only while the ride is active';
                 break;
         }
 
@@ -175,8 +177,9 @@ export const sendLocation = async (req: AuthRequest, res: Response) => {
                 message = 'You cannot send a message to yourself';
                 break;
             case 'NO_CONFIRMED_BOOKING':
+            case 'CHAT_NOT_ACTIVE':
                 status = HttpStatus.FORBIDDEN;
-                message = 'Chat is only available after a booking is confirmed between rider and driver';
+                message = 'Chat is available only while the ride is active';
                 break;
             case 'LOCATION_REQUIRED':
                 status = HttpStatus.BAD_REQUEST;

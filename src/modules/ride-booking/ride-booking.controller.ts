@@ -83,6 +83,14 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 status = HttpStatus.BAD_REQUEST;
                 message = 'Selected ride segment is invalid';
                 break;
+            case 'PICKUP_POINT_REQUIRED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Choose a pickup point for this ride';
+                break;
+            case 'DROPOFF_POINT_REQUIRED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Choose a drop-off point for this ride';
+                break;
             case 'INVALID_RIDE_DEPARTURE_TIME':
                 status = HttpStatus.BAD_REQUEST;
                 message = 'Ride departure time is invalid';
@@ -352,6 +360,14 @@ export const getBookingPricePreview = async (req: AuthRequest, res: Response) =>
             case 'INVALID_BOOKING_SEGMENT':
                 status = HttpStatus.BAD_REQUEST;
                 message = 'Selected ride segment is invalid';
+                break;
+            case 'PICKUP_POINT_REQUIRED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Choose a pickup point for this ride';
+                break;
+            case 'DROPOFF_POINT_REQUIRED':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'Choose a drop-off point for this ride';
                 break;
             case 'PASSENGER_TOO_YOUNG':
                 status = HttpStatus.FORBIDDEN;

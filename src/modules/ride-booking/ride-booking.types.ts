@@ -88,6 +88,7 @@ export interface BookingSegmentRideInfo extends BookingRideInfo {
 /* ================= BOOKING RESPONSE ================= */
 export interface BookingResponse {
     id: string;
+    bookingReference: string;
     rideId: string;
     passengerId: string;
     seatsBooked: number;
@@ -121,6 +122,12 @@ export interface BookingResponse {
     dropOtp?: string | null;
     pickupOtpVerifiedAt?: Date | null;
     dropOtpVerifiedAt?: Date | null;
+    ratingByViewer?: {
+        id: string;
+        stars: number;
+        reviewText: string | null;
+        createdAt: Date;
+    } | null;
 }
 
 export interface CancelBookingResult {

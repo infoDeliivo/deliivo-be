@@ -729,6 +729,31 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
         },
     });
 
+    const dropoffLocation = input.lat != null && input.lng != null
+        ? await prisma.locationUpdate.create({
+            data: {
+                rideId: booking.rideId,
+                driverId,
+                lat: input.lat,
+                lng: input.lng,
+                timestamp: now,
+            },
+        })
+        : null;
+
+    if (dropoffLocation) {
+        emitToRide(booking.rideId, 'ride:location', {
+            rideId: booking.rideId,
+            lat: dropoffLocation.lat,
+            lng: dropoffLocation.lng,
+            speed: dropoffLocation.speed,
+            heading: dropoffLocation.heading,
+            accuracy: dropoffLocation.accuracy,
+            timestamp: dropoffLocation.timestamp,
+            source: 'driver_dropoff',
+        });
+    }
+
     await recordEvent(booking.rideId, input.bookingId, 'DROPOFF_CONFIRMED_DRIVER', 'DRIVER', driverId, input, {
         validationStatus: geofenceValid ? 'VALID' : 'WARNING',
         metadataJson: {
@@ -773,6 +798,12 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
         geofenceValid,
         distanceMeters,
         dropoffPoint,
+        location: dropoffLocation ? {
+            rideId: dropoffLocation.rideId,
+            lat: dropoffLocation.lat,
+            lng: dropoffLocation.lng,
+            timestamp: dropoffLocation.timestamp,
+        } : null,
     };
 };
 
