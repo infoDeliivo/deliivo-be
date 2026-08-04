@@ -47,7 +47,7 @@ export const avatarUploadSchema = z
     fieldname: z.literal('image'),
     originalname: z.string(),
     encoding: z.string(),
-    mimetype: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+    mimetype: z.enum(['image/jpeg', 'image/png']),
     buffer: z.instanceof(Buffer),
     size: z.number().max(5 * 1024 * 1024),
   })

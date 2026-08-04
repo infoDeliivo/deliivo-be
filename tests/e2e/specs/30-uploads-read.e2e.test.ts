@@ -56,6 +56,37 @@ describe('TC-READ-004 — a stranger cannot read your key either', () => {
   });
 });
 
+describe('TC-PRESIGN-MIME — presign only issues URLs for PNG / JPG', () => {
+  it.each([
+    ['image/jpeg', 'jpg'],
+    ['image/jpeg', 'jpeg'],
+    ['image/png', 'png'],
+  ])('accepts %s / .%s', async (contentType, fileExtension) => {
+    const res = await da.post('/uploads/presign', { target: 'avatar', contentType, fileExtension });
+    expect(res.status).toBe(200);
+    const data = res.data.data ?? res.data;
+    expect(typeof data.uploadUrl).toBe('string');
+  });
+
+  it.each([
+    ['image/webp', 'webp'],
+    ['image/gif', 'gif'],
+    ['application/pdf', 'pdf'],
+  ])('rejects %s / .%s with 400', async (contentType, fileExtension) => {
+    const res = await da.post('/uploads/presign', { target: 'avatar', contentType, fileExtension });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a webp extension paired with an allowed contentType', async () => {
+    const res = await da.post('/uploads/presign', {
+      target: 'avatar',
+      contentType: 'image/png',
+      fileExtension: 'webp',
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('TC-VEH-DOCS — vehicle response includes a documents array with previewKey', () => {
   it('GET /vehicles/:id exposes documents[]', async () => {
     const listRes = await da.get('/vehicles');

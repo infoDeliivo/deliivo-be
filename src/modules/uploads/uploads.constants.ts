@@ -6,8 +6,8 @@
 export const UPLOAD_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
 export const PRESIGN_TTL = 300; // seconds
 
-export const ALLOWED_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
-export const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'] as const;
+export const ALLOWED_CONTENT_TYPES = ['image/jpeg', 'image/png'] as const;
+export const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png'] as const;
 
 export type UploadTarget =
     | 'avatar'
