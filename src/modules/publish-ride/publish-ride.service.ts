@@ -549,9 +549,25 @@ export const startRide = async (driverId: string, rideId: string) => {
         }
     }
 
-    return prisma.ride.update({
-        where: { id: rideId },
-        data: { status: RideStatus.IN_PROGRESS },
+    return prisma.$transaction(async (tx) => {
+        const updatedRide = await tx.ride.update({
+            where: { id: rideId },
+            data: {
+                status: RideStatus.IN_PROGRESS,
+                actualStartTime: new Date(),
+                currentStopSequence: 0,
+            },
+        });
+
+        await tx.rideBooking.updateMany({
+            where: {
+                rideId,
+                status: BookingStatus.CONFIRMED,
+            },
+            data: { status: BookingStatus.WAITING_FOR_PICKUP },
+        });
+
+        return updatedRide;
     });
 };
 
