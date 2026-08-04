@@ -44,14 +44,17 @@ const CHAT_ENABLED_BOOKING_STATUSES = [
     BookingStatus.ONBOARD,
     BookingStatus.DROP_PENDING,
     BookingStatus.DRIVER_DROPPED,
-    BookingStatus.COMPLETED,
 ];
 
 export const hasActiveRideChat = async (userId1: string, userId2: string): Promise<boolean> => {
     const booking = await prisma.rideBooking.findFirst({
         where: {
             status: { in: CHAT_ENABLED_BOOKING_STATUSES },
-            ride: { status: RideStatus.IN_PROGRESS },
+            ride: {
+                actualStartTime: { not: null },
+                actualEndTime: null,
+                status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED] },
+            },
             OR: [
                 // userId1 is passenger, userId2 is driver
                 {

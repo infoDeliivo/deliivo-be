@@ -28,10 +28,14 @@ describe('hasActiveRideChat', () => {
                     in: expect.arrayContaining([
                         BookingStatus.CONFIRMED,
                         BookingStatus.IN_PROGRESS,
-                        BookingStatus.COMPLETED,
+                        BookingStatus.ONBOARD,
                     ]),
                 },
-                ride: { status: RideStatus.IN_PROGRESS },
+                ride: {
+                    actualStartTime: { not: null },
+                    actualEndTime: null,
+                    status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED] },
+                },
                 OR: [
                     { passengerId: 'rider-1', ride: { driverId: 'driver-1' } },
                     { passengerId: 'driver-1', ride: { driverId: 'rider-1' } },
