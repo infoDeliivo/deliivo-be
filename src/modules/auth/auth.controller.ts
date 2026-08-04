@@ -13,6 +13,7 @@ import {
   requestOtpService,
   normalizeAuthIdentifier,
   googleAuthService,
+  temporaryAdminLoginService,
 } from './auth.service.js';
 import { sendMail } from '../mail/mail.service.js';
 import { signupOtpTemplate, loginOtpTemplate, resetOtpTemplate } from '../mail/mail.templates.js';
@@ -77,6 +78,33 @@ export const googleAuth = async (req: Request, res: Response) => {
       return sendError(res, { status: HttpStatus.FORBIDDEN, message: 'Your account has been suspended' });
     }
     return sendError(res, { status: HttpStatus.UNAUTHORIZED, message: 'Google authentication failed' });
+  }
+};
+
+export const temporaryAdminLogin = async (req: Request, res: Response) => {
+  try {
+    const result = await temporaryAdminLoginService(req.body.email, req.body.password);
+
+    return sendSuccess(res, {
+      message: 'Temporary admin login successful',
+      data: {
+        ...result.tokens,
+        next: 'home',
+        user: {
+          id: result.user.id,
+          email: result.user.email,
+          role: result.user.role,
+        },
+      },
+    });
+  } catch (error: any) {
+    if (error.message === 'TEMP_ADMIN_LOGIN_DISABLED') {
+      return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Temporary admin login is unavailable' });
+    }
+    if (error.message === 'TEMP_ADMIN_LOGIN_NOT_CONFIGURED') {
+      return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Temporary admin login is not configured' });
+    }
+    return sendError(res, { status: HttpStatus.UNAUTHORIZED, message: 'Invalid admin credentials' });
   }
 };
 

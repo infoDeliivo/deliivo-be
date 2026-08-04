@@ -138,6 +138,8 @@ Copy `.env.example` to `.env` and fill in values. The table below lists every va
 | `NODE_ENV` | `production` | `production` / `staging` |
 | `LOG_LEVEL` | `info` | Winston log level |
 | `BOOKING_PAYMENT_MODE` | `bypass` | `bypass` (skip Stripe) or `stripe` |
+| `TEMP_ADMIN_LOGIN_ENABLED` | `false` | Enables the temporary admin fallback login endpoint |
+| `TEMP_ADMIN_LOGIN_EMAIL / TEMP_ADMIN_LOGIN_PASSWORD` | - | Required only when temporary admin login is enabled; the email must belong to an existing admin user |
 | `EXPOSE_OTP_IN_RESPONSE` | `false` | Return OTP in signup response — **enable only for testing** |
 | `GOOGLE_MAPS_API_KEY` | — | Required for route computation in publish-ride |
 | `MAIL_HOST / MAIL_PORT / MAIL_USER / MAIL_PASS` | — | SMTP credentials |

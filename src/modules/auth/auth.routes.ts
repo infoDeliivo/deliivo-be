@@ -25,6 +25,11 @@ router.post(
 router.post('/login', validate({ body: schemas.loginSchema }), authController.login);
 router.post('/google', validate({ body: schemas.googleAuthSchema }), authController.googleAuth);
 router.post(
+  '/admin-temp-login',
+  validate({ body: schemas.temporaryAdminLoginSchema }),
+  authController.temporaryAdminLogin,
+);
+router.post(
   '/access-token',
   validate({ body: schemas.refreshTokenSchema }),
   authController.refreshToken,
