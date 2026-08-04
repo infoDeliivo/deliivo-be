@@ -9,6 +9,7 @@ import {
     sendImageSchema,
     sendLocationSchema,
     openConversationSchema,
+    openBookingConversationSchema,
     markReadSchema,
 } from './chat.validator.js';
 
@@ -29,6 +30,13 @@ router.post(
     '/open',
     validate({ body: openConversationSchema }),
     controller.openConversation,
+);
+
+// Open or create a conversation for a specific active booking
+router.post(
+    '/open-booking',
+    validate({ body: openBookingConversationSchema }),
+    controller.openBookingConversation,
 );
 
 // Get messages in a conversation (paginated)

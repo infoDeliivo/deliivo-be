@@ -35,7 +35,7 @@ const getMessagePreview = (type: string, text?: string | null): string => {
  * One user must be the passenger and the other must be the driver of the ride.
  * Only allows chat for CONFIRMED bookings — blocked after ride completion or cancellation.
  */
-const CHAT_ENABLED_BOOKING_STATUSES = [
+const CHAT_ENABLED_BOOKING_STATUSES: BookingStatus[] = [
     BookingStatus.CONFIRMED,
     BookingStatus.WAITING_FOR_PICKUP,
     BookingStatus.DRIVER_ARRIVED,
@@ -46,28 +46,43 @@ const CHAT_ENABLED_BOOKING_STATUSES = [
     BookingStatus.DRIVER_DROPPED,
 ];
 
+const CHAT_CLOSED_RIDE_STATUSES: RideStatus[] = [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED];
+
+const isChatEnabledBookingStatus = (status: BookingStatus): boolean =>
+    CHAT_ENABLED_BOOKING_STATUSES.includes(status);
+
+const isActiveRideSession = (ride: {
+    status: RideStatus;
+    actualStartTime?: Date | null;
+    actualEndTime?: Date | null;
+}): boolean =>
+    !ride.actualEndTime
+    && !CHAT_CLOSED_RIDE_STATUSES.includes(ride.status)
+    && (ride.status === RideStatus.IN_PROGRESS || Boolean(ride.actualStartTime));
+
+const activeRideSessionWhere = () => ({
+    actualEndTime: null,
+    status: { notIn: CHAT_CLOSED_RIDE_STATUSES },
+    OR: [
+        { status: RideStatus.IN_PROGRESS },
+        { actualStartTime: { not: null } },
+    ],
+});
+
 export const hasActiveRideChat = async (userId1: string, userId2: string): Promise<boolean> => {
     const booking = await prisma.rideBooking.findFirst({
         where: {
             status: { in: CHAT_ENABLED_BOOKING_STATUSES },
-            ride: {
-                actualEndTime: null,
-                status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED] },
-                OR: [
-                    { status: RideStatus.IN_PROGRESS },
-                    { actualStartTime: { not: null } },
-                ],
-            },
             OR: [
                 // userId1 is passenger, userId2 is driver
                 {
                     passengerId: userId1,
-                    ride: { driverId: userId2 },
+                    ride: { driverId: userId2, ...activeRideSessionWhere() },
                 },
                 // userId2 is passenger, userId1 is driver
                 {
                     passengerId: userId2,
-                    ride: { driverId: userId1 },
+                    ride: { driverId: userId1, ...activeRideSessionWhere() },
                 },
             ],
         },
@@ -115,6 +130,52 @@ export const openConversation = async (userId: string, receiverId: string) => {
         conversationId: conversation.id,
         chatAvailable,
         peerId: receiverId,
+    };
+};
+
+export const openBookingConversation = async (userId: string, bookingId: string) => {
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        select: {
+            id: true,
+            passengerId: true,
+            status: true,
+            ride: {
+                select: {
+                    driverId: true,
+                    status: true,
+                    actualStartTime: true,
+                    actualEndTime: true,
+                },
+            },
+        },
+    });
+
+    if (!booking) {
+        throw new Error('BOOKING_NOT_FOUND');
+    }
+
+    const peerId = userId === booking.passengerId
+        ? booking.ride.driverId
+        : userId === booking.ride.driverId
+            ? booking.passengerId
+            : null;
+
+    if (!peerId) {
+        throw new Error('FORBIDDEN_BOOKING_PARTICIPANT');
+    }
+
+    if (!isChatEnabledBookingStatus(booking.status) || !isActiveRideSession(booking.ride)) {
+        throw new Error('CHAT_NOT_ACTIVE');
+    }
+
+    const conversation = await getOrCreateConversation(userId, peerId);
+    return {
+        id: conversation.id,
+        conversationId: conversation.id,
+        chatAvailable: true,
+        peerId,
+        bookingId: booking.id,
     };
 };
 

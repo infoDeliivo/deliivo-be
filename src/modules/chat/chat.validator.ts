@@ -61,6 +61,10 @@ export const openConversationSchema = z.object({
     receiverId: z.string().uuid('Invalid receiver ID'),
 });
 
+export const openBookingConversationSchema = z.object({
+    bookingId: z.string().uuid('Invalid booking ID'),
+});
+
 export const markReadSchema = z.object({
     lastReadMessageId: z.string().uuid('Invalid message ID'),
 });

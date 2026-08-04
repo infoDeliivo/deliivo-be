@@ -219,6 +219,38 @@ export const openConversation = async (req: AuthRequest, res: Response) => {
     }
 };
 
+/* ================= OPEN CONVERSATION FOR BOOKING ================= */
+export const openBookingConversation = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await ChatService.openBookingConversation(req.user.id, req.body.bookingId);
+
+        return sendSuccess(res, {
+            message: 'Conversation opened successfully',
+            data: result,
+        });
+    } catch (error: any) {
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to open conversation';
+
+        switch (error.message) {
+            case 'BOOKING_NOT_FOUND':
+                status = HttpStatus.NOT_FOUND;
+                message = 'Booking not found';
+                break;
+            case 'FORBIDDEN_BOOKING_PARTICIPANT':
+                status = HttpStatus.FORBIDDEN;
+                message = 'You cannot open chat for this booking';
+                break;
+            case 'CHAT_NOT_ACTIVE':
+                status = HttpStatus.FORBIDDEN;
+                message = 'Chat is available only while the ride is active';
+                break;
+        }
+
+        return sendError(res, { status, message });
+    }
+};
+
 /* ================= MARK MESSAGES AS READ ================= */
 export const markRead = async (req: AuthRequest, res: Response) => {
     try {

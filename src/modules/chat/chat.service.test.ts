@@ -31,17 +31,31 @@ describe('hasActiveRideChat', () => {
                         BookingStatus.ONBOARD,
                     ]),
                 },
-                ride: {
-                    actualEndTime: null,
-                    status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED] },
-                    OR: [
-                        { status: RideStatus.IN_PROGRESS },
-                        { actualStartTime: { not: null } },
-                    ],
-                },
                 OR: [
-                    { passengerId: 'rider-1', ride: { driverId: 'driver-1' } },
-                    { passengerId: 'driver-1', ride: { driverId: 'rider-1' } },
+                    {
+                        passengerId: 'rider-1',
+                        ride: {
+                            driverId: 'driver-1',
+                            actualEndTime: null,
+                            status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED] },
+                            OR: [
+                                { status: RideStatus.IN_PROGRESS },
+                                { actualStartTime: { not: null } },
+                            ],
+                        },
+                    },
+                    {
+                        passengerId: 'driver-1',
+                        ride: {
+                            driverId: 'rider-1',
+                            actualEndTime: null,
+                            status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED] },
+                            OR: [
+                                { status: RideStatus.IN_PROGRESS },
+                                { actualStartTime: { not: null } },
+                            ],
+                        },
+                    },
                 ],
             },
             select: { id: true },
