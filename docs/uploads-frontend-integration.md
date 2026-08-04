@@ -26,7 +26,7 @@ Auth: all endpoints (except the local receiver) require `Authorization: Bearer <
 | Draft car photo (no vehicleId yet) | `vehicle_draft_document` | – | `{ url, key }` → send `imageUrl` to draft |
 | Draft KYC licence/insurance | `vehicle_draft_document_private` | – | `{ key }` → send `imageKey` to draft |
 
-Constraints: `image/jpeg|png|webp`, ext `jpg|jpeg|png|webp`, max 5MB, presign URL TTL 300s.
+Constraints: `image/jpeg|png`, ext `jpg|jpeg|png`, max 5MB, presign URL TTL 300s.
 
 Special flows (detail below): private KYC in draft → `/vehicles/draft/upload-document` with `imageKey`; view private doc → `documents[].previewKey` → `GET /uploads/read?key=`.
 
@@ -63,8 +63,8 @@ Never skip step 2 before step 3. Confirm checks the object actually exists, and 
 
 ## Constraints
 
-- Allowed content types: `image/jpeg`, `image/png`, `image/webp`
-- Allowed extensions: `jpg`, `jpeg`, `png`, `webp`
+- Allowed content types: `image/jpeg`, `image/png`
+- Allowed extensions: `jpg`, `jpeg`, `png`
 - Max size: **5 MB** (enforced at confirm)
 - Presigned URL TTL: **300 s** — upload promptly after presign
 - `documentType` enum: `VEHICLE_IMAGE`, `VEHICLE_DOCUMENT`, `DRIVING_LICENSE`, `INSURANCE_DOCUMENT`
