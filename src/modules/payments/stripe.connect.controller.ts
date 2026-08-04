@@ -6,6 +6,7 @@ import {
     attachConnectBankAccount,
     createConnectAccountSession,
     createConnectOnboardingLink,
+    deleteConnectBankAccount,
     ensureConnectedAccount,
     getConnectAccountStatus,
     getConnectRequirements,
@@ -248,11 +249,25 @@ const resolveAccountId = async (userId: string): Promise<string> => {
  * connectStatus so the two endpoints cannot disagree about a driver's state.
  */
 const syncOnboardingComplete = async (userId: string, requirements: ConnectRequirements) => {
-    if (!requirements.detailsSubmitted || !requirements.chargesEnabled) return;
+    if (
+        !requirements.detailsSubmitted
+        || !requirements.chargesEnabled
+        || !requirements.payoutsEnabled
+        || requirements.currentlyDue.length > 0
+    ) return;
 
     await prisma.user.updateMany({
         where: { id: userId, stripeOnboardingComplete: false },
         data: { stripeOnboardingComplete: true },
+    });
+};
+
+const syncOnboardingIncomplete = async (userId: string, requirements: ConnectRequirements) => {
+    if (requirements.payoutsEnabled && requirements.currentlyDue.length === 0) return;
+
+    await prisma.user.updateMany({
+        where: { id: userId, stripeOnboardingComplete: true },
+        data: { stripeOnboardingComplete: false },
     });
 };
 
@@ -310,6 +325,34 @@ export const connectBankAccount = async (req: AuthRequest, res: Response) => {
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to add bank account',
+            error: describeStripeError(error),
+        });
+    }
+};
+
+export const connectDeleteBankAccount = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user.id;
+        const externalAccountId = req.params.externalAccountId;
+
+        if (typeof externalAccountId !== 'string' || !externalAccountId) {
+            return sendError(res, {
+                status: HttpStatus.BAD_REQUEST,
+                message: 'Bank account id is required',
+            });
+        }
+
+        const accountId = await resolveAccountId(userId);
+        const requirements = await deleteConnectBankAccount(accountId, externalAccountId);
+        await syncOnboardingIncomplete(userId, requirements);
+
+        return sendSuccess(res, { message: 'Bank account removed', data: requirements });
+    } catch (error) {
+        logError('[STRIPE_CONNECT] bank account delete failed', error, { userId: req.user?.id });
+        if (isNotEditable(error)) return notEditableResponse(res);
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to remove bank account',
             error: describeStripeError(error),
         });
     }

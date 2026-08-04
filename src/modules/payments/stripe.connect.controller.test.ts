@@ -11,6 +11,7 @@ const mockEnsureConnectedAccount = jest.fn();
 const mockGetConnectRequirements = jest.fn();
 const mockUpdatePersonalDetails = jest.fn();
 const mockAttachBankAccount = jest.fn();
+const mockDeleteBankAccount = jest.fn();
 const mockUploadConnectIdentityDocument = jest.fn();
 const mockAcceptTerms = jest.fn();
 const mockCreateConnectAccountSession = jest.fn();
@@ -31,6 +32,7 @@ jest.mock('./stripe.service.js', () => ({
     getConnectRequirements: (...args: unknown[]) => mockGetConnectRequirements(...args),
     updateConnectPersonalDetails: (...args: unknown[]) => mockUpdatePersonalDetails(...args),
     attachConnectBankAccount: (...args: unknown[]) => mockAttachBankAccount(...args),
+    deleteConnectBankAccount: (...args: unknown[]) => mockDeleteBankAccount(...args),
     uploadConnectIdentityDocument: (...args: unknown[]) => mockUploadConnectIdentityDocument(...args),
     acceptConnectTerms: (...args: unknown[]) => mockAcceptTerms(...args),
 }));
@@ -46,6 +48,7 @@ import {
     connectAcceptTerms,
     connectAccountSession,
     connectBankAccount,
+    connectDeleteBankAccount,
     connectIdentityDocument,
     connectRequirements,
     connectStatus,
@@ -383,6 +386,7 @@ describe('custom onboarding endpoints', () => {
         mockGetConnectRequirements.mockResolvedValue(requirements);
         mockUpdatePersonalDetails.mockResolvedValue(requirements);
         mockAttachBankAccount.mockResolvedValue(requirements);
+        mockDeleteBankAccount.mockResolvedValue(requirements);
         mockUploadConnectIdentityDocument.mockResolvedValue(requirements);
         mockAcceptTerms.mockResolvedValue(requirements);
     });
@@ -452,6 +456,26 @@ describe('custom onboarding endpoints', () => {
         expect(mockAttachBankAccount).toHaveBeenCalledWith('acct_1', 'btok_1abc');
     });
 
+    it('removes the saved bank account from the caller account', async () => {
+        mockDeleteBankAccount.mockResolvedValue({
+            ...requirements,
+            payoutsEnabled: false,
+            currentlyDue: ['external_account'],
+            externalAccount: null,
+        });
+
+        const { req, res } = makeReqRes();
+        req.params = { externalAccountId: 'ba_1' };
+        await connectDeleteBankAccount(req, res);
+
+        expect(mockDeleteBankAccount).toHaveBeenCalledWith('acct_1', 'ba_1');
+        expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
+            where: { id: 'user-1', stripeOnboardingComplete: true },
+            data: { stripeOnboardingComplete: false },
+        });
+        expect(mockSendSuccess.mock.calls[0][1].message).toBe('Bank account removed');
+    });
+
     it('uploads an identity document for a platform-managed Connect account', async () => {
         const { req, res } = makeReqRes();
         req.body = Buffer.from('fake-document');
@@ -497,11 +521,12 @@ describe('custom onboarding endpoints', () => {
         expect(mockSendError.mock.calls[0][1].status).toBe('BAD_REQUEST');
     });
 
-    it('marks onboarding complete once Stripe reports the account can take charges', async () => {
+    it('marks onboarding complete once Stripe reports payouts are ready', async () => {
         mockAttachBankAccount.mockResolvedValue({
             ...requirements,
             detailsSubmitted: true,
             chargesEnabled: true,
+            payoutsEnabled: true,
             currentlyDue: [],
         });
 

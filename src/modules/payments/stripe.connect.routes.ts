@@ -4,6 +4,7 @@ import {
     connectAcceptTerms,
     connectAccountSession,
     connectBankAccount,
+    connectDeleteBankAccount,
     connectIdentityDocument,
     connectOnboard,
     connectRequirements,
@@ -22,6 +23,7 @@ const router = Router();
 router.get('/requirements', connectRequirements);
 router.put('/details', validate({ body: connectPersonalDetailsSchema }), connectUpdateDetails);
 router.post('/bank-account', validate({ body: connectBankAccountSchema }), connectBankAccount);
+router.delete('/bank-account/:externalAccountId', connectDeleteBankAccount);
 router.post('/identity-document', connectIdentityDocument);
 router.post('/terms', validate({ body: connectTermsSchema }), connectAcceptTerms);
 

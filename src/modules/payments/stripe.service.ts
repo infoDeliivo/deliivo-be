@@ -342,6 +342,18 @@ export const attachConnectBankAccount = async (
     return getConnectRequirements(accountId);
 };
 
+export const deleteConnectBankAccount = async (
+    accountId: string,
+    externalAccountId: string
+): Promise<ConnectRequirements> => {
+    const stripe = getStripeClient();
+    await assertAccountIsPlatformCollected(accountId);
+
+    await stripe.accounts.deleteExternalAccount(accountId, externalAccountId);
+
+    return getConnectRequirements(accountId);
+};
+
 export const uploadConnectIdentityDocument = async (
     accountId: string,
     upload: ConnectIdentityDocumentUpload

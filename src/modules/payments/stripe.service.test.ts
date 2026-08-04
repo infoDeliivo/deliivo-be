@@ -10,6 +10,7 @@ const mockAccountLinksCreate = jest.fn();
 const mockFilesCreate = jest.fn();
 
 const mockCreateExternalAccount = jest.fn();
+const mockDeleteExternalAccount = jest.fn();
 
 jest.mock('stripe', () => ({
     __esModule: true,
@@ -19,6 +20,7 @@ jest.mock('stripe', () => ({
             retrieve: (...args: unknown[]) => mockAccountsRetrieve(...args),
             update: (...args: unknown[]) => mockAccountsUpdate(...args),
             createExternalAccount: (...args: unknown[]) => mockCreateExternalAccount(...args),
+            deleteExternalAccount: (...args: unknown[]) => mockDeleteExternalAccount(...args),
         },
         accountSessions: {
             create: (...args: unknown[]) => mockAccountSessionsCreate(...args),
@@ -37,6 +39,7 @@ import {
     attachConnectBankAccount,
     createConnectAccountSession,
     createConnectOnboardingLink,
+    deleteConnectBankAccount,
     ensureConnectedAccount,
     getConnectRequirements,
     updateConnectPersonalDetails,
@@ -396,6 +399,13 @@ describe('custom onboarding', () => {
             expect(mockCreateExternalAccount).not.toHaveBeenCalled();
         });
 
+        it('refuses to remove a bank account', async () => {
+            await expect(deleteConnectBankAccount('acct_1', 'ba_1')).rejects.toThrow(
+                'CONNECT_ACCOUNT_NOT_EDITABLE'
+            );
+            expect(mockDeleteExternalAccount).not.toHaveBeenCalled();
+        });
+
         it('refuses to record terms acceptance', async () => {
             await expect(acceptConnectTerms('acct_1', { ip: '81.90.1.2' })).rejects.toThrow(
                 'CONNECT_ACCOUNT_NOT_EDITABLE'
@@ -445,6 +455,12 @@ describe('custom onboarding', () => {
             external_account: 'btok_1abc',
             default_for_currency: true,
         });
+    });
+
+    it('removes a saved bank payout account', async () => {
+        await deleteConnectBankAccount('acct_1', 'ba_1');
+
+        expect(mockDeleteExternalAccount).toHaveBeenCalledWith('acct_1', 'ba_1');
     });
 
     it('surfaces an attached bank account without exposing full account numbers', async () => {
