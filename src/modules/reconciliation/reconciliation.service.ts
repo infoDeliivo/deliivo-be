@@ -96,8 +96,8 @@ export const runDailyReconciliation = async (): Promise<{ staleEscrow: number; l
     let staleEscrow = 0;
     let ledgerIssues = 0;
 
-    // 1. Find payments stuck in HELD_IN_ESCROW for > 72h (should be PAYOUT_ELIGIBLE after 48h)
-    const staleThreshold = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    // 1. Find payments stuck in HELD_IN_ESCROW well past the payout eligibility delay.
+    const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000);
     const stalePayments = await prisma.payment.findMany({
         where: {
             status: PAYMENT_STATUSES.HELD_IN_ESCROW,
@@ -120,7 +120,7 @@ export const runDailyReconciliation = async (): Promise<{ staleEscrow: number; l
                 bookingId: payment.bookingId,
                 issueType: ISSUE_TYPES.STALE_ESCROW,
                 severity: SEVERITY.HIGH,
-                description: `Payment stuck in HELD_IN_ESCROW since ${payment.updatedAt.toISOString()}. Should have moved to PAYOUT_ELIGIBLE after 48h.`,
+                description: `Payment stuck in HELD_IN_ESCROW since ${payment.updatedAt.toISOString()}. Should have moved to PAYOUT_ELIGIBLE after the payout eligibility delay.`,
                 internalState: PAYMENT_STATUSES.HELD_IN_ESCROW,
             },
         });

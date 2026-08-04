@@ -58,12 +58,12 @@ scheduleMaintenanceJob(
     }
 );
 
-// Payout eligibility checker (48h dispute window, runs every 4 hours)
+// Payout eligibility checker. Completed bookings default to eligibility after 30 minutes.
 scheduleMaintenanceJob(
     'payout-eligibility',
     {},
     {
-        repeat: { pattern: '0 */4 * * *' }, // every 4 hours
+        repeat: { pattern: '*/15 * * * *' }, // every 15 minutes
         jobId: 'payout-eligibility',
         removeOnComplete: true,
         removeOnFail: 50,

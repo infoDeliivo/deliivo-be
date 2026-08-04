@@ -138,6 +138,7 @@ Copy `.env.example` to `.env` and fill in values. The table below lists every va
 | `NODE_ENV` | `production` | `production` / `staging` |
 | `LOG_LEVEL` | `info` | Winston log level |
 | `BOOKING_PAYMENT_MODE` | `bypass` | `bypass` (skip Stripe) or `stripe` |
+| `PAYOUT_ELIGIBILITY_DELAY_MINUTES` | `30` | Completed bookings become payout eligible after this many minutes if there is no open dispute |
 | `TEMP_ADMIN_LOGIN_ENABLED` | `false` | Enables the temporary admin fallback login endpoint |
 | `TEMP_ADMIN_LOGIN_EMAIL / TEMP_ADMIN_LOGIN_PASSWORD` | - | Required only when temporary admin login is enabled; the email must belong to an existing admin user |
 | `EXPOSE_OTP_IN_RESPONSE` | `false` | Return OTP in signup response — **enable only for testing** |
