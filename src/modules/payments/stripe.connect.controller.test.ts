@@ -35,7 +35,7 @@ jest.mock('./stripe.service.js', () => ({
 
 jest.mock('../../utils/index.js', () => ({
     __esModule: true,
-    HttpStatus: { INTERNAL_ERROR: 'INTERNAL_ERROR', BAD_REQUEST: 'BAD_REQUEST' },
+    HttpStatus: { INTERNAL_ERROR: 'INTERNAL_ERROR', BAD_REQUEST: 'BAD_REQUEST', CONFLICT: 'CONFLICT' },
     sendError: (...args: unknown[]) => mockSendError(...args),
     sendSuccess: (...args: unknown[]) => mockSendSuccess(...args),
 }));
@@ -389,6 +389,26 @@ describe('custom onboarding endpoints', () => {
 
         expect(mockGetConnectRequirements).toHaveBeenCalledWith('acct_1');
         expect(mockSendSuccess.mock.calls[0][1].data).toEqual(requirements);
+    });
+
+    it('returns an actionable platform profile error when live Connect responsibilities are not reviewed', async () => {
+        mockEnsureConnectedAccount.mockRejectedValue(
+            Object.assign(
+                new Error('Please review the responsibilities of collecting requirements for connected accounts at https://dashboard.stripe.com/settings/connect/platform-profile.'),
+                { type: 'StripeInvalidRequestError' }
+            )
+        );
+
+        const { req, res } = makeReqRes();
+        await connectRequirements(req, res);
+
+        expect(mockSendError.mock.calls[0][1]).toMatchObject({
+            status: 'CONFLICT',
+            error: {
+                code: 'STRIPE_CONNECT_PLATFORM_PROFILE_REQUIRED',
+                dashboardUrl: 'https://dashboard.stripe.com/settings/connect/platform-profile',
+            },
+        });
     });
 
     it('persists an account created on the first requirements call', async () => {

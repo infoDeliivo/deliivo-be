@@ -59,6 +59,26 @@ const describeStripeError = (error: unknown): StripeErrorDetail | undefined => {
     };
 };
 
+const isConnectPlatformProfileRequired = (error: unknown): boolean => {
+    const stripeError = describeStripeError(error);
+    return Boolean(
+        stripeError?.type === 'StripeInvalidRequestError'
+        && stripeError.message.toLowerCase().includes('responsibilities')
+        && stripeError.message.toLowerCase().includes('connected accounts')
+    );
+};
+
+const platformProfileRequiredResponse = (res: Response) =>
+    sendError(res, {
+        status: HttpStatus.CONFLICT,
+        message:
+            'Stripe Connect live setup is incomplete. Review the connected account responsibilities in the Stripe platform profile, then retry payout setup.',
+        error: {
+            code: 'STRIPE_CONNECT_PLATFORM_PROFILE_REQUIRED',
+            dashboardUrl: 'https://dashboard.stripe.com/settings/connect/platform-profile',
+        },
+    });
+
 /**
  * An account Stripe collects requirements for cannot be filled in through our own form. It is a
  * 409 rather than a 500 because nothing failed — the client simply has to send this driver to
@@ -126,6 +146,7 @@ export const connectOnboard = async (req: AuthRequest, res: Response) => {
         });
     } catch (error) {
         logError('[STRIPE_CONNECT] onboard failed', error, { userId: req.user?.id });
+        if (isConnectPlatformProfileRequired(error)) return platformProfileRequiredResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to create Stripe Connect onboarding link',
@@ -186,6 +207,7 @@ export const connectAccountSession = async (req: AuthRequest, res: Response) => 
         });
     } catch (error) {
         logError('[STRIPE_CONNECT] account session failed', error, { userId: req.user?.id });
+        if (isConnectPlatformProfileRequired(error)) return platformProfileRequiredResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to create Stripe Connect account session',
@@ -243,6 +265,7 @@ export const connectRequirements = async (req: AuthRequest, res: Response) => {
         return sendSuccess(res, { message: 'Connect requirements fetched', data: requirements });
     } catch (error) {
         logError('[STRIPE_CONNECT] requirements failed', error, { userId: req.user?.id });
+        if (isConnectPlatformProfileRequired(error)) return platformProfileRequiredResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to fetch Stripe Connect requirements',
