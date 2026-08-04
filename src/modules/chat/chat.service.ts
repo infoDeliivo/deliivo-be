@@ -93,6 +93,25 @@ export const getOrCreateConversation = async (userId1: string, userId2: string) 
     return conversation;
 };
 
+export const openConversation = async (userId: string, receiverId: string) => {
+    if (userId === receiverId) {
+        throw new Error('CANNOT_MESSAGE_SELF');
+    }
+
+    const chatAvailable = await hasActiveRideChat(userId, receiverId);
+    if (!chatAvailable) {
+        throw new Error('CHAT_NOT_ACTIVE');
+    }
+
+    const conversation = await getOrCreateConversation(userId, receiverId);
+    return {
+        id: conversation.id,
+        conversationId: conversation.id,
+        chatAvailable,
+        peerId: receiverId,
+    };
+};
+
 /**
  * Get paginated conversation list for a user with last message and peer info.
  */

@@ -191,6 +191,34 @@ export const sendLocation = async (req: AuthRequest, res: Response) => {
     }
 };
 
+/* ================= OPEN CONVERSATION ================= */
+export const openConversation = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await ChatService.openConversation(req.user.id, req.body.receiverId);
+
+        return sendSuccess(res, {
+            message: 'Conversation opened successfully',
+            data: result,
+        });
+    } catch (error: any) {
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to open conversation';
+
+        switch (error.message) {
+            case 'CANNOT_MESSAGE_SELF':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'You cannot open a conversation with yourself';
+                break;
+            case 'CHAT_NOT_ACTIVE':
+                status = HttpStatus.FORBIDDEN;
+                message = 'Chat is available only while the ride is active';
+                break;
+        }
+
+        return sendError(res, { status, message });
+    }
+};
+
 /* ================= MARK MESSAGES AS READ ================= */
 export const markRead = async (req: AuthRequest, res: Response) => {
     try {
