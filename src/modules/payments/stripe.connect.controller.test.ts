@@ -11,6 +11,7 @@ const mockEnsureConnectedAccount = jest.fn();
 const mockGetConnectRequirements = jest.fn();
 const mockUpdatePersonalDetails = jest.fn();
 const mockAttachBankAccount = jest.fn();
+const mockUploadConnectIdentityDocument = jest.fn();
 const mockAcceptTerms = jest.fn();
 const mockCreateConnectAccountSession = jest.fn();
 const mockSendSuccess = jest.fn();
@@ -30,6 +31,7 @@ jest.mock('./stripe.service.js', () => ({
     getConnectRequirements: (...args: unknown[]) => mockGetConnectRequirements(...args),
     updateConnectPersonalDetails: (...args: unknown[]) => mockUpdatePersonalDetails(...args),
     attachConnectBankAccount: (...args: unknown[]) => mockAttachBankAccount(...args),
+    uploadConnectIdentityDocument: (...args: unknown[]) => mockUploadConnectIdentityDocument(...args),
     acceptConnectTerms: (...args: unknown[]) => mockAcceptTerms(...args),
 }));
 
@@ -44,6 +46,7 @@ import {
     connectAcceptTerms,
     connectAccountSession,
     connectBankAccount,
+    connectIdentityDocument,
     connectRequirements,
     connectStatus,
     connectUpdateDetails,
@@ -380,6 +383,7 @@ describe('custom onboarding endpoints', () => {
         mockGetConnectRequirements.mockResolvedValue(requirements);
         mockUpdatePersonalDetails.mockResolvedValue(requirements);
         mockAttachBankAccount.mockResolvedValue(requirements);
+        mockUploadConnectIdentityDocument.mockResolvedValue(requirements);
         mockAcceptTerms.mockResolvedValue(requirements);
     });
 
@@ -446,6 +450,27 @@ describe('custom onboarding endpoints', () => {
         await connectBankAccount(req, res);
 
         expect(mockAttachBankAccount).toHaveBeenCalledWith('acct_1', 'btok_1abc');
+    });
+
+    it('uploads an identity document for a platform-managed Connect account', async () => {
+        const { req, res } = makeReqRes();
+        req.body = Buffer.from('fake-document');
+        req.query = { side: 'front' };
+        req.get = (header: string) => {
+            if (header === 'content-type') return 'image/jpeg';
+            if (header === 'x-file-name') return 'passport-front.jpg';
+            return undefined;
+        };
+
+        await connectIdentityDocument(req, res);
+
+        expect(mockUploadConnectIdentityDocument).toHaveBeenCalledWith('acct_1', {
+            file: Buffer.from('fake-document'),
+            fileName: 'passport-front.jpg',
+            contentType: 'image/jpeg',
+            side: 'front',
+        });
+        expect(mockSendSuccess.mock.calls[0][1].message).toBe('Identity document uploaded');
     });
 
     it('records terms acceptance with the request IP and user agent', async () => {

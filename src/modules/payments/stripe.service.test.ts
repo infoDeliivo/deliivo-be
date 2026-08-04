@@ -7,6 +7,7 @@ const mockAccountsRetrieve = jest.fn();
 const mockAccountsUpdate = jest.fn();
 const mockAccountSessionsCreate = jest.fn();
 const mockAccountLinksCreate = jest.fn();
+const mockFilesCreate = jest.fn();
 
 const mockCreateExternalAccount = jest.fn();
 
@@ -25,6 +26,9 @@ jest.mock('stripe', () => ({
         accountLinks: {
             create: (...args: unknown[]) => mockAccountLinksCreate(...args),
         },
+        files: {
+            create: (...args: unknown[]) => mockFilesCreate(...args),
+        },
     })),
 }));
 
@@ -36,6 +40,7 @@ import {
     ensureConnectedAccount,
     getConnectRequirements,
     updateConnectPersonalDetails,
+    uploadConnectIdentityDocument,
 } from './stripe.service.js';
 
 const prefill = {
@@ -63,6 +68,8 @@ describe('connected account creation', () => {
 
         mockAccountsCreate.mockResolvedValue({ id: 'acct_new' });
         mockAccountsRetrieve.mockResolvedValue(controllerAccount);
+        mockAccountsUpdate.mockResolvedValue(controllerAccount);
+        mockFilesCreate.mockResolvedValue({ id: 'file_identity_front' });
         mockAccountSessionsCreate.mockResolvedValue({
             client_secret: 'accsess_secret',
             expires_at: 1893456000,
@@ -479,5 +486,32 @@ describe('custom onboarding', () => {
         expect(params.tos_acceptance.ip).toBe('81.90.1.2');
         expect(params.tos_acceptance.user_agent).toBe('Mozilla/5.0');
         expect(params.tos_acceptance.date).toBeGreaterThanOrEqual(before);
+    });
+
+    it('uploads an identity document to Stripe Files and attaches it to the account', async () => {
+        await uploadConnectIdentityDocument('acct_1', {
+            file: Buffer.from('fake-image'),
+            fileName: 'passport-front.jpg',
+            contentType: 'image/jpeg',
+            side: 'front',
+        });
+
+        expect(mockFilesCreate).toHaveBeenCalledWith({
+            purpose: 'identity_document',
+            file: {
+                data: Buffer.from('fake-image'),
+                name: 'passport-front.jpg',
+                type: 'image/jpeg',
+            },
+        });
+        expect(mockAccountsUpdate).toHaveBeenCalledWith('acct_1', {
+            individual: {
+                verification: {
+                    document: {
+                        front: 'file_identity_front',
+                    },
+                },
+            },
+        });
     });
 });

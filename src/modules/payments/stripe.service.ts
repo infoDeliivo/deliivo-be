@@ -6,6 +6,7 @@ import {
     ConnectAccountSessionResult,
     ConnectAccountStatus,
     ConnectExternalAccount,
+    ConnectIdentityDocumentUpload,
     ConnectPersonalDetails,
     ConnectRequirementCollection,
     ConnectRequirements,
@@ -339,6 +340,37 @@ export const attachConnectBankAccount = async (
     });
 
     return getConnectRequirements(accountId);
+};
+
+export const uploadConnectIdentityDocument = async (
+    accountId: string,
+    upload: ConnectIdentityDocumentUpload
+): Promise<ConnectRequirements> => {
+    const stripe = getStripeClient();
+    await assertAccountIsPlatformCollected(accountId);
+
+    const file = await stripe.files.create({
+        purpose: 'identity_document',
+        file: {
+            data: upload.file,
+            name: upload.fileName,
+            type: upload.contentType,
+        },
+    });
+
+    const document = upload.side === 'back'
+        ? { back: file.id }
+        : { front: file.id };
+
+    const account = await stripe.accounts.update(accountId, {
+        individual: {
+            verification: {
+                document,
+            },
+        },
+    });
+
+    return toRequirements(account);
 };
 
 /**

@@ -10,6 +10,7 @@ import {
     getConnectAccountStatus,
     getConnectRequirements,
     updateConnectPersonalDetails,
+    uploadConnectIdentityDocument,
 } from './stripe.service.js';
 import {
     ConnectAccountPrefill,
@@ -309,6 +310,69 @@ export const connectBankAccount = async (req: AuthRequest, res: Response) => {
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to add bank account',
+            error: describeStripeError(error),
+        });
+    }
+};
+
+const IDENTITY_DOCUMENT_MIME = new Set(['image/jpeg', 'image/png', 'application/pdf']);
+
+const readIdentityDocumentSide = (value: unknown) => (
+    value === 'back' ? 'back' : 'front'
+);
+
+const readIdentityDocumentFileName = (req: AuthRequest, fallback: string) => {
+    const header = req.get('x-file-name');
+    if (!header) return fallback;
+    const decoded = (() => {
+        try {
+            return decodeURIComponent(header);
+        } catch {
+            return header;
+        }
+    })();
+    return decoded.replace(/[^\w.\- ]/g, '').trim().slice(0, 120) || fallback;
+};
+
+export const connectIdentityDocument = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user.id;
+        const body = req.body;
+        const file = Buffer.isBuffer(body) ? body : null;
+        const contentType = (req.get('content-type') || '').split(';')[0].trim().toLowerCase();
+
+        if (!file || file.length === 0) {
+            return sendError(res, {
+                status: HttpStatus.BAD_REQUEST,
+                message: 'Identity document file is required',
+            });
+        }
+
+        if (!IDENTITY_DOCUMENT_MIME.has(contentType)) {
+            return sendError(res, {
+                status: HttpStatus.BAD_REQUEST,
+                message: 'Identity document must be a JPG, PNG, or PDF file',
+            });
+        }
+
+        const side = readIdentityDocumentSide(req.query.side);
+        const fallbackName = side === 'back' ? 'identity-document-back' : 'identity-document-front';
+        const accountId = await resolveAccountId(userId);
+        const requirements = await uploadConnectIdentityDocument(accountId, {
+            file,
+            fileName: readIdentityDocumentFileName(req, fallbackName),
+            contentType,
+            side,
+        });
+        await syncOnboardingComplete(userId, requirements);
+
+        return sendSuccess(res, { message: 'Identity document uploaded', data: requirements });
+    } catch (error) {
+        logError('[STRIPE_CONNECT] identity document upload failed', error, { userId: req.user?.id });
+        if (isNotEditable(error)) return notEditableResponse(res);
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to upload Stripe identity document',
             error: describeStripeError(error),
         });
     }

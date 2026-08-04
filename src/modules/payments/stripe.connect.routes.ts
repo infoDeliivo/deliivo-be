@@ -4,6 +4,7 @@ import {
     connectAcceptTerms,
     connectAccountSession,
     connectBankAccount,
+    connectIdentityDocument,
     connectOnboard,
     connectRequirements,
     connectStatus,
@@ -21,6 +22,7 @@ const router = Router();
 router.get('/requirements', connectRequirements);
 router.put('/details', validate({ body: connectPersonalDetailsSchema }), connectUpdateDetails);
 router.post('/bank-account', validate({ body: connectBankAccountSchema }), connectBankAccount);
+router.post('/identity-document', connectIdentityDocument);
 router.post('/terms', validate({ body: connectTermsSchema }), connectAcceptTerms);
 
 // Stripe-rendered onboarding, kept for accounts the API cannot finish on its own.

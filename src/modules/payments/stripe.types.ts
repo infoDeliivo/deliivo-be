@@ -66,6 +66,15 @@ export interface ConnectExternalAccount {
     defaultForCurrency: boolean;
 }
 
+export type ConnectIdentityDocumentSide = 'front' | 'back';
+
+export interface ConnectIdentityDocumentUpload {
+    file: Buffer;
+    fileName: string;
+    contentType: string;
+    side: ConnectIdentityDocumentSide;
+}
+
 /**
  * What Stripe still needs before payouts can run. `currentlyDue` drives the custom onboarding UI:
  * the platform collects requirements itself on controller-based accounts, so this is the only
