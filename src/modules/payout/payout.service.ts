@@ -75,6 +75,21 @@ export const processDriverPayout = async (driverId: string) => {
     const currency = payments[0].currency;
     const totalAmount = payments.reduce((sum, p) => sum + p.fareAmount, 0);
 
+    if (process.env.STRIPE_CONNECT_MOCK_MODE !== 'true') {
+        const driver = await prisma.user.findUnique({
+            where: { id: driverId },
+            select: { stripeAccountId: true, stripeOnboardingComplete: true },
+        });
+
+        if (!driver?.stripeAccountId) {
+            return { driverId, status: 'FAILED', batchId: null, reason: 'NO_STRIPE_ACCOUNT' };
+        }
+
+        if (!driver.stripeOnboardingComplete) {
+            return { driverId, status: 'FAILED', batchId: null, reason: 'STRIPE_ONBOARDING_INCOMPLETE' };
+        }
+    }
+
     // Create batch
     const batch = await prisma.payoutBatch.create({
         data: {
@@ -126,19 +141,17 @@ export const processDriverPayout = async (driverId: string) => {
         return { driverId, status: 'COMPLETED', batchId: batch.id, stripeTransferId: `tr_mock_${batch.id}`, amount: totalAmount };
     }
 
-    // Get driver's Stripe account
-    const driver = await prisma.user.findUnique({ where: { id: driverId }, select: { stripeAccountId: true } });
-    if (!driver?.stripeAccountId) {
-        await prisma.payoutBatch.update({ where: { id: batch.id }, data: { status: 'FAILED', failureReason: 'NO_STRIPE_ACCOUNT' } });
-        return { driverId, status: 'FAILED', batchId: batch.id, reason: 'NO_STRIPE_ACCOUNT' };
-    }
+    const driver = await prisma.user.findUnique({
+        where: { id: driverId },
+        select: { stripeAccountId: true },
+    });
 
     try {
         const stripe = getStripeClient();
         const transfer = await stripe.transfers.create({
             amount: Math.round(totalAmount * 100), // minor units
             currency: currency.toLowerCase(),
-            destination: driver.stripeAccountId,
+            destination: driver!.stripeAccountId!,
             metadata: { payoutBatchId: batch.id, driverId },
         });
 
