@@ -32,9 +32,12 @@ describe('hasActiveRideChat', () => {
                     ]),
                 },
                 ride: {
-                    actualStartTime: { not: null },
                     actualEndTime: null,
                     status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED] },
+                    OR: [
+                        { status: RideStatus.IN_PROGRESS },
+                        { actualStartTime: { not: null } },
+                    ],
                 },
                 OR: [
                     { passengerId: 'rider-1', ride: { driverId: 'driver-1' } },

@@ -51,9 +51,12 @@ export const hasActiveRideChat = async (userId1: string, userId2: string): Promi
         where: {
             status: { in: CHAT_ENABLED_BOOKING_STATUSES },
             ride: {
-                actualStartTime: { not: null },
                 actualEndTime: null,
                 status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED] },
+                OR: [
+                    { status: RideStatus.IN_PROGRESS },
+                    { actualStartTime: { not: null } },
+                ],
             },
             OR: [
                 // userId1 is passenger, userId2 is driver
