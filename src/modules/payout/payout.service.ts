@@ -271,6 +271,30 @@ export const getEligiblePayoutCandidates = async () => {
 };
 
 // ============================================================
+//  AUTO-PROCESS READY DRIVER PAYOUTS
+// ============================================================
+
+export const processEligibleDriverPayouts = async () => {
+    const candidates = await getEligiblePayoutCandidates();
+    const readyCandidates = candidates.filter(
+        candidate => candidate.stripeAccountId && candidate.stripeOnboardingComplete
+    );
+
+    const results = [];
+    for (const candidate of readyCandidates) {
+        results.push(await processDriverPayout(candidate.driverId));
+    }
+
+    return {
+        checkedDrivers: candidates.length,
+        skippedDrivers: candidates.length - readyCandidates.length,
+        processedDrivers: results.filter(result => result.status === 'COMPLETED').length,
+        failedDrivers: results.filter(result => result.status === 'FAILED').length,
+        results,
+    };
+};
+
+// ============================================================
 //  DRIVER PAYOUT HISTORY
 // ============================================================
 

@@ -70,6 +70,18 @@ scheduleMaintenanceJob(
     }
 );
 
+// Automatic driver payout transfer. Runs once daily at 00:05 server time.
+scheduleMaintenanceJob(
+    'auto-driver-payouts',
+    {},
+    {
+        repeat: { pattern: process.env.AUTO_PROCESS_DRIVER_PAYOUTS_CRON || '5 0 * * *' },
+        jobId: 'auto-driver-payouts',
+        removeOnComplete: true,
+        removeOnFail: 50,
+    }
+);
+
 // Ride-overdue checker: promotes overdue rides and cleans up rides that never started
 scheduleMaintenanceJob(
     'ride-overdue-check',
@@ -591,6 +603,15 @@ export const maintenanceWorker = new Worker(
         if (job.name === 'payout-eligibility') {
             const { checkAndMarkEligible } = await import('../modules/payout/payout.service.js');
             await checkAndMarkEligible();
+            return;
+        }
+
+        if (job.name === 'auto-driver-payouts') {
+            const { checkAndMarkEligible, processEligibleDriverPayouts } = await import('../modules/payout/payout.service.js');
+            await checkAndMarkEligible();
+            if (process.env.AUTO_PROCESS_DRIVER_PAYOUTS !== 'false') {
+                await processEligibleDriverPayouts();
+            }
             return;
         }
 
