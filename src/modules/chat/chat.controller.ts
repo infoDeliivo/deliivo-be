@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import * as ChatService from './chat.service.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
-import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
+import { sendSuccess, sendError, HttpStatus, logError } from '../../utils/index.js';
 import type { ImagePayload, LocationPayload } from './chat.types.js';
 
 /* ================= LIST CONVERSATIONS ================= */
@@ -41,6 +41,13 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
             data: result,
         });
     } catch (error: any) {
+        logError('Failed to fetch chat messages', error, {
+            requestId: res.locals.requestId,
+            userId: req.user.id,
+            conversationId: req.params.conversationId,
+            bookingId: req.query.bookingId,
+        });
+
         if (error.message === 'CONVERSATION_NOT_FOUND') {
             return sendError(res, {
                 status: HttpStatus.NOT_FOUND,

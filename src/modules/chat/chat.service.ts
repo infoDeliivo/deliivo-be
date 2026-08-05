@@ -108,6 +108,41 @@ type BookingChatContext = {
     };
 };
 
+type ConversationChatContext = {
+    id: string;
+    userAId: string;
+    userBId: string;
+};
+
+type MessageRow = {
+    id: string;
+    conversationId: string;
+    senderId: string;
+    receiverId: string;
+    type: string;
+    text: string | null;
+    payloadJson: unknown;
+    clientMsgId: string | null;
+    deliveredAt: Date | null;
+    readAt: Date | null;
+    createdAt: Date;
+};
+
+const getConversationChatContext = async (
+    userId: string,
+    conversationId: string,
+): Promise<ConversationChatContext | null> => {
+    const rows = await prisma.$queryRaw<ConversationChatContext[]>(Prisma.sql`
+        SELECT "id", "userAId", "userBId"
+        FROM "Conversation"
+        WHERE "id" = ${conversationId}
+          AND ("userAId" = ${userId} OR "userBId" = ${userId})
+        LIMIT 1
+    `);
+
+    return rows[0] || null;
+};
+
 const getBookingChatContext = async (bookingId: string): Promise<BookingChatContext | null> => {
     const rows = await prisma.$queryRaw<Array<{
         id: string;
@@ -146,6 +181,63 @@ const getBookingChatContext = async (bookingId: string): Promise<BookingChatCont
             actualEndTime: row.actualEndTime,
         },
     };
+};
+
+const getConversationMessages = async (
+    conversationId: string,
+    cursor: string | undefined,
+    limit: number,
+): Promise<MessageRow[]> => {
+    if (cursor) {
+        const cursorRows = await prisma.$queryRaw<Array<{ createdAt: Date }>>(Prisma.sql`
+            SELECT "createdAt"
+            FROM "Message"
+            WHERE "id" = ${cursor}
+              AND "conversationId" = ${conversationId}
+            LIMIT 1
+        `);
+        const cursorCreatedAt = cursorRows[0]?.createdAt;
+        if (!cursorCreatedAt) return [];
+
+        return prisma.$queryRaw<MessageRow[]>(Prisma.sql`
+            SELECT
+                "id",
+                "conversationId",
+                "senderId",
+                "receiverId",
+                "type"::text AS "type",
+                "text",
+                "payloadJson",
+                "clientMsgId",
+                "deliveredAt",
+                "readAt",
+                "createdAt"
+            FROM "Message"
+            WHERE "conversationId" = ${conversationId}
+              AND "createdAt" < ${cursorCreatedAt}
+            ORDER BY "createdAt" DESC
+            LIMIT ${limit + 1}
+        `);
+    }
+
+    return prisma.$queryRaw<MessageRow[]>(Prisma.sql`
+        SELECT
+            "id",
+            "conversationId",
+            "senderId",
+            "receiverId",
+            "type"::text AS "type",
+            "text",
+            "payloadJson",
+            "clientMsgId",
+            "deliveredAt",
+            "readAt",
+            "createdAt"
+        FROM "Message"
+        WHERE "conversationId" = ${conversationId}
+        ORDER BY "createdAt" DESC
+        LIMIT ${limit + 1}
+    `);
 };
 
 const activeRideSessionWhere = () => ({
@@ -460,40 +552,13 @@ export const getMessages = async (
     limit: number = 30,
     bookingId?: string,
 ) => {
-    // Verify user is participant
-    const conversation = await prisma.conversation.findFirst({
-        where: {
-            id: conversationId,
-            OR: [{ userAId: userId }, { userBId: userId }],
-        },
-    });
+    const conversation = await getConversationChatContext(userId, conversationId);
 
     if (!conversation) {
         throw new Error('CONVERSATION_NOT_FOUND');
     }
 
-    const messages = await prisma.message.findMany({
-        where: { conversationId },
-        orderBy: { createdAt: 'desc' },
-        take: limit + 1,
-        ...(cursor && {
-            cursor: { id: cursor },
-            skip: 1,
-        }),
-        select: {
-            id: true,
-            conversationId: true,
-            senderId: true,
-            receiverId: true,
-            type: true,
-            text: true,
-            payloadJson: true,
-            clientMsgId: true,
-            deliveredAt: true,
-            readAt: true,
-            createdAt: true,
-        },
-    });
+    const messages = await getConversationMessages(conversationId, cursor, limit);
 
     const hasMore = messages.length > limit;
     const results = hasMore ? messages.slice(0, limit) : messages;
