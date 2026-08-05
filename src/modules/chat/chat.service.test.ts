@@ -66,4 +66,34 @@ describe('hasActiveRideChat', () => {
         await expect(hasActiveRideChatForBooking('rider-1', 'driver-1', 'booking-1')).resolves.toBe(true);
         await expect(hasActiveRideChatForBooking('driver-1', 'rider-1', 'booking-1')).resolves.toBe(true);
     });
+
+    it('allows pending booking chat only after the ride session has started', async () => {
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            id: 'booking-1',
+            passengerId: 'rider-1',
+            status: BookingStatus.DRIVER_PENDING,
+            ride: {
+                driverId: 'driver-1',
+                status: RideStatus.IN_PROGRESS,
+                actualStartTime: new Date(),
+                actualEndTime: null,
+            },
+        });
+
+        await expect(hasActiveRideChatForBooking('rider-1', 'driver-1', 'booking-1')).resolves.toBe(true);
+
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            id: 'booking-1',
+            passengerId: 'rider-1',
+            status: BookingStatus.DRIVER_PENDING,
+            ride: {
+                driverId: 'driver-1',
+                status: RideStatus.PUBLISHED,
+                actualStartTime: null,
+                actualEndTime: null,
+            },
+        });
+
+        await expect(hasActiveRideChatForBooking('rider-1', 'driver-1', 'booking-1')).resolves.toBe(false);
+    });
 });

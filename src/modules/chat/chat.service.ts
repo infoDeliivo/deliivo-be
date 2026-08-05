@@ -36,6 +36,8 @@ const getMessagePreview = (type: string, text?: string | null): string => {
  * Chat stays writable during ride-day booking states and closes when the ride closes.
  */
 const CHAT_PRE_START_BOOKING_STATUSES: BookingStatus[] = [
+    BookingStatus.PAYMENT_PENDING,
+    BookingStatus.DRIVER_PENDING,
     BookingStatus.CONFIRMED,
 ];
 
