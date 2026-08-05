@@ -1,4 +1,5 @@
 const mockPrisma = {
+    $queryRaw: jest.fn(),
     rideBooking: {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
@@ -51,48 +52,42 @@ describe('hasActiveRideChat', () => {
     });
 
     it('allows chat for the exact active booking context', async () => {
-        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+        mockPrisma.$queryRaw.mockResolvedValue([{
             id: 'booking-1',
             passengerId: 'rider-1',
             status: BookingStatus.WAITING_FOR_PICKUP,
-            ride: {
-                driverId: 'driver-1',
-                status: RideStatus.IN_PROGRESS,
-                actualStartTime: new Date(),
-                actualEndTime: null,
-            },
-        });
+            driverId: 'driver-1',
+            rideStatus: RideStatus.IN_PROGRESS,
+            actualStartTime: new Date(),
+            actualEndTime: null,
+        }]);
 
         await expect(hasActiveRideChatForBooking('rider-1', 'driver-1', 'booking-1')).resolves.toBe(true);
         await expect(hasActiveRideChatForBooking('driver-1', 'rider-1', 'booking-1')).resolves.toBe(true);
     });
 
     it('allows pending booking chat only after the ride session has started', async () => {
-        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+        mockPrisma.$queryRaw.mockResolvedValue([{
             id: 'booking-1',
             passengerId: 'rider-1',
             status: BookingStatus.DRIVER_PENDING,
-            ride: {
-                driverId: 'driver-1',
-                status: RideStatus.IN_PROGRESS,
-                actualStartTime: new Date(),
-                actualEndTime: null,
-            },
-        });
+            driverId: 'driver-1',
+            rideStatus: RideStatus.IN_PROGRESS,
+            actualStartTime: new Date(),
+            actualEndTime: null,
+        }]);
 
         await expect(hasActiveRideChatForBooking('rider-1', 'driver-1', 'booking-1')).resolves.toBe(true);
 
-        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+        mockPrisma.$queryRaw.mockResolvedValue([{
             id: 'booking-1',
             passengerId: 'rider-1',
             status: BookingStatus.DRIVER_PENDING,
-            ride: {
-                driverId: 'driver-1',
-                status: RideStatus.PUBLISHED,
-                actualStartTime: null,
-                actualEndTime: null,
-            },
-        });
+            driverId: 'driver-1',
+            rideStatus: RideStatus.PUBLISHED,
+            actualStartTime: null,
+            actualEndTime: null,
+        }]);
 
         await expect(hasActiveRideChatForBooking('rider-1', 'driver-1', 'booking-1')).resolves.toBe(false);
     });

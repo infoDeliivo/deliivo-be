@@ -1,5 +1,5 @@
 import { prisma } from '../../config/index.js';
-import { BookingStatus, RideStatus } from '@prisma/client';
+import { BookingStatus, Prisma, RideStatus } from '@prisma/client';
 import type { SendMessageInput, ImagePayload, LocationPayload } from './chat.types.js';
 
 // ============ HELPERS ============
@@ -60,40 +60,92 @@ const CHAT_ENABLED_BOOKING_STATUSES: BookingStatus[] = [
 const CHAT_CLOSED_RIDE_STATUSES: RideStatus[] = [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED];
 
 const isActiveRideSession = (ride: {
-    status: RideStatus;
+    status: RideStatus | string;
     actualStartTime?: Date | null;
     actualEndTime?: Date | null;
 }): boolean =>
     !ride.actualEndTime
-    && !CHAT_CLOSED_RIDE_STATUSES.includes(ride.status)
+    && !(CHAT_CLOSED_RIDE_STATUSES as readonly string[]).includes(ride.status)
     && (ride.status === RideStatus.IN_PROGRESS || Boolean(ride.actualStartTime));
 
 const isOpenRideSession = (ride: {
-    status: RideStatus;
+    status: RideStatus | string;
     actualEndTime?: Date | null;
 }): boolean =>
     !ride.actualEndTime
-    && !CHAT_CLOSED_RIDE_STATUSES.includes(ride.status);
+    && !(CHAT_CLOSED_RIDE_STATUSES as readonly string[]).includes(ride.status);
 
 const isChatAvailableForBooking = (
     booking: {
-        status: BookingStatus;
+        status: BookingStatus | string;
         ride: {
-            status: RideStatus;
+            status: RideStatus | string;
             actualStartTime?: Date | null;
             actualEndTime?: Date | null;
         };
     }
 ): boolean => {
-    if (CHAT_PRE_START_BOOKING_STATUSES.includes(booking.status)) {
+    if ((CHAT_PRE_START_BOOKING_STATUSES as readonly string[]).includes(booking.status)) {
         return isActiveRideSession(booking.ride);
     }
 
-    if (CHAT_RIDE_DAY_BOOKING_STATUSES.includes(booking.status)) {
+    if ((CHAT_RIDE_DAY_BOOKING_STATUSES as readonly string[]).includes(booking.status)) {
         return isOpenRideSession(booking.ride);
     }
 
     return false;
+};
+
+type BookingChatContext = {
+    id: string;
+    passengerId: string;
+    status: string;
+    ride: {
+        driverId: string;
+        status: string;
+        actualStartTime: Date | null;
+        actualEndTime: Date | null;
+    };
+};
+
+const getBookingChatContext = async (bookingId: string): Promise<BookingChatContext | null> => {
+    const rows = await prisma.$queryRaw<Array<{
+        id: string;
+        passengerId: string;
+        status: string;
+        driverId: string;
+        rideStatus: string;
+        actualStartTime: Date | null;
+        actualEndTime: Date | null;
+    }>>(Prisma.sql`
+        SELECT
+            b."id",
+            b."passengerId",
+            b."status"::text AS "status",
+            r."driverId",
+            r."status"::text AS "rideStatus",
+            r."actualStartTime",
+            r."actualEndTime"
+        FROM "RideBooking" b
+        JOIN "Ride" r ON r."id" = b."rideId"
+        WHERE b."id" = ${bookingId}
+        LIMIT 1
+    `);
+
+    const row = rows[0];
+    if (!row) return null;
+
+    return {
+        id: row.id,
+        passengerId: row.passengerId,
+        status: row.status,
+        ride: {
+            driverId: row.driverId,
+            status: row.rideStatus,
+            actualStartTime: row.actualStartTime,
+            actualEndTime: row.actualEndTime,
+        },
+    };
 };
 
 const activeRideSessionWhere = () => ({
@@ -153,22 +205,7 @@ export const hasActiveRideChatForBooking = async (
     peerId: string,
     bookingId: string,
 ): Promise<boolean> => {
-    const booking = await prisma.rideBooking.findUnique({
-        where: { id: bookingId },
-        select: {
-            id: true,
-            passengerId: true,
-            status: true,
-            ride: {
-                select: {
-                    driverId: true,
-                    status: true,
-                    actualStartTime: true,
-                    actualEndTime: true,
-                },
-            },
-        },
-    });
+    const booking = await getBookingChatContext(bookingId);
 
     if (!booking) return false;
 
@@ -221,22 +258,7 @@ export const openConversation = async (userId: string, receiverId: string) => {
 };
 
 export const openBookingConversation = async (userId: string, bookingId: string) => {
-    const booking = await prisma.rideBooking.findUnique({
-        where: { id: bookingId },
-        select: {
-            id: true,
-            passengerId: true,
-            status: true,
-            ride: {
-                select: {
-                    driverId: true,
-                    status: true,
-                    actualStartTime: true,
-                    actualEndTime: true,
-                },
-            },
-        },
-    });
+    const booking = await getBookingChatContext(bookingId);
 
     if (!booking) {
         throw new Error('BOOKING_NOT_FOUND');
