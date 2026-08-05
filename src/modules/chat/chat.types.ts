@@ -4,6 +4,7 @@ export interface SendMessageInput {
     receiverId: string;
     text?: string;
     clientMsgId: string;
+    bookingId?: string;
     type?: 'TEXT' | 'IMAGE' | 'FILE' | 'LOCATION' | 'SYSTEM';
     payloadJson?: Record<string, unknown>;
 }

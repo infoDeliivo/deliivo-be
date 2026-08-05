@@ -26,13 +26,14 @@ export const getConversations = async (req: AuthRequest, res: Response) => {
 export const getMessages = async (req: AuthRequest, res: Response) => {
     try {
         const conversationId = req.params.conversationId as string;
-        const { cursor, limit } = req.query as { cursor?: string; limit?: number };
+        const { cursor, limit, bookingId } = req.query as { cursor?: string; limit?: number; bookingId?: string };
 
         const result = await ChatService.getMessages(
             req.user.id,
             conversationId,
             cursor,
             limit,
+            bookingId,
         );
 
         return sendSuccess(res, {
@@ -109,6 +110,7 @@ export const sendImage = async (req: AuthRequest, res: Response) => {
         // Send message with IMAGE type
         const message = await ChatService.sendMessage(req.user.id, {
             receiverId: req.body.receiverId,
+            bookingId: req.body.bookingId,
             clientMsgId: req.body.clientMsgId,
             text: req.body.text || undefined,
             type: 'IMAGE',
@@ -143,7 +145,7 @@ export const sendImage = async (req: AuthRequest, res: Response) => {
 /* ================= SEND LOCATION ================= */
 export const sendLocation = async (req: AuthRequest, res: Response) => {
     try {
-        const { receiverId, clientMsgId, latitude, longitude, address, placeId, text } = req.body;
+        const { receiverId, clientMsgId, bookingId, latitude, longitude, address, placeId, text } = req.body;
 
         // Build location payload
         const locationPayload: LocationPayload = {
@@ -156,6 +158,7 @@ export const sendLocation = async (req: AuthRequest, res: Response) => {
         // Send message with LOCATION type
         const message = await ChatService.sendMessage(req.user.id, {
             receiverId,
+            bookingId,
             clientMsgId,
             text: text || undefined,
             type: 'LOCATION',

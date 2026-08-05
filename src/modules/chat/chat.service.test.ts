@@ -1,6 +1,7 @@
 const mockPrisma = {
     rideBooking: {
         findFirst: jest.fn(),
+        findUnique: jest.fn(),
     },
 };
 
@@ -10,7 +11,7 @@ jest.mock('../../config/index.js', () => ({
 }));
 
 import { BookingStatus, RideStatus } from '@prisma/client';
-import { hasActiveRideChat } from './chat.service.js';
+import { hasActiveRideChat, hasActiveRideChatForBooking } from './chat.service.js';
 
 describe('hasActiveRideChat', () => {
     beforeEach(() => {
@@ -47,5 +48,22 @@ describe('hasActiveRideChat', () => {
         mockPrisma.rideBooking.findFirst.mockResolvedValue(null);
 
         await expect(hasActiveRideChat('rider-1', 'driver-1')).resolves.toBe(false);
+    });
+
+    it('allows chat for the exact active booking context', async () => {
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            id: 'booking-1',
+            passengerId: 'rider-1',
+            status: BookingStatus.WAITING_FOR_PICKUP,
+            ride: {
+                driverId: 'driver-1',
+                status: RideStatus.IN_PROGRESS,
+                actualStartTime: new Date(),
+                actualEndTime: null,
+            },
+        });
+
+        await expect(hasActiveRideChatForBooking('rider-1', 'driver-1', 'booking-1')).resolves.toBe(true);
+        await expect(hasActiveRideChatForBooking('driver-1', 'rider-1', 'booking-1')).resolves.toBe(true);
     });
 });

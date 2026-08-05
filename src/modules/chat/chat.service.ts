@@ -146,6 +146,37 @@ export const hasActiveRideChat = async (userId1: string, userId2: string): Promi
     return !!booking;
 };
 
+export const hasActiveRideChatForBooking = async (
+    userId: string,
+    peerId: string,
+    bookingId: string,
+): Promise<boolean> => {
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        select: {
+            id: true,
+            passengerId: true,
+            status: true,
+            ride: {
+                select: {
+                    driverId: true,
+                    status: true,
+                    actualStartTime: true,
+                    actualEndTime: true,
+                },
+            },
+        },
+    });
+
+    if (!booking) return false;
+
+    const isPassengerToDriver = booking.passengerId === userId && booking.ride.driverId === peerId;
+    const isDriverToPassenger = booking.ride.driverId === userId && booking.passengerId === peerId;
+    if (!isPassengerToDriver && !isDriverToPassenger) return false;
+
+    return isChatAvailableForBooking(booking);
+};
+
 // ============ CONVERSATION OPERATIONS ============
 
 /**
@@ -325,7 +356,7 @@ export const getConversations = async (
  * - For LOCATION: payloadJson should contain LocationPayload (latitude, longitude, etc.)
  */
 export const sendMessage = async (senderId: string, data: SendMessageInput) => {
-    const { receiverId, text, clientMsgId, type = 'TEXT', payloadJson } = data;
+    const { receiverId, text, clientMsgId, bookingId, type = 'TEXT', payloadJson } = data;
 
     // Prevent sending to self
     if (senderId === receiverId) {
@@ -333,7 +364,9 @@ export const sendMessage = async (senderId: string, data: SendMessageInput) => {
     }
 
     // Check booking authorization — only rider↔driver with a confirmed booking can chat
-    const canChat = await hasActiveRideChat(senderId, receiverId);
+    const canChat = bookingId
+        ? await hasActiveRideChatForBooking(senderId, receiverId, bookingId)
+        : await hasActiveRideChat(senderId, receiverId);
     if (!canChat) {
         throw new Error('CHAT_NOT_ACTIVE');
     }
@@ -401,6 +434,7 @@ export const getMessages = async (
     conversationId: string,
     cursor?: string,
     limit: number = 30,
+    bookingId?: string,
 ) => {
     // Verify user is participant
     const conversation = await prisma.conversation.findFirst({
@@ -442,7 +476,9 @@ export const getMessages = async (
     const nextCursor = hasMore ? results[results.length - 1].id : null;
 
     const peerId = conversation.userAId === userId ? conversation.userBId : conversation.userAId;
-    const chatAvailable = await hasActiveRideChat(userId, peerId);
+    const chatAvailable = bookingId
+        ? await hasActiveRideChatForBooking(userId, peerId, bookingId)
+        : await hasActiveRideChat(userId, peerId);
 
     return { messages: results, nextCursor, hasMore, chatAvailable, peerId };
 };
