@@ -151,6 +151,7 @@ Copy `.env.example` to `.env` and fill in values. The table below lists every va
 | `SMS_MOCK_MODE` | `false` | Log SMS instead of sending — **never true in production** |
 | `STRIPE_SECRET_KEY` | — | Stripe secret key |
 | `STRIPE_WEBHOOK_SECRET` | — | Stripe webhook signing secret |
+| `PLATFORM_FEE_PERCENT` | `20` | Rider service fee percentage charged on top of the driver fare; keep in sync with webapp `NEXT_PUBLIC_PLATFORM_FEE_PERCENT` |
 | `AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION / AWS_S3_BUCKET_NAME` | — | S3 for vehicle documents and avatars |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | — | Firebase service account (one of several accepted formats) |
 | `VERIFF_API_KEY / VERIFF_SHARED_SECRET / VERIFF_CALLBACK_URL` | — | Driving licence KYC |
