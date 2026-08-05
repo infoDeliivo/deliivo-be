@@ -31,12 +31,15 @@ const getMessagePreview = (type: string, text?: string | null): string => {
 };
 
 /**
- * Check if two users have a confirmed booking between them.
+ * Check if two users have an active ride booking between them.
  * One user must be the passenger and the other must be the driver of the ride.
- * Only allows chat for CONFIRMED bookings — blocked after ride completion or cancellation.
+ * Chat stays writable during ride-day booking states and closes when the ride closes.
  */
-const CHAT_ENABLED_BOOKING_STATUSES: BookingStatus[] = [
+const CHAT_PRE_START_BOOKING_STATUSES: BookingStatus[] = [
     BookingStatus.CONFIRMED,
+];
+
+const CHAT_RIDE_DAY_BOOKING_STATUSES: BookingStatus[] = [
     BookingStatus.WAITING_FOR_PICKUP,
     BookingStatus.DRIVER_ARRIVED,
     BookingStatus.OTP_PENDING,
@@ -44,12 +47,15 @@ const CHAT_ENABLED_BOOKING_STATUSES: BookingStatus[] = [
     BookingStatus.ONBOARD,
     BookingStatus.DROP_PENDING,
     BookingStatus.DRIVER_DROPPED,
+    BookingStatus.COMPLETED,
+];
+
+const CHAT_ENABLED_BOOKING_STATUSES: BookingStatus[] = [
+    ...CHAT_PRE_START_BOOKING_STATUSES,
+    ...CHAT_RIDE_DAY_BOOKING_STATUSES,
 ];
 
 const CHAT_CLOSED_RIDE_STATUSES: RideStatus[] = [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED];
-
-const isChatEnabledBookingStatus = (status: BookingStatus): boolean =>
-    CHAT_ENABLED_BOOKING_STATUSES.includes(status);
 
 const isActiveRideSession = (ride: {
     status: RideStatus;
@@ -60,6 +66,34 @@ const isActiveRideSession = (ride: {
     && !CHAT_CLOSED_RIDE_STATUSES.includes(ride.status)
     && (ride.status === RideStatus.IN_PROGRESS || Boolean(ride.actualStartTime));
 
+const isOpenRideSession = (ride: {
+    status: RideStatus;
+    actualEndTime?: Date | null;
+}): boolean =>
+    !ride.actualEndTime
+    && !CHAT_CLOSED_RIDE_STATUSES.includes(ride.status);
+
+const isChatAvailableForBooking = (
+    booking: {
+        status: BookingStatus;
+        ride: {
+            status: RideStatus;
+            actualStartTime?: Date | null;
+            actualEndTime?: Date | null;
+        };
+    }
+): boolean => {
+    if (CHAT_PRE_START_BOOKING_STATUSES.includes(booking.status)) {
+        return isActiveRideSession(booking.ride);
+    }
+
+    if (CHAT_RIDE_DAY_BOOKING_STATUSES.includes(booking.status)) {
+        return isOpenRideSession(booking.ride);
+    }
+
+    return false;
+};
+
 const activeRideSessionWhere = () => ({
     actualEndTime: null,
     status: { notIn: CHAT_CLOSED_RIDE_STATUSES },
@@ -69,20 +103,40 @@ const activeRideSessionWhere = () => ({
     ],
 });
 
+const openRideSessionWhere = () => ({
+    actualEndTime: null,
+    status: { notIn: CHAT_CLOSED_RIDE_STATUSES },
+});
+
 export const hasActiveRideChat = async (userId1: string, userId2: string): Promise<boolean> => {
     const booking = await prisma.rideBooking.findFirst({
         where: {
-            status: { in: CHAT_ENABLED_BOOKING_STATUSES },
             OR: [
-                // userId1 is passenger, userId2 is driver
                 {
-                    passengerId: userId1,
-                    ride: { driverId: userId2, ...activeRideSessionWhere() },
+                    status: { in: CHAT_PRE_START_BOOKING_STATUSES },
+                    OR: [
+                        {
+                            passengerId: userId1,
+                            ride: { driverId: userId2, ...activeRideSessionWhere() },
+                        },
+                        {
+                            passengerId: userId2,
+                            ride: { driverId: userId1, ...activeRideSessionWhere() },
+                        },
+                    ],
                 },
-                // userId2 is passenger, userId1 is driver
                 {
-                    passengerId: userId2,
-                    ride: { driverId: userId1, ...activeRideSessionWhere() },
+                    status: { in: CHAT_RIDE_DAY_BOOKING_STATUSES },
+                    OR: [
+                        {
+                            passengerId: userId1,
+                            ride: { driverId: userId2, ...openRideSessionWhere() },
+                        },
+                        {
+                            passengerId: userId2,
+                            ride: { driverId: userId1, ...openRideSessionWhere() },
+                        },
+                    ],
                 },
             ],
         },
@@ -165,7 +219,7 @@ export const openBookingConversation = async (userId: string, bookingId: string)
         throw new Error('FORBIDDEN_BOOKING_PARTICIPANT');
     }
 
-    if (!isChatEnabledBookingStatus(booking.status) || !isActiveRideSession(booking.ride)) {
+    if (!isChatAvailableForBooking(booking)) {
         throw new Error('CHAT_NOT_ACTIVE');
     }
 
