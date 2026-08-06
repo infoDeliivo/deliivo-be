@@ -92,6 +92,20 @@ describe('connected account creation', () => {
         expect(params.country).toBe('EE');
     });
 
+    it('uses the selected payout country when creating a connected account', async () => {
+        await createConnectAccountSession('user-1', null, { ...prefill, country: 'DE' });
+
+        expect(mockAccountsCreate.mock.calls[0][0].country).toBe('DE');
+    });
+
+    it('rejects unsupported selected payout countries before calling Stripe', async () => {
+        await expect(
+            createConnectAccountSession('user-1', null, { ...prefill, country: 'US' })
+        ).rejects.toThrow('CONNECT_COUNTRY_UNSUPPORTED');
+
+        expect(mockAccountsCreate).not.toHaveBeenCalled();
+    });
+
     it('prefills the individual from the profile', async () => {
         await createConnectAccountSession('user-1', null, prefill);
 

@@ -85,6 +85,63 @@ const cleanPhone = (value: string | null | undefined): string | undefined => {
     return phone && /^\+[1-9]\d{6,14}$/.test(phone) ? phone : undefined;
 };
 
+const DEFAULT_CONNECT_COUNTRY = 'EE';
+const DEFAULT_SUPPORTED_CONNECT_COUNTRIES = [
+    'AT',
+    'BE',
+    'BG',
+    'HR',
+    'CY',
+    'CZ',
+    'DK',
+    'EE',
+    'FI',
+    'FR',
+    'DE',
+    'GI',
+    'GR',
+    'HU',
+    'IE',
+    'IT',
+    'LV',
+    'LI',
+    'LT',
+    'LU',
+    'MT',
+    'NL',
+    'NO',
+    'PL',
+    'PT',
+    'RO',
+    'SK',
+    'SI',
+    'ES',
+    'SE',
+    'CH',
+    'GB',
+];
+
+const readSupportedConnectCountries = (): Set<string> => {
+    const configured = process.env.STRIPE_CONNECT_SUPPORTED_COUNTRIES;
+    const values = configured
+        ? configured.split(',').map((value) => value.trim().toUpperCase()).filter(Boolean)
+        : DEFAULT_SUPPORTED_CONNECT_COUNTRIES;
+    return new Set(values.filter((value) => /^[A-Z]{2}$/.test(value)));
+};
+
+export const normalizeConnectCountry = (value: string | null | undefined): string | undefined => {
+    const country = cleanText(value)?.toUpperCase();
+    if (!country) return undefined;
+    if (!/^[A-Z]{2}$/.test(country) || !readSupportedConnectCountries().has(country)) {
+        throw new Error('CONNECT_COUNTRY_UNSUPPORTED');
+    }
+    return country;
+};
+
+const readConnectAccountCountry = (prefill: ConnectAccountPrefill): string | undefined =>
+    normalizeConnectCountry(prefill.country)
+    ?? normalizeConnectCountry(process.env.STRIPE_CONNECT_COUNTRY || DEFAULT_CONNECT_COUNTRY);
+
 /**
  * Prefill is a convenience — Stripe collects during onboarding whatever we leave out. So a profile
  * value Stripe would reject has to be dropped, not forwarded: forwarding it fails accounts.create
@@ -121,7 +178,7 @@ const createConnectedAccount = async (
     const email = cleanEmail(prefill.email);
 
     const account = await stripe.accounts.create({
-        country: process.env.STRIPE_CONNECT_COUNTRY || undefined,
+        country: readConnectAccountCountry(prefill),
         controller: {
             stripe_dashboard: { type: 'none' },
             fees: { payer: 'application' },

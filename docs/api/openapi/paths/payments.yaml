@@ -283,7 +283,7 @@
                       },
                       "country": {
                         "type": "string",
-                        "description": "Must equal STRIPE_CONNECT_COUNTRY; payouts are single-country. Defaults to it when omitted.",
+                        "description": "Two-letter ISO payout country. Used when a connected account is first created; existing Stripe accounts keep their Stripe-fixed country.",
                         "example": "EE"
                       }
                     }

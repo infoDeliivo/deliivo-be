@@ -25,6 +25,7 @@ export interface ConnectAccountPrefill {
     firstName?: string | null;
     lastName?: string | null;
     dob?: Date | null;
+    country?: string | null;
 }
 
 export interface ConnectAccountSessionResult {

@@ -10,6 +10,7 @@ import {
     ensureConnectedAccount,
     getConnectAccountStatus,
     getConnectRequirements,
+    normalizeConnectCountry,
     updateConnectPersonalDetails,
     uploadConnectIdentityDocument,
 } from './stripe.service.js';
@@ -98,13 +99,25 @@ const notEditableResponse = (res: Response) =>
         error: { code: 'CONNECT_ACCOUNT_NOT_EDITABLE' },
     });
 
-const toPrefill = (user: ConnectPrefillUser | null): ConnectAccountPrefill => ({
+const readRequestedCountry = (value: unknown): string | undefined => (
+    typeof value === 'string' ? normalizeConnectCountry(value) : undefined
+);
+
+const toPrefill = (user: ConnectPrefillUser | null, country?: string): ConnectAccountPrefill => ({
     firstName: user?.firstName ?? null,
     lastName: user?.lastName ?? null,
     email: user?.email ?? null,
     phone: user?.phone ?? null,
     dob: user?.dob ?? null,
+    ...(country ? { country } : {}),
 });
+
+const unsupportedCountryResponse = (res: Response) =>
+    sendError(res, {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'This payout country is not currently supported',
+        error: { code: 'CONNECT_COUNTRY_UNSUPPORTED' },
+    });
 
 /* ================= CONNECT ONBOARD ================= */
 export const connectOnboard = async (req: AuthRequest, res: Response) => {
@@ -131,7 +144,7 @@ export const connectOnboard = async (req: AuthRequest, res: Response) => {
             user?.stripeAccountId ?? null,
             returnUrl,
             refreshUrl,
-            toPrefill(user)
+            toPrefill(user, readRequestedCountry(req.query?.country))
         );
 
         // Persist accountId if newly created
@@ -148,6 +161,7 @@ export const connectOnboard = async (req: AuthRequest, res: Response) => {
         });
     } catch (error) {
         logError('[STRIPE_CONNECT] onboard failed', error, { userId: req.user?.id });
+        if (error instanceof Error && error.message === 'CONNECT_COUNTRY_UNSUPPORTED') return unsupportedCountryResponse(res);
         if (isConnectPlatformProfileRequired(error)) return platformProfileRequiredResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
@@ -187,7 +201,7 @@ export const connectAccountSession = async (req: AuthRequest, res: Response) => 
         const session = await createConnectAccountSession(
             userId,
             user?.stripeAccountId ?? null,
-            toPrefill(user)
+            toPrefill(user, readRequestedCountry(req.query?.country))
         );
 
         // Persist accountId if newly created
@@ -209,6 +223,7 @@ export const connectAccountSession = async (req: AuthRequest, res: Response) => 
         });
     } catch (error) {
         logError('[STRIPE_CONNECT] account session failed', error, { userId: req.user?.id });
+        if (error instanceof Error && error.message === 'CONNECT_COUNTRY_UNSUPPORTED') return unsupportedCountryResponse(res);
         if (isConnectPlatformProfileRequired(error)) return platformProfileRequiredResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
@@ -225,7 +240,7 @@ export const connectAccountSession = async (req: AuthRequest, res: Response) => 
  * a tokenised bank account and records terms acceptance. Only possible because accounts are
  * controller-based (`requirement_collection: 'application'`) — see stripe.service.ts.
  */
-const resolveAccountId = async (userId: string): Promise<string> => {
+const resolveAccountId = async (userId: string, country?: string): Promise<string> => {
     const user = await prisma.user.findUnique({
         where: { id: userId },
         select: CONNECT_PREFILL_SELECT,
@@ -234,7 +249,7 @@ const resolveAccountId = async (userId: string): Promise<string> => {
     const { accountId, created } = await ensureConnectedAccount(
         userId,
         user?.stripeAccountId ?? null,
-        toPrefill(user)
+        toPrefill(user, country)
     );
 
     if (created) {
@@ -274,13 +289,14 @@ const syncOnboardingIncomplete = async (userId: string, requirements: ConnectReq
 export const connectRequirements = async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user.id;
-        const accountId = await resolveAccountId(userId);
+        const accountId = await resolveAccountId(userId, readRequestedCountry(req.query?.country));
         const requirements = await getConnectRequirements(accountId);
         await syncOnboardingComplete(userId, requirements);
 
         return sendSuccess(res, { message: 'Connect requirements fetched', data: requirements });
     } catch (error) {
         logError('[STRIPE_CONNECT] requirements failed', error, { userId: req.user?.id });
+        if (error instanceof Error && error.message === 'CONNECT_COUNTRY_UNSUPPORTED') return unsupportedCountryResponse(res);
         if (isConnectPlatformProfileRequired(error)) return platformProfileRequiredResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
@@ -294,13 +310,14 @@ export const connectUpdateDetails = async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user.id;
         const details = req.body as ConnectPersonalDetails;
-        const accountId = await resolveAccountId(userId);
+        const accountId = await resolveAccountId(userId, readRequestedCountry(details.address?.country));
         const requirements = await updateConnectPersonalDetails(accountId, details);
         await syncOnboardingComplete(userId, requirements);
 
         return sendSuccess(res, { message: 'Connect details saved', data: requirements });
     } catch (error) {
         logError('[STRIPE_CONNECT] details update failed', error, { userId: req.user?.id });
+        if (error instanceof Error && error.message === 'CONNECT_COUNTRY_UNSUPPORTED') return unsupportedCountryResponse(res);
         if (isNotEditable(error)) return notEditableResponse(res);
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,

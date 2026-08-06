@@ -27,6 +27,12 @@ jest.mock('./stripe.service.js', () => ({
     __esModule: true,
     createConnectOnboardingLink: jest.fn(),
     createConnectAccountSession: (...args: unknown[]) => mockCreateConnectAccountSession(...args),
+    normalizeConnectCountry: (value: unknown) => {
+        const country = typeof value === 'string' ? value.trim().toUpperCase() : undefined;
+        if (!country) return undefined;
+        if (!['EE', 'DE'].includes(country)) throw new Error('CONNECT_COUNTRY_UNSUPPORTED');
+        return country;
+    },
     getConnectAccountStatus: (...args: unknown[]) => mockGetConnectAccountStatus(...args),
     ensureConnectedAccount: (...args: unknown[]) => mockEnsureConnectedAccount(...args),
     getConnectRequirements: (...args: unknown[]) => mockGetConnectRequirements(...args),
@@ -436,6 +442,43 @@ describe('custom onboarding endpoints', () => {
         expect(mockPrisma.user.update).toHaveBeenCalledWith({
             where: { id: 'user-1' },
             data: { stripeAccountId: 'acct_new' },
+        });
+    });
+
+    it('passes the selected payout country into first account creation', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({
+            stripeAccountId: null,
+            firstName: 'John',
+            lastName: 'Smith',
+            email: 'john@example.com',
+            phone: null,
+            dob: null,
+        });
+        mockEnsureConnectedAccount.mockResolvedValue({ accountId: 'acct_new', created: true });
+
+        const { req, res } = makeReqRes();
+        req.query = { country: 'de' };
+        await connectRequirements(req, res);
+
+        expect(mockEnsureConnectedAccount).toHaveBeenCalledWith('user-1', null, {
+            firstName: 'John',
+            lastName: 'Smith',
+            email: 'john@example.com',
+            phone: null,
+            dob: null,
+            country: 'DE',
+        });
+    });
+
+    it('returns a bad request when the payout country is unsupported', async () => {
+        const { req, res } = makeReqRes();
+        req.query = { country: 'US' };
+        await connectRequirements(req, res);
+
+        expect(mockEnsureConnectedAccount).not.toHaveBeenCalled();
+        expect(mockSendError.mock.calls[0][1]).toMatchObject({
+            status: 'BAD_REQUEST',
+            error: { code: 'CONNECT_COUNTRY_UNSUPPORTED' },
         });
     });
 
