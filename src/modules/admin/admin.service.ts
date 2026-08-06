@@ -93,6 +93,8 @@ export const listUsers = async (query: {
             select: {
                 id: true,
                 firstName: true,
+                salutation: true,
+                gender: true,
                 email: true,
                 phone: true,
                 role: true,
