@@ -30,6 +30,18 @@ jest.mock('../payments/stripe.service.js', () => ({
 
 jest.mock('../payments/payment.service.js', () => ({
     __esModule: true,
+    PAYMENT_STATUSES: {
+        CREATED: 'CREATED',
+        PAYMENT_PENDING: 'PAYMENT_PENDING',
+        PAID: 'PAID',
+        HELD_IN_ESCROW: 'HELD_IN_ESCROW',
+        PAYOUT_ELIGIBLE: 'PAYOUT_ELIGIBLE',
+        TRANSFER_CREATED: 'TRANSFER_CREATED',
+        PAYOUT_COMPLETED: 'PAYOUT_COMPLETED',
+        REFUND_PENDING: 'REFUND_PENDING',
+        REFUNDED: 'REFUNDED',
+        PAYMENT_FAILED: 'PAYMENT_FAILED',
+    },
     markBookingPaymentRefunded: jest.fn(),
 }));
 

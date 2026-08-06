@@ -22,6 +22,7 @@ const router = Router();
 router.use(authorize('ADMIN') as any);
 
 router.get('/users', adminController.listUsers as any);
+router.get('/users/:id', adminController.getUserDetails as any);
 router.get('/rides', adminController.listRides as any);
 router.get('/revenue/ledger', adminController.getRevenueLedger as any);
 router.get('/sos', adminController.listEmergencyAlerts as any);

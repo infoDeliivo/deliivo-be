@@ -23,6 +23,19 @@ export const listUsers = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const getUserDetails = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.getUserDetails(req.params.id as string);
+        return sendSuccess(res, { message: 'User details fetched', data: result });
+    } catch (error: any) {
+        if (error.message === 'USER_NOT_FOUND') {
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+        }
+        logError('[ADMIN] user detail failed', error);
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch user details' });
+    }
+};
+
 /* ================= BAN USER ================= */
 export const banUser = async (req: AuthRequest, res: Response) => {
     try {

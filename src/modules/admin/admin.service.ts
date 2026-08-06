@@ -117,6 +117,331 @@ export const listUsers = async (query: {
     };
 };
 
+const PAID_PAYMENT_STATUSES = [
+    PAYMENT_STATUSES.PAID,
+    PAYMENT_STATUSES.HELD_IN_ESCROW,
+    PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+    PAYMENT_STATUSES.TRANSFER_CREATED,
+    PAYMENT_STATUSES.PAYOUT_COMPLETED,
+    PAYMENT_STATUSES.REFUND_PENDING,
+    PAYMENT_STATUSES.REFUNDED,
+];
+
+const EARNING_PAYMENT_STATUSES = [
+    PAYMENT_STATUSES.HELD_IN_ESCROW,
+    PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+    PAYMENT_STATUSES.TRANSFER_CREATED,
+    PAYMENT_STATUSES.PAYOUT_COMPLETED,
+];
+
+const adminUserDetailRideSelect = {
+    id: true,
+    status: true,
+    originAddress: true,
+    destinationAddress: true,
+    departureDate: true,
+    departureTime: true,
+    totalSeats: true,
+    availableSeats: true,
+    basePricePerSeat: true,
+    currency: true,
+    routeDistanceMeters: true,
+    routeDurationSeconds: true,
+    actualStartTime: true,
+    actualEndTime: true,
+    createdAt: true,
+    vehicle: {
+        select: {
+            id: true,
+            brand: true,
+            model_num: true,
+            model_name: true,
+            type: true,
+            color: true,
+            year: true,
+            imageUrl: true,
+            isVerified: true,
+            verificationStatus: true,
+        },
+    },
+    bookings: {
+        select: {
+            id: true,
+            status: true,
+            passengerId: true,
+            seatsBooked: true,
+            totalPrice: true,
+            paymentAmount: true,
+            paymentCapturedAt: true,
+            refundedAt: true,
+            refundAmount: true,
+            completedAt: true,
+            createdAt: true,
+            passenger: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, avatarUrl: true } },
+            payment: {
+                select: {
+                    id: true,
+                    status: true,
+                    amountTotal: true,
+                    fareAmount: true,
+                    platformFeeAmount: true,
+                    currency: true,
+                    payoutEligibleAt: true,
+                },
+            },
+        },
+        orderBy: { createdAt: 'desc' },
+    },
+    disputes: { select: { id: true, status: true, reason: true, createdAt: true } },
+} satisfies Prisma.RideSelect;
+
+const adminUserDetailBookingSelect = {
+    id: true,
+    rideId: true,
+    passengerId: true,
+    status: true,
+    seatsBooked: true,
+    totalPrice: true,
+    paymentAmount: true,
+    paymentCurrency: true,
+    paymentCapturedAt: true,
+    refundedAt: true,
+    refundAmount: true,
+    completedAt: true,
+    cancelledAt: true,
+    createdAt: true,
+    pickupAddress: true,
+    dropoffAddress: true,
+    payment: {
+        select: {
+            id: true,
+            status: true,
+            amountTotal: true,
+            fareAmount: true,
+            platformFeeAmount: true,
+            currency: true,
+            payoutEligibleAt: true,
+        },
+    },
+    disputes: { select: { id: true, status: true, reason: true, createdAt: true } },
+    ride: {
+        select: {
+            id: true,
+            status: true,
+            originAddress: true,
+            destinationAddress: true,
+            departureDate: true,
+            departureTime: true,
+            currency: true,
+            driver: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, avatarUrl: true } },
+        },
+    },
+} satisfies Prisma.RideBookingSelect;
+
+export const getUserDetails = async (userId: string) => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            salutation: true,
+            gender: true,
+            dob: true,
+            email: true,
+            phone: true,
+            emailVerified: true,
+            phoneVerified: true,
+            avatarUrl: true,
+            role: true,
+            isBanned: true,
+            onboardingStatus: true,
+            isVerified: true,
+            dlVerified: true,
+            stripeAccountId: true,
+            stripeOnboardingComplete: true,
+            stripeAccountName: true,
+            stripeNameMatch: true,
+            stripeDobMatch: true,
+            tosAcceptedAt: true,
+            tosVersion: true,
+            privacyAcceptedAt: true,
+            privacyVersion: true,
+            createdAt: true,
+            updatedAt: true,
+            travelPreference: { select: { chattiness: true, pets: true } },
+            ratingStats: { select: { totalRatings: true, totalStars: true, averageRating: true } },
+            vehicles: {
+                where: { deletedAt: null },
+                orderBy: { createdAt: 'desc' },
+                select: adminVehicleSelect,
+            },
+            dlVerifications: {
+                orderBy: { createdAt: 'desc' },
+                take: 5,
+                select: {
+                    id: true,
+                    status: true,
+                    veriffSessionId: true,
+                    verifiedName: true,
+                    verifiedDob: true,
+                    verifiedGender: true,
+                    nameMatch: true,
+                    dobMatch: true,
+                    genderMatch: true,
+                    documentImageKey: true,
+                    declineReason: true,
+                    reviewedById: true,
+                    reviewedAt: true,
+                    createdAt: true,
+                    updatedAt: true,
+                },
+            },
+            paymentMethods: {
+                orderBy: { createdAt: 'desc' },
+                select: {
+                    id: true,
+                    brand: true,
+                    last4: true,
+                    expMonth: true,
+                    expYear: true,
+                    isDefault: true,
+                    status: true,
+                    createdAt: true,
+                },
+            },
+        },
+    });
+
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    const [
+        publishedRides,
+        bookedRides,
+        publishedRideCount,
+        completedPublishedRideCount,
+        bookingCount,
+        completedBookingCount,
+        riderPayments,
+        riderRefunds,
+        driverEarnings,
+        payoutEligible,
+        paidOut,
+        openDisputes,
+        reportsMade,
+        reportsReceived,
+        blocksMade,
+        blocksReceived,
+    ] = await Promise.all([
+        prisma.ride.findMany({
+            where: { driverId: userId },
+            orderBy: [{ departureDate: 'desc' }, { departureTime: 'desc' }],
+            take: 10,
+            select: adminUserDetailRideSelect,
+        }),
+        prisma.rideBooking.findMany({
+            where: { passengerId: userId },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            select: adminUserDetailBookingSelect,
+        }),
+        prisma.ride.count({ where: { driverId: userId } }),
+        prisma.ride.count({ where: { driverId: userId, status: RideStatus.COMPLETED } }),
+        prisma.rideBooking.count({ where: { passengerId: userId } }),
+        prisma.rideBooking.count({ where: { passengerId: userId, status: BookingStatus.COMPLETED } }),
+        prisma.payment.aggregate({
+            where: { riderId: userId, status: { in: PAID_PAYMENT_STATUSES } },
+            _sum: { amountTotal: true, platformFeeAmount: true },
+            _count: { _all: true },
+        }),
+        prisma.rideBooking.aggregate({
+            where: { passengerId: userId, refundedAt: { not: null } },
+            _sum: { refundAmount: true },
+            _count: { _all: true },
+        }),
+        prisma.payment.aggregate({
+            where: {
+                status: { in: EARNING_PAYMENT_STATUSES },
+                booking: { ride: { driverId: userId } },
+            },
+            _sum: { fareAmount: true, amountTotal: true, platformFeeAmount: true },
+            _count: { _all: true },
+        }),
+        prisma.payment.aggregate({
+            where: {
+                status: PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+                booking: { ride: { driverId: userId } },
+            },
+            _sum: { fareAmount: true },
+            _count: { _all: true },
+        }),
+        prisma.payoutBatch.aggregate({
+            where: { driverId: userId, status: 'COMPLETED' },
+            _sum: { amountTotal: true },
+            _count: { _all: true },
+        }),
+        prisma.dispute.count({
+            where: {
+                resolvedAt: null,
+                OR: [
+                    { raisedBy: userId },
+                    { booking: { passengerId: userId } },
+                    { ride: { driverId: userId } },
+                ],
+            },
+        }),
+        prisma.userReport.count({ where: { reporterId: userId } }),
+        prisma.userReport.count({ where: { reportedId: userId } }),
+        prisma.userBlock.count({ where: { blockerId: userId } }),
+        prisma.userBlock.count({ where: { blockedId: userId } }),
+    ]);
+
+    const { vehicles, dlVerifications, paymentMethods, ...profile } = user;
+
+    return {
+        user: profile,
+        vehicles: vehicles.map(mapAdminVehicle),
+        dlVerifications: dlVerifications.map((record) => {
+            const { documentImageKey, ...rest } = record;
+            return {
+                ...rest,
+                previewKey: documentImageKey ?? null,
+            };
+        }),
+        paymentMethods,
+        summary: {
+            publishedRideCount,
+            completedPublishedRideCount,
+            bookingCount,
+            completedBookingCount,
+            openDisputes,
+            reportsMade,
+            reportsReceived,
+            blocksMade,
+            blocksReceived,
+            payments: {
+                totalPaid: riderPayments._sum.amountTotal ?? 0,
+                platformFeesPaid: riderPayments._sum.platformFeeAmount ?? 0,
+                paymentCount: riderPayments._count._all,
+                totalRefunded: riderRefunds._sum.refundAmount ?? 0,
+                refundCount: riderRefunds._count._all,
+            },
+            earnings: {
+                totalEarned: driverEarnings._sum.fareAmount ?? 0,
+                grossRideRevenue: driverEarnings._sum.amountTotal ?? 0,
+                platformFeesFromRides: driverEarnings._sum.platformFeeAmount ?? 0,
+                earningPaymentCount: driverEarnings._count._all,
+                payoutEligible: payoutEligible._sum.fareAmount ?? 0,
+                payoutEligibleCount: payoutEligible._count._all,
+                paidOut: paidOut._sum.amountTotal ?? 0,
+                payoutCount: paidOut._count._all,
+            },
+        },
+        publishedRides,
+        bookedRides,
+    };
+};
+
 /* ================= BAN / UNBAN USER ================= */
 export const setBanStatus = async (userId: string, isBanned: boolean) => {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
