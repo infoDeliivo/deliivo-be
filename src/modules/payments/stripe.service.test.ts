@@ -5,6 +5,7 @@
 const mockAccountsCreate = jest.fn();
 const mockAccountsRetrieve = jest.fn();
 const mockAccountsUpdate = jest.fn();
+const mockAccountsDel = jest.fn();
 const mockAccountSessionsCreate = jest.fn();
 const mockAccountLinksCreate = jest.fn();
 const mockFilesCreate = jest.fn();
@@ -19,6 +20,7 @@ jest.mock('stripe', () => ({
             create: (...args: unknown[]) => mockAccountsCreate(...args),
             retrieve: (...args: unknown[]) => mockAccountsRetrieve(...args),
             update: (...args: unknown[]) => mockAccountsUpdate(...args),
+            del: (...args: unknown[]) => mockAccountsDel(...args),
             createExternalAccount: (...args: unknown[]) => mockCreateExternalAccount(...args),
             deleteExternalAccount: (...args: unknown[]) => mockDeleteExternalAccount(...args),
         },
@@ -42,6 +44,7 @@ import {
     deleteConnectBankAccount,
     ensureConnectedAccount,
     getConnectRequirements,
+    resetUnfinishedConnectAccount,
     updateConnectPersonalDetails,
     uploadConnectIdentityDocument,
 } from './stripe.service.js';
@@ -72,6 +75,7 @@ describe('connected account creation', () => {
         mockAccountsCreate.mockResolvedValue({ id: 'acct_new' });
         mockAccountsRetrieve.mockResolvedValue(controllerAccount);
         mockAccountsUpdate.mockResolvedValue(controllerAccount);
+        mockAccountsDel.mockResolvedValue({ id: 'acct_1', deleted: true });
         mockFilesCreate.mockResolvedValue({ id: 'file_identity_front' });
         mockAccountSessionsCreate.mockResolvedValue({
             client_secret: 'accsess_secret',
@@ -362,6 +366,32 @@ describe('custom onboarding', () => {
 
         expect(requirements.country).toBe('DE');
         expect(requirements.defaultCurrency).toBe('eur');
+    });
+
+    it('deletes an unfinished platform-managed account so the country can be chosen again', async () => {
+        await resetUnfinishedConnectAccount('acct_1');
+
+        expect(mockAccountsDel).toHaveBeenCalledWith('acct_1');
+    });
+
+    it('refuses to reset an account that already has a bank account', async () => {
+        mockAccountsRetrieve.mockResolvedValue({
+            ...accountWithRequirements,
+            external_accounts: { data: [{ object: 'bank_account', id: 'ba_1' }] },
+        });
+
+        await expect(resetUnfinishedConnectAccount('acct_1')).rejects.toThrow('CONNECT_ACCOUNT_RESET_BLOCKED');
+        expect(mockAccountsDel).not.toHaveBeenCalled();
+    });
+
+    it('refuses to reset an account after terms are accepted', async () => {
+        mockAccountsRetrieve.mockResolvedValue({
+            ...accountWithRequirements,
+            tos_acceptance: { date: 1893456000 },
+        });
+
+        await expect(resetUnfinishedConnectAccount('acct_1')).rejects.toThrow('CONNECT_ACCOUNT_RESET_BLOCKED');
+        expect(mockAccountsDel).not.toHaveBeenCalled();
     });
 
     /**

@@ -411,6 +411,27 @@ export const deleteConnectBankAccount = async (
     return getConnectRequirements(accountId);
 };
 
+export const resetUnfinishedConnectAccount = async (accountId: string): Promise<void> => {
+    const stripe = getStripeClient();
+    const account = await stripe.accounts.retrieve(accountId);
+    const hasExternalAccount = Boolean(account.external_accounts?.data?.some(
+        (entry) => entry.object === 'bank_account'
+    ));
+    const hasAcceptedTerms = Boolean(account.tos_acceptance?.date);
+
+    if (
+        readRequirementCollection(account) !== 'application'
+        || account.charges_enabled
+        || account.payouts_enabled
+        || hasExternalAccount
+        || hasAcceptedTerms
+    ) {
+        throw new Error('CONNECT_ACCOUNT_RESET_BLOCKED');
+    }
+
+    await stripe.accounts.del(accountId);
+};
+
 export const uploadConnectIdentityDocument = async (
     accountId: string,
     upload: ConnectIdentityDocumentUpload

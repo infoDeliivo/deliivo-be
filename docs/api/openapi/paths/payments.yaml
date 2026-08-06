@@ -630,6 +630,64 @@
         }
       }
     },
+    "/api/v1/payments/connect/account": {
+      "delete": {
+        "operationId": "paymentsDeleteConnectAccount",
+        "summary": "Reset an unfinished payout account",
+        "description": "Deletes the caller's unfinished platform-managed Stripe connected account and clears the saved account id so the driver can choose payout country again. Refuses accounts that already have a bank account, accepted terms, enabled charges or enabled payouts.",
+        "tags": [
+          "Payments"
+        ],
+        "responses": {
+          "200": {
+            "description": "Payout account reset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "OK"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Payout account reset"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "connected": {
+                          "type": "boolean",
+                          "example": false
+                        }
+                      }
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
     "/api/v1/payments/connect/terms": {
       "post": {
         "operationId": "paymentsPostConnectTerms",

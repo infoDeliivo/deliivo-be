@@ -15,6 +15,7 @@ const mockDeleteBankAccount = jest.fn();
 const mockUploadConnectIdentityDocument = jest.fn();
 const mockAcceptTerms = jest.fn();
 const mockCreateConnectAccountSession = jest.fn();
+const mockResetUnfinishedConnectAccount = jest.fn();
 const mockSendSuccess = jest.fn();
 const mockSendError = jest.fn();
 
@@ -39,6 +40,7 @@ jest.mock('./stripe.service.js', () => ({
     updateConnectPersonalDetails: (...args: unknown[]) => mockUpdatePersonalDetails(...args),
     attachConnectBankAccount: (...args: unknown[]) => mockAttachBankAccount(...args),
     deleteConnectBankAccount: (...args: unknown[]) => mockDeleteBankAccount(...args),
+    resetUnfinishedConnectAccount: (...args: unknown[]) => mockResetUnfinishedConnectAccount(...args),
     uploadConnectIdentityDocument: (...args: unknown[]) => mockUploadConnectIdentityDocument(...args),
     acceptConnectTerms: (...args: unknown[]) => mockAcceptTerms(...args),
 }));
@@ -57,6 +59,7 @@ import {
     connectDeleteBankAccount,
     connectIdentityDocument,
     connectRequirements,
+    connectResetAccount,
     connectStatus,
     connectUpdateDetails,
 } from './stripe.connect.controller.js';
@@ -395,6 +398,7 @@ describe('custom onboarding endpoints', () => {
         mockDeleteBankAccount.mockResolvedValue(requirements);
         mockUploadConnectIdentityDocument.mockResolvedValue(requirements);
         mockAcceptTerms.mockResolvedValue(requirements);
+        mockResetUnfinishedConnectAccount.mockResolvedValue(undefined);
     });
 
     it('returns the outstanding requirements for the caller’s account', async () => {
@@ -517,6 +521,38 @@ describe('custom onboarding endpoints', () => {
             data: { stripeOnboardingComplete: false },
         });
         expect(mockSendSuccess.mock.calls[0][1].message).toBe('Bank account removed');
+    });
+
+    it('resets an unfinished payout account so the driver can choose country again', async () => {
+        const { req, res } = makeReqRes();
+        await connectResetAccount(req, res);
+
+        expect(mockResetUnfinishedConnectAccount).toHaveBeenCalledWith('acct_1');
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({
+            where: { id: 'user-1' },
+            data: {
+                stripeAccountId: null,
+                stripeOnboardingComplete: false,
+                stripeAccountName: null,
+            },
+        });
+        expect(mockSendSuccess.mock.calls[0][1]).toMatchObject({
+            message: 'Payout account reset',
+            data: { connected: false },
+        });
+    });
+
+    it('does not clear the account when Stripe reset is blocked', async () => {
+        mockResetUnfinishedConnectAccount.mockRejectedValue(new Error('CONNECT_ACCOUNT_RESET_BLOCKED'));
+
+        const { req, res } = makeReqRes();
+        await connectResetAccount(req, res);
+
+        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(mockSendError.mock.calls[0][1]).toMatchObject({
+            status: 'CONFLICT',
+            error: { code: 'CONNECT_ACCOUNT_RESET_BLOCKED' },
+        });
     });
 
     it('uploads an identity document for a platform-managed Connect account', async () => {

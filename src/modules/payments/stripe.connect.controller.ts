@@ -11,6 +11,7 @@ import {
     getConnectAccountStatus,
     getConnectRequirements,
     normalizeConnectCountry,
+    resetUnfinishedConnectAccount,
     updateConnectPersonalDetails,
     uploadConnectIdentityDocument,
 } from './stripe.service.js';
@@ -117,6 +118,13 @@ const unsupportedCountryResponse = (res: Response) =>
         status: HttpStatus.BAD_REQUEST,
         message: 'This payout country is not currently supported',
         error: { code: 'CONNECT_COUNTRY_UNSUPPORTED' },
+    });
+
+const resetBlockedResponse = (res: Response) =>
+    sendError(res, {
+        status: HttpStatus.CONFLICT,
+        message: 'This payout account already has bank details, accepted terms, or enabled payouts and cannot be reset automatically.',
+        error: { code: 'CONNECT_ACCOUNT_RESET_BLOCKED' },
     });
 
 /* ================= CONNECT ONBOARD ================= */
@@ -370,6 +378,47 @@ export const connectDeleteBankAccount = async (req: AuthRequest, res: Response) 
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to remove bank account',
+            error: describeStripeError(error),
+        });
+    }
+};
+
+export const connectResetAccount = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user.id;
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { stripeAccountId: true },
+        });
+
+        if (!user?.stripeAccountId) {
+            return sendSuccess(res, {
+                message: 'Payout account reset',
+                data: { connected: false },
+            });
+        }
+
+        await resetUnfinishedConnectAccount(user.stripeAccountId);
+        await prisma.user.update({
+            where: { id: userId },
+            data: {
+                stripeAccountId: null,
+                stripeOnboardingComplete: false,
+                stripeAccountName: null,
+            },
+        });
+
+        return sendSuccess(res, {
+            message: 'Payout account reset',
+            data: { connected: false },
+        });
+    } catch (error) {
+        logError('[STRIPE_CONNECT] account reset failed', error, { userId: req.user?.id });
+        if (error instanceof Error && error.message === 'CONNECT_ACCOUNT_RESET_BLOCKED') return resetBlockedResponse(res);
+        if (isNotEditable(error)) return notEditableResponse(res);
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to reset Stripe Connect account',
             error: describeStripeError(error),
         });
     }
