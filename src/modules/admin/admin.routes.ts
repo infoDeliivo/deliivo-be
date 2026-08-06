@@ -3,7 +3,13 @@ import { authorize } from '../../middlewares/auth.js';
 import { validate } from '../../middlewares/validate.js';
 import * as adminController from './admin.controller.js';
 import { pricingConfigCreateSchema, pricingConfigIdSchema, pricingConfigUpdateSchema } from '../pricing/pricing.validator.js';
-import { rejectVehicleSchema, vehicleIdParamSchema } from './admin.validator.js';
+import {
+    adminForceCompleteBookingSchema,
+    adminOpenBookingDisputeSchema,
+    bookingIdParamSchema,
+    rejectVehicleSchema,
+    vehicleIdParamSchema,
+} from './admin.validator.js';
 import * as dlReviewController from '../dl-verification/dl-review.controller.js';
 import { declineDlSchema, dlUserIdParamSchema } from '../dl-verification/dl-verification.validator.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
@@ -53,6 +59,16 @@ router.post(
 );
 
 router.post('/bookings/:id/refund', adminController.adminRefundBooking as any);
+router.post(
+    '/bookings/:id/force-complete',
+    validate({ params: bookingIdParamSchema, body: adminForceCompleteBookingSchema }),
+    adminController.adminForceCompleteBooking as any,
+);
+router.post(
+    '/bookings/:id/open-dispute',
+    validate({ params: bookingIdParamSchema, body: adminOpenBookingDisputeSchema }),
+    adminController.adminOpenBookingDispute as any,
+);
 router.get('/pricing/configs', adminController.listPricingConfigs as any);
 router.post('/pricing/configs', validate({ body: pricingConfigCreateSchema }), adminController.createPricingConfig as any);
 router.put('/pricing/configs/:id', validate({ params: pricingConfigIdSchema, body: pricingConfigUpdateSchema }), adminController.updatePricingConfig as any);

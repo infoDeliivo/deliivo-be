@@ -208,6 +208,57 @@ export const adminRefundBooking = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const adminForceCompleteBooking = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.adminForceCompleteBooking(
+            req.params.id as string,
+            req.user.id,
+            req.body.reason,
+        );
+        return sendSuccess(res, { message: 'Booking force-completed', data: result });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'BOOKING_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Booking not found' });
+            case 'BOOKING_NOT_FORCE_COMPLETABLE':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'Booking is not in a force-completable state' });
+            case 'RIDE_NOT_FORCE_COMPLETABLE':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'Ride is not in a force-completable state' });
+            case 'OPEN_DISPUTE_EXISTS':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'Resolve the open dispute before force-completing this booking' });
+            default:
+                logError('[ADMIN] force-complete booking failed', error);
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to force-complete booking' });
+        }
+    }
+};
+
+export const adminOpenBookingDispute = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.adminOpenBookingDispute(
+            req.params.id as string,
+            req.user.id,
+            req.body.reason,
+            req.body.description,
+        );
+        return sendSuccess(res, {
+            status: result.created ? HttpStatus.CREATED : HttpStatus.OK,
+            message: result.created ? 'Dispute opened' : 'Open dispute already exists',
+            data: result,
+        });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'BOOKING_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Booking not found' });
+            case 'BOOKING_ALREADY_TERMINAL':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'Booking is already terminal' });
+            default:
+                logError('[ADMIN] open booking dispute failed', error);
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to open dispute' });
+        }
+    }
+};
+
 /* ================= PRICING CONFIGURATION ================= */
 export const listPricingConfigs = async (_req: AuthRequest, res: Response) => {
     try {

@@ -1,11 +1,13 @@
+import { randomUUID } from 'crypto';
 import { BookingStatus, Prisma, RideStatus, UserRole, VehicleVerificationStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
-import { markBookingPaymentRefunded } from '../payments/payment.service.js';
+import { PAYMENT_STATUSES, markBookingPaymentRefunded } from '../payments/payment.service.js';
 import redis from '../../cache/redis.js';
 import { getContentSummary } from '../content/content.service.js';
+import { DISPUTE_STATUSES, OPEN_DISPUTE_STATUSES } from '../dispute/dispute.constants.js';
 
 const emergencyAlertSelect = {
     id: true,
@@ -235,6 +237,52 @@ const adminVehicleSelect = {
 
 type AdminVehicle = Prisma.VehicleGetPayload<{ select: typeof adminVehicleSelect }>;
 
+const ACTIVE_RIDE_RESOLUTION_BOOKING_STATUSES: BookingStatus[] = [
+    BookingStatus.CONFIRMED,
+    BookingStatus.WAITING_FOR_PICKUP,
+    BookingStatus.DRIVER_ARRIVED,
+    BookingStatus.OTP_PENDING,
+    BookingStatus.ONBOARD,
+    BookingStatus.DROP_PENDING,
+    BookingStatus.IN_PROGRESS,
+];
+
+const TERMINAL_RIDE_RESOLUTION_BOOKING_STATUSES: BookingStatus[] = [
+    BookingStatus.PAYMENT_FAILED,
+    BookingStatus.CANCELLED,
+    BookingStatus.COMPLETED,
+    BookingStatus.NO_SHOW,
+    BookingStatus.DRIVER_MISSED_PICKUP,
+    BookingStatus.DISPUTED,
+];
+
+const FORCE_COMPLETABLE_RIDE_STATUSES: RideStatus[] = [
+    RideStatus.IN_PROGRESS,
+    RideStatus.COMPLETION_PENDING,
+];
+
+const adminRideEventData = (
+    rideId: string,
+    bookingId: string,
+    adminId: string,
+    eventType: string,
+    reason: string,
+): Prisma.RideEventUncheckedCreateInput => ({
+    rideId,
+    bookingId,
+    actionId: randomUUID(),
+    eventType,
+    actorType: 'ADMIN',
+    actorId: adminId,
+    clientTimestamp: new Date(),
+    validationStatus: 'WARNING',
+    metadataJson: {
+        supportOverride: true,
+        bookingId,
+        reason,
+    } as Prisma.InputJsonValue,
+});
+
 /**
  * Private documents are exposed as `previewKey`, never as a URL — the admin exchanges the
  * key for a short-lived signed URL via GET /uploads/read. Mirrors how the driver-facing
@@ -422,6 +470,279 @@ export const adminRefundBooking = async (bookingId: string) => {
     return { bookingId, refunded: true };
 };
 
+export const adminForceCompleteBooking = async (
+    bookingId: string,
+    adminId: string,
+    reason: string,
+) => {
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: {
+            payment: true,
+            disputes: { where: { status: { in: OPEN_DISPUTE_STATUSES } }, select: { id: true } },
+            ride: {
+                select: {
+                    id: true,
+                    driverId: true,
+                    status: true,
+                    originAddress: true,
+                    destinationAddress: true,
+                    actualEndTime: true,
+                },
+            },
+            passenger: { select: { id: true } },
+        },
+    });
+
+    if (!booking) throw new Error('BOOKING_NOT_FOUND');
+    if (!ACTIVE_RIDE_RESOLUTION_BOOKING_STATUSES.includes(booking.status)) {
+        throw new Error('BOOKING_NOT_FORCE_COMPLETABLE');
+    }
+    if (!FORCE_COMPLETABLE_RIDE_STATUSES.includes(booking.ride.status)) {
+        throw new Error('RIDE_NOT_FORCE_COMPLETABLE');
+    }
+    if (booking.disputes.length > 0) {
+        throw new Error('OPEN_DISPUTE_EXISTS');
+    }
+
+    const now = new Date();
+    let rideCompleted = false;
+    let paymentMarkedEligible = false;
+
+    await prisma.$transaction(async (tx) => {
+        await tx.rideBooking.update({
+            where: { id: bookingId },
+            data: {
+                status: BookingStatus.COMPLETED,
+                completedAt: now,
+                riderDropoffConfirmedAt: booking.riderDropoffConfirmedAt ?? now,
+            },
+        });
+
+        const remainingActiveBookings = await tx.rideBooking.count({
+            where: {
+                rideId: booking.rideId,
+                id: { not: bookingId },
+                status: { in: ACTIVE_RIDE_RESOLUTION_BOOKING_STATUSES },
+            },
+        });
+
+        if (remainingActiveBookings === 0) {
+            await tx.ride.update({
+                where: { id: booking.rideId },
+                data: {
+                    status: RideStatus.COMPLETED,
+                    actualEndTime: booking.ride.actualEndTime ?? now,
+                },
+            });
+            rideCompleted = true;
+        }
+
+        if (booking.payment?.status === PAYMENT_STATUSES.HELD_IN_ESCROW) {
+            await tx.payment.update({
+                where: { id: booking.payment.id },
+                data: {
+                    status: PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+                    payoutEligibleAt: now,
+                },
+            });
+            paymentMarkedEligible = true;
+        }
+
+        await tx.rideEvent.create({
+            data: adminRideEventData(
+                booking.rideId,
+                bookingId,
+                adminId,
+                'ADMIN_FORCE_COMPLETED_BOOKING',
+                reason,
+            ),
+        });
+
+        await tx.reconciliationIssue.updateMany({
+            where: {
+                resolvedAt: null,
+                OR: [
+                    { bookingId },
+                    { paymentId: booking.payment?.id ?? '__none__' },
+                    {
+                        metadataJson: {
+                            path: ['rideId'],
+                            equals: booking.rideId,
+                        } as any,
+                    },
+                ],
+            },
+            data: {
+                resolvedBy: adminId,
+                resolvedAt: now,
+                resolution: `Admin force-completed booking: ${reason}`,
+            },
+        });
+    });
+
+    await Promise.all([
+        createNotification({
+            userId: booking.passengerId,
+            type: 'booking.admin_force_completed',
+            title: 'Ride completed by support',
+            body: 'Support reviewed this ride and marked your booking complete.',
+            data: { rideId: booking.rideId, bookingId, reason, deepLink: `app://booking/${bookingId}` },
+        }),
+        createNotification({
+            userId: booking.ride.driverId,
+            type: 'booking.admin_force_completed',
+            title: 'Ride completed by support',
+            body: 'Support reviewed this ride and marked the booking complete.',
+            data: { rideId: booking.rideId, bookingId, reason, deepLink: `app://rides/${booking.rideId}` },
+        }),
+    ]);
+
+    return {
+        bookingId,
+        rideId: booking.rideId,
+        bookingStatus: BookingStatus.COMPLETED,
+        rideCompleted,
+        paymentMarkedEligible,
+    };
+};
+
+export const adminOpenBookingDispute = async (
+    bookingId: string,
+    adminId: string,
+    reason: string,
+    description?: string,
+) => {
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: {
+            payment: true,
+            disputes: {
+                where: { status: { in: OPEN_DISPUTE_STATUSES } },
+                orderBy: { createdAt: 'desc' },
+            },
+            ride: {
+                select: {
+                    id: true,
+                    driverId: true,
+                    status: true,
+                    originAddress: true,
+                    destinationAddress: true,
+                },
+            },
+            passenger: { select: { id: true } },
+        },
+    });
+
+    if (!booking) throw new Error('BOOKING_NOT_FOUND');
+    if (booking.disputes[0]) {
+        return { dispute: booking.disputes[0], created: false };
+    }
+    if (TERMINAL_RIDE_RESOLUTION_BOOKING_STATUSES.includes(booking.status)) {
+        throw new Error('BOOKING_ALREADY_TERMINAL');
+    }
+
+    const now = new Date();
+    const route = `${booking.ride.originAddress.split(',')[0]} to ${booking.ride.destinationAddress.split(',')[0]}`;
+    const disputeDescription = description?.trim()
+        || `Support opened a money-resolution dispute for a stuck ride. ${reason}`;
+
+    const dispute = await prisma.$transaction(async (tx) => {
+        const created = await tx.dispute.create({
+            data: {
+                rideId: booking.rideId,
+                bookingId,
+                raisedBy: adminId,
+                reason,
+                description: disputeDescription,
+                status: DISPUTE_STATUSES.NEEDS_MANUAL_REVIEW,
+            },
+        });
+
+        await tx.rideBooking.update({
+            where: { id: bookingId },
+            data: { status: BookingStatus.DISPUTED },
+        });
+
+        if (FORCE_COMPLETABLE_RIDE_STATUSES.includes(booking.ride.status)) {
+            await tx.ride.update({
+                where: { id: booking.rideId },
+                data: { status: RideStatus.DISPUTED },
+            });
+        }
+
+        await tx.rideEvent.create({
+            data: adminRideEventData(
+                booking.rideId,
+                bookingId,
+                adminId,
+                'ADMIN_OPENED_MONEY_DISPUTE',
+                reason,
+            ),
+        });
+
+        await tx.reconciliationIssue.create({
+            data: {
+                paymentId: booking.payment?.id ?? null,
+                bookingId,
+                issueType: 'ADMIN_MONEY_DISPUTE',
+                severity: 'HIGH',
+                description: `Admin opened a money-resolution dispute for ${route}. ${reason}`,
+                internalState: booking.payment?.status ?? booking.status,
+                metadataJson: {
+                    rideId: booking.rideId,
+                    bookingId,
+                    paymentId: booking.payment?.id ?? null,
+                    adminId,
+                },
+            },
+        });
+
+        await tx.reconciliationIssue.updateMany({
+            where: {
+                resolvedAt: null,
+                issueType: { in: ['OVERDUE_RIDE_COMPLETION', 'STALE_ESCROW'] },
+                OR: [
+                    { bookingId },
+                    { paymentId: booking.payment?.id ?? '__none__' },
+                    {
+                        metadataJson: {
+                            path: ['rideId'],
+                            equals: booking.rideId,
+                        } as any,
+                    },
+                ],
+            },
+            data: {
+                resolvedBy: adminId,
+                resolvedAt: now,
+                resolution: `Superseded by admin dispute ${created.id}: ${reason}`,
+            },
+        });
+
+        return created;
+    });
+
+    await Promise.all([
+        createNotification({
+            userId: booking.passengerId,
+            type: 'dispute.admin_opened',
+            title: 'Support opened a ride review',
+            body: 'Support is reviewing this ride and the payment will remain held until the case is resolved.',
+            data: { disputeId: dispute.id, rideId: booking.rideId, bookingId, deepLink: `app://booking/${bookingId}` },
+        }),
+        createNotification({
+            userId: booking.ride.driverId,
+            type: 'dispute.admin_opened',
+            title: 'Support opened a ride review',
+            body: 'Support is reviewing this ride and the payment will remain held until the case is resolved.',
+            data: { disputeId: dispute.id, rideId: booking.rideId, bookingId, deepLink: `app://rides/${booking.rideId}` },
+        }),
+    ]);
+
+    return { dispute, created: true };
+};
+
 export const getOperationsSummary = async () => {
     const checks = { database: false, redis: false };
     try {
@@ -566,6 +887,9 @@ export const listRides = async (query: {
                 availableSeats: true,
                 basePricePerSeat: true,
                 currency: true,
+                routeDurationSeconds: true,
+                actualStartTime: true,
+                actualEndTime: true,
                 createdAt: true,
                 driver: { select: { id: true, firstName: true, email: true, phone: true } },
                 bookings: {
@@ -576,7 +900,23 @@ export const listRides = async (query: {
                         seatsBooked: true,
                         totalPrice: true,
                         paymentAmount: true,
+                        paymentCapturedAt: true,
+                        completedAt: true,
+                        cancelledAt: true,
+                        onboardedAt: true,
+                        dropoffConfirmedAt: true,
+                        riderDropoffConfirmedAt: true,
                         refundedAt: true,
+                        payment: {
+                            select: {
+                                id: true,
+                                status: true,
+                                amountTotal: true,
+                                fareAmount: true,
+                                currency: true,
+                                payoutEligibleAt: true,
+                            },
+                        },
                         passenger: { select: { id: true, firstName: true, email: true, phone: true } },
                     },
                     orderBy: { createdAt: 'desc' },
