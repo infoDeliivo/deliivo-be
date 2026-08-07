@@ -38,28 +38,69 @@ const EXACT_ORIGIN_DEST_BONUS = 100;
 const PICKUP_AT_ORIGIN_BONUS = 20;
 const DROP_AT_DEST_BONUS = 20;
 const ALT_ROUTE_PENALTY = 30;
+const RIDE_TIME_ZONE = 'Europe/Tallinn';
 const departurePeriodFilter = (period?: SearchRideQuery['departurePeriod']): Prisma.StringFilter | undefined => {
   if (period === 'morning') return { gte: '05:00', lt: '12:00' };
   if (period === 'afternoon') return { gte: '12:00', lt: '17:00' };
   if (period === 'evening') return { gte: '17:00', lte: '23:59' };
   return undefined;
 };
-const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date => {
+
+const rideTimeFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: RIDE_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
+const getRideTimeParts = (date: Date) => {
+  const parts = rideTimeFormatter.formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value || '0');
+
+  return {
+    year: value('year'),
+    month: value('month'),
+    day: value('day'),
+    hour: value('hour'),
+    minute: value('minute'),
+    second: value('second'),
+  };
+};
+
+const getRideTimeOffsetMs = (date: Date): number => {
+  const zoned = getRideTimeParts(date);
+  return Date.UTC(
+    zoned.year,
+    zoned.month - 1,
+    zoned.day,
+    zoned.hour,
+    zoned.minute,
+    zoned.second,
+  ) - date.getTime();
+};
+
+const combineDepartureDateTimeInRideTimezone = (departureDate: Date, departureTime: string): Date => {
   const [hours = 0, minutes = 0] = departureTime.split(':').map(Number);
-  return new Date(Date.UTC(
+  const utcGuess = Date.UTC(
     departureDate.getUTCFullYear(),
     departureDate.getUTCMonth(),
     departureDate.getUTCDate(),
     hours,
     minutes,
-  ));
+  );
+  const offsetMs = getRideTimeOffsetMs(new Date(utcGuess));
+  return new Date(utcGuess - offsetMs);
 };
 
 export const isFutureRideDeparture = (
   departureDate: Date,
   departureTime: string,
   now = new Date(),
-): boolean => combineDepartureDateTimeUtc(departureDate, departureTime).getTime() > now.getTime();
+): boolean => combineDepartureDateTimeInRideTimezone(departureDate, departureTime).getTime() > now.getTime();
 const activeBookingStatuses = [
   'PAYMENT_PENDING',
   'DRIVER_PENDING',
@@ -636,16 +677,16 @@ export const getAvailableRides = async (
   const limit = Number(query.limit) || 10;
   const skip = (page - 1) * limit;
   const now = new Date();
-  const todayUtc = new Date(now);
-  todayUtc.setUTCHours(0, 0, 0, 0);
-  const currentUtcTime = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+  const rideNow = getRideTimeParts(now);
+  const todayRideDate = new Date(Date.UTC(rideNow.year, rideNow.month - 1, rideNow.day));
+  const currentRideTime = `${String(rideNow.hour).padStart(2, '0')}:${String(rideNow.minute).padStart(2, '0')}`;
 
   const whereClause: Prisma.RideWhereInput = {
     status: RideStatus.PUBLISHED,
     availableSeats: { gte: 1 },
     OR: [
-      { departureDate: { gt: todayUtc } },
-      { departureDate: { equals: todayUtc }, departureTime: { gt: currentUtcTime } },
+      { departureDate: { gt: todayRideDate } },
+      { departureDate: { equals: todayRideDate }, departureTime: { gt: currentRideTime } },
     ],
   };
 
