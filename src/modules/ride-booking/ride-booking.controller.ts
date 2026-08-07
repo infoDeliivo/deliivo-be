@@ -97,7 +97,7 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 break;
             case 'BOOKING_WINDOW_CLOSED':
                 status = HttpStatus.BAD_REQUEST;
-                message = 'Same-day rides must be booked at least 3 hours before departure';
+                message = 'Same-day rides must be booked at least 1 hour before departure';
                 break;
             case 'PAYMENT_INITIALIZATION_FAILED':
                 status = HttpStatus.INTERNAL_ERROR;
