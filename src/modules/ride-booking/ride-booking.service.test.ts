@@ -326,6 +326,57 @@ describe('createBooking segment pricing + payment intent', () => {
         ).rejects.toThrow('DROPOFF_POINT_REQUIRED');
     });
 
+    it('charges full-route fare when booking from a pickup point to a drop-off point at the route endpoints', async () => {
+        const tx = buildTx();
+        const baseRide = await tx.ride.findFirst();
+        tx.ride.findFirst.mockResolvedValue({
+            ...baseRide,
+            waypoints: [
+                {
+                    id: 'pickup-1',
+                    placeId: 'place-pickup',
+                    address: 'Pickup point',
+                    lat: 1.1,
+                    lng: 1.1,
+                    orderIndex: 0,
+                    waypointType: 'PICKUP',
+                    pricePerSeat: null,
+                },
+                ...(baseRide?.waypoints ?? []),
+                {
+                    id: 'dropoff-1',
+                    placeId: 'place-dropoff',
+                    address: 'Drop-off point',
+                    lat: 3.9,
+                    lng: 3.9,
+                    orderIndex: 100,
+                    waypointType: 'DROPOFF',
+                    pricePerSeat: null,
+                },
+            ],
+        });
+        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+
+        const booking = await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'pickup-1',
+            dropoffWaypointId: 'dropoff-1',
+        });
+
+        expect(booking.totalPrice).toBe(30);
+        expect(booking.priceBreakdown?.basePricePerSeat).toBe(30);
+        expect(tx.rideBooking.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({
+                pickupWaypointId: 'pickup-1',
+                dropoffWaypointId: 'dropoff-1',
+                pickupAddress: 'Pickup point',
+                dropoffAddress: 'Drop-off point',
+                segmentFare: 30,
+            }),
+        }));
+    });
+
     it('creates a driver-pending booking and notifies the driver when payment mode is bypass', async () => {
         process.env.BOOKING_PAYMENT_MODE = 'bypass';
 
