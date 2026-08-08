@@ -136,7 +136,7 @@ describe('resolveSegmentView', () => {
         expect(points[2].cumulativePrice).toBe(20);
     });
 
-    it('ignores non-stopover waypoints so origin -> first stopover remains valid', () => {
+    it('keeps pickup and drop-off waypoints addressable while origin -> first stopover stays valid', () => {
         const rideWithPickupAndDropoff = {
             ...ride,
             waypoints: [
@@ -165,8 +165,8 @@ describe('resolveSegmentView', () => {
         };
 
         const points = buildSegmentPoints(rideWithPickupAndDropoff);
-        expect(points.some((point) => point.ref === 'waypoint:wp-pickup')).toBe(false);
-        expect(points.some((point) => point.ref === 'waypoint:wp-dropoff')).toBe(false);
+        expect(points.some((point) => point.ref === 'waypoint:wp-pickup')).toBe(true);
+        expect(points.some((point) => point.ref === 'waypoint:wp-dropoff')).toBe(true);
 
         const result = resolveSegmentView(
             rideWithPickupAndDropoff,
@@ -175,5 +175,56 @@ describe('resolveSegmentView', () => {
             'waypoint:wp-b'
         );
         expect(result?.basePricePerSeat).toBe(10);
+    });
+
+    it('treats pickup and drop-off waypoints as full-route endpoints for fare calculation', () => {
+        const rideWithPickupAndDropoff = {
+            ...ride,
+            waypoints: [
+                {
+                    id: 'wp-pickup',
+                    placeId: 'place-p',
+                    address: 'Pickup',
+                    lat: 1.5,
+                    lng: 1.5,
+                    waypointType: 'PICKUP',
+                    orderIndex: 0,
+                    pricePerSeat: null,
+                },
+                ...ride.waypoints,
+                {
+                    id: 'wp-dropoff',
+                    placeId: 'place-x',
+                    address: 'Dropoff',
+                    lat: 3.5,
+                    lng: 3.5,
+                    waypointType: 'DROPOFF',
+                    orderIndex: 100,
+                    pricePerSeat: null,
+                },
+            ],
+        };
+
+        const points = buildSegmentPoints(rideWithPickupAndDropoff);
+        const result = resolveSegmentView(
+            rideWithPickupAndDropoff,
+            points,
+            'waypoint:wp-pickup',
+            'waypoint:wp-dropoff'
+        );
+
+        expect(result?.originAddress).toBe('Pickup');
+        expect(result?.destinationAddress).toBe('Dropoff');
+        expect(result?.basePricePerSeat).toBe(30);
+        expect(result?.segment).toEqual({
+            pickupCumulativePrice: 0,
+            dropCumulativePrice: 30,
+            segmentFare: 30,
+        });
+        expect(result?.bookingContext).toEqual({
+            rideId: 'ride-1',
+            pickupWaypointId: 'wp-pickup',
+            dropoffWaypointId: 'wp-dropoff',
+        });
     });
 });
