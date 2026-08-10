@@ -515,4 +515,59 @@ describe('recoverPendingVeriffDecisions', () => {
         expect(mockPrisma.dlVerification.update).not.toHaveBeenCalled();
         expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
+
+    it('falls back to attempts + person when the decision endpoint returns verification null', async () => {
+        const signPayload = (payload: string) =>
+            crypto.createHmac('sha256', process.env.VERIFF_SHARED_SECRET || '').update(payload).digest('hex');
+        const nullDecision = JSON.stringify({ status: 'success', verification: null });
+        const attemptsPayload = JSON.stringify({
+            status: 'success',
+            verifications: [
+                {
+                    id: 'attempt-1',
+                    status: 'approved',
+                    createdTime: '2026-08-10T14:50:52.421453Z',
+                },
+            ],
+        });
+        const personPayload = JSON.stringify({
+            status: 'success',
+            person: {
+                id: 'person-1',
+                firstName: 'Jon',
+                lastName: 'Smith',
+                dateOfBirth: '1990-05-15',
+                gender: 'M',
+            },
+        });
+
+        mockedAxios.get
+            .mockResolvedValueOnce({
+                data: nullDecision,
+                headers: { 'x-hmac-signature': signPayload(nullDecision) },
+            } as any)
+            .mockResolvedValueOnce({
+                data: attemptsPayload,
+                headers: { 'x-hmac-signature': signPayload(attemptsPayload) },
+            } as any)
+            .mockResolvedValueOnce({
+                data: personPayload,
+                headers: { 'x-hmac-signature': signPayload(personPayload) },
+            } as any);
+
+        const result = await recoverPendingVeriffDecisions();
+
+        expect(result).toEqual({ scanned: 2, updated: 1, skipped: 1 });
+        expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    status: 'APPROVED',
+                    verifiedName: 'Jon Smith',
+                    verifiedDob: '1990-05-15',
+                    verifiedGender: 'M',
+                }),
+            }),
+        );
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
+    });
 });

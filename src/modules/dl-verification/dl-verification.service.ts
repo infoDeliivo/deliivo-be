@@ -399,6 +399,77 @@ const extractDecisionStatus = (body: unknown): string | null => {
   return typeof body.verification.status === 'string' ? body.verification.status : null;
 };
 
+const buildVeriffRequestHeaders = (sessionId: string) => ({
+  'X-AUTH-CLIENT': getVeriffApiKey(),
+  'X-HMAC-SIGNATURE': buildSessionSignature(sessionId),
+  'Content-Type': 'application/json',
+});
+
+const fetchSignedVeriffText = async (path: string, sessionId: string) => {
+  const response = await axios.get(`${VERIFF_BASE_URL}${path}`, {
+    headers: buildVeriffRequestHeaders(sessionId),
+    responseType: 'text',
+    transformResponse: [(data) => data],
+  });
+
+  const rawBody = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+  const responseSignature = response.headers['x-hmac-signature'];
+
+  if (typeof responseSignature !== 'string' || !validateWebhookSignature(rawBody, responseSignature)) {
+    throw new Error('INVALID_VERIFF_RESPONSE_SIGNATURE');
+  }
+
+  try {
+    return JSON.parse(rawBody) as unknown;
+  } catch {
+    throw new Error('INVALID_VERIFF_RESPONSE_JSON');
+  }
+};
+
+const buildFallbackDecisionPayload = async (sessionId: string, userId: string): Promise<unknown | null> => {
+  const attemptsBody = await fetchSignedVeriffText(`/sessions/${sessionId}/attempts`, sessionId);
+  if (!isRecord(attemptsBody) || !Array.isArray(attemptsBody.verifications)) return null;
+
+  const attempts = attemptsBody.verifications
+    .filter(isRecord)
+    .filter((attempt) => typeof attempt.status === 'string')
+    .sort((left, right) => {
+      const leftTime = typeof left.createdTime === 'string' ? Date.parse(left.createdTime) : 0;
+      const rightTime = typeof right.createdTime === 'string' ? Date.parse(right.createdTime) : 0;
+      return rightTime - leftTime;
+    });
+
+  const latestAttempt = attempts.find((attempt) =>
+    TERMINAL_DECISION_STATUSES.has(String(attempt.status))
+  );
+
+  if (!latestAttempt) return null;
+
+  const status = String(latestAttempt.status);
+
+  let person: Record<string, unknown> | undefined;
+  if (status === 'approved') {
+    const personBody = await fetchSignedVeriffText(`/sessions/${sessionId}/person`, sessionId);
+    if (!isRecord(personBody) || !isRecord(personBody.person)) return null;
+    person = {
+      firstName: personBody.person.firstName,
+      lastName: personBody.person.lastName,
+      dateOfBirth: personBody.person.dateOfBirth,
+      gender: personBody.person.gender,
+    };
+  }
+
+  return {
+    verification: {
+      id: sessionId,
+      status,
+      code: null,
+      vendorData: userId,
+      ...(person ? { person } : {}),
+    },
+  };
+};
+
 // ─── Handle webhook decision from Veriff ───────────────────────────
 export const handleWebhookDecision = async (body: unknown) => {
   const verification: VeriffWebhookVerification | null =
@@ -628,43 +699,19 @@ export const recoverPendingVeriffDecisions = async () => {
     }
 
     try {
-      const response = await axios.get(
-        `${VERIFF_BASE_URL}/sessions/${record.veriffSessionId}/decision`,
-        {
-          headers: {
-            'X-AUTH-CLIENT': getVeriffApiKey(),
-            'X-HMAC-SIGNATURE': buildSessionSignature(record.veriffSessionId),
-            'Content-Type': 'application/json',
-          },
-          responseType: 'text',
-          transformResponse: [(data) => data],
-        },
+      let parsed = await fetchSignedVeriffText(
+        `/sessions/${record.veriffSessionId}/decision`,
+        record.veriffSessionId,
       );
-
-      const rawBody = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
-      const responseSignature = response.headers['x-hmac-signature'];
-
-      if (typeof responseSignature !== 'string' || !validateWebhookSignature(rawBody, responseSignature)) {
-        logWarn('Veriff decision recovery skipped: invalid response signature', {
-          sessionId: record.veriffSessionId,
-        });
-        skipped++;
-        continue;
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(rawBody);
-      } catch {
-        logWarn('Veriff decision recovery skipped: response is not valid JSON', {
-          sessionId: record.veriffSessionId,
-        });
-        skipped++;
-        continue;
-      }
-
       const decisionStatus = extractDecisionStatus(parsed);
-      if (!decisionStatus || !TERMINAL_DECISION_STATUSES.has(decisionStatus)) {
+      if (!decisionStatus) {
+        const fallback = await buildFallbackDecisionPayload(record.veriffSessionId, record.userId);
+        if (!fallback) {
+          skipped++;
+          continue;
+        }
+        parsed = fallback;
+      } else if (!TERMINAL_DECISION_STATUSES.has(decisionStatus)) {
         skipped++;
         continue;
       }
