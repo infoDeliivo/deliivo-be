@@ -9,6 +9,7 @@ import redis from '../../cache/redis.js';
 import { getContentSummary } from '../content/content.service.js';
 import { DISPUTE_STATUSES, OPEN_DISPUTE_STATUSES } from '../dispute/dispute.constants.js';
 import { manualSessionId } from '../dl-verification/dl-review.service.js';
+import { sendMail } from '../mail/mail.service.js';
 
 const emergencyAlertSelect = {
     id: true,
@@ -45,6 +46,35 @@ const emergencyAlertSelect = {
         },
     },
 } satisfies Prisma.EmergencyAlertSelect;
+
+const adminUserName = (user: { firstName?: string | null; lastName?: string | null; email?: string | null }) =>
+    [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'there';
+
+const notifyAdminVerificationChange = async (
+    user: { id: string; firstName?: string | null; lastName?: string | null; email?: string | null },
+    input: { type: string; title: string; body: string; subject: string; data?: Record<string, unknown> },
+) => {
+    await createNotification({
+        userId: user.id,
+        type: input.type,
+        title: input.title,
+        body: input.body,
+        data: input.data,
+    });
+
+    if (!user.email) return;
+
+    const text = `${input.title}\n\nHello ${adminUserName(user)},\n\n${input.body}\n\nDeliivo`;
+    const html = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #111827;">
+          <h2 style="margin: 0 0 12px;">${input.title}</h2>
+          <p style="margin: 0 0 12px;">Hello ${adminUserName(user)},</p>
+          <p style="margin: 0 0 12px;">${input.body}</p>
+          <p style="margin: 16px 0 0;">Deliivo</p>
+        </div>
+    `;
+    await sendMail({ to: user.email, subject: input.subject, html, text });
+};
 
 /* ================= LIST USERS ================= */
 export const listUsers = async (query: {
@@ -280,8 +310,8 @@ export const getUserDetails = async (userId: string) => {
                 select: adminVehicleSelect,
             },
             dlVerifications: {
-                orderBy: { createdAt: 'desc' },
-                take: 5,
+                orderBy: { updatedAt: 'desc' },
+                take: 20,
                 select: {
                     id: true,
                     status: true,
@@ -475,7 +505,7 @@ export const getUserDetails = async (userId: string) => {
 export const requireVeriffForUser = async (userId: string, adminId: string | null) => {
     const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { id: true, dlVerified: true },
+        select: { id: true, dlVerified: true, firstName: true, lastName: true, email: true },
     });
     if (!user) throw new Error('USER_NOT_FOUND');
 
@@ -518,6 +548,14 @@ export const requireVeriffForUser = async (userId: string, adminId: string | nul
             data: { dlVerified: false },
         }),
     ]);
+
+    await notifyAdminVerificationChange(user, {
+        type: 'verification.veriff.required',
+        title: 'Veriff verification required',
+        body: 'The Deliivo team has asked you to complete Veriff verification before your licence can remain approved.',
+        subject: 'Deliivo: Veriff verification required',
+        data: { userId, action: 'REQUIRE_VERIFF' },
+    });
 
     return {
         id: userId,
@@ -752,7 +790,7 @@ export const listVehicles = async (query: {
 export const verifyVehicle = async (vehicleId: string, reviewedById?: string) => {
     const vehicle = await prisma.vehicle.findUnique({
         where: { id: vehicleId },
-        select: { id: true, userId: true },
+        select: { id: true, userId: true, brand: true, model_name: true, model_num: true, user: { select: { id: true, firstName: true, lastName: true, email: true } } },
     });
     if (!vehicle) throw new Error('VEHICLE_NOT_FOUND');
 
@@ -769,11 +807,11 @@ export const verifyVehicle = async (vehicleId: string, reviewedById?: string) =>
         select: { id: true, isVerified: true, verificationStatus: true, reviewedAt: true },
     });
 
-    await createNotification({
-        userId: vehicle.userId,
+    await notifyAdminVerificationChange(vehicle.user, {
         type: 'vehicle.approved',
         title: 'Vehicle approved',
-        body: 'Your vehicle has been approved. You can now publish rides.',
+        body: `Your vehicle${[vehicle.brand, vehicle.model_name || vehicle.model_num].filter(Boolean).length ? ` (${[vehicle.brand, vehicle.model_name || vehicle.model_num].filter(Boolean).join(' ')})` : ''} has been approved. You can now publish rides.`,
+        subject: 'Deliivo: vehicle approved',
         data: { vehicleId },
     });
 
@@ -788,7 +826,7 @@ export const rejectVehicle = async (
 ) => {
     const vehicle = await prisma.vehicle.findUnique({
         where: { id: vehicleId },
-        select: { id: true, userId: true },
+        select: { id: true, userId: true, brand: true, model_name: true, model_num: true, user: { select: { id: true, firstName: true, lastName: true, email: true } } },
     });
     if (!vehicle) throw new Error('VEHICLE_NOT_FOUND');
 
@@ -811,11 +849,11 @@ export const rejectVehicle = async (
     });
 
     // The reason travels with the notification so the driver knows what to re-upload.
-    await createNotification({
-        userId: vehicle.userId,
+    await notifyAdminVerificationChange(vehicle.user, {
         type: 'vehicle.rejected',
-        title: 'Vehicle rejected',
-        body: reason,
+        title: 'Vehicle review updated',
+        body: `Your vehicle review needs attention. Reason: ${reason}`,
+        subject: 'Deliivo: vehicle review update',
         data: { vehicleId, reason },
     });
 
