@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 const mockPrisma = {
     dlVerification: {
         findUnique: jest.fn(),
@@ -21,9 +23,20 @@ jest.mock('../../config/index.js', () => ({
     prisma: mockPrisma,
 }));
 
+jest.mock('axios', () => ({
+    __esModule: true,
+    default: {
+        get: jest.fn(),
+        post: jest.fn(),
+    },
+}));
+
+import axios from 'axios';
+
 import {
     getVerificationStatus,
     handleWebhookDecision,
+    recoverPendingVeriffDecisions,
     registerVeriffSession,
 } from './dl-verification.service';
 
@@ -34,6 +47,7 @@ const buildBody = (status: string, person: Person) => ({
 });
 
 const profile = { firstName: 'Jon', lastName: 'Smith', dob: new Date('1990-05-15T00:00:00Z'), gender: 'MALE' };
+const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 describe('handleWebhookDecision — identity matching (name + DOB + gender)', () => {
     beforeEach(() => {
@@ -430,5 +444,75 @@ describe('getVerificationStatus', () => {
             declineReason: 'Photo is blurred',
             hasDocument: true,
         });
+    });
+});
+
+describe('recoverPendingVeriffDecisions', () => {
+    const signSession = (sessionId: string) =>
+        crypto.createHmac('sha256', process.env.VERIFF_SHARED_SECRET || '').update(sessionId).digest('hex');
+    const signPayload = (payload: string) =>
+        crypto.createHmac('sha256', process.env.VERIFF_SHARED_SECRET || '').update(payload).digest('hex');
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        process.env.VERIFF_SHARED_SECRET = 'veriff-shared-secret';
+        process.env.VERIFF_API_KEY = 'veriff-api-key';
+        mockPrisma.dlVerification.findMany.mockResolvedValue([
+            { id: 'rec-1', userId: 'user-1', veriffSessionId: 'veriff-session-1', updatedAt: new Date('2026-08-10T10:00:00Z') },
+            { id: 'rec-2', userId: 'user-2', veriffSessionId: 'manual:user-2', updatedAt: new Date('2026-08-10T10:00:00Z') },
+        ]);
+        mockPrisma.dlVerification.findUnique.mockResolvedValue({ id: 'rec-1', userId: 'user-1' });
+        mockPrisma.user.findUnique.mockResolvedValue(profile);
+        mockPrisma.dlVerification.update.mockResolvedValue(undefined);
+        mockPrisma.user.update.mockResolvedValue(undefined);
+    });
+
+    it('fetches decision data for pending Veriff sessions and applies terminal outcomes', async () => {
+        const payload = JSON.stringify({
+            verification: {
+                id: 'veriff-session-1',
+                status: 'approved',
+                code: 9001,
+                person: { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' },
+            },
+        });
+        mockedAxios.get.mockResolvedValue({
+            data: payload,
+            headers: { 'x-hmac-signature': signPayload(payload) },
+        } as any);
+
+        const result = await recoverPendingVeriffDecisions();
+
+        expect(result).toEqual({ scanned: 2, updated: 1, skipped: 1 });
+        expect(mockedAxios.get).toHaveBeenCalledWith(
+            expect.stringContaining('/sessions/veriff-session-1/decision'),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    'X-AUTH-CLIENT': 'veriff-api-key',
+                    'X-HMAC-SIGNATURE': signSession('veriff-session-1'),
+                }),
+            }),
+        );
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
+    });
+
+    it('skips non-terminal decisions instead of forcing a decline', async () => {
+        const payload = JSON.stringify({
+            verification: {
+                id: 'veriff-session-1',
+                status: 'review',
+                code: 7001,
+            },
+        });
+        mockedAxios.get.mockResolvedValue({
+            data: payload,
+            headers: { 'x-hmac-signature': signPayload(payload) },
+        } as any);
+
+        const result = await recoverPendingVeriffDecisions();
+
+        expect(result).toEqual({ scanned: 2, updated: 0, skipped: 2 });
+        expect(mockPrisma.dlVerification.update).not.toHaveBeenCalled();
+        expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 });

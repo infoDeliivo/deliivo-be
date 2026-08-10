@@ -105,6 +105,17 @@ scheduleMaintenanceJob(
     }
 );
 
+scheduleMaintenanceJob(
+    'veriff-decision-recovery',
+    {},
+    {
+        repeat: { pattern: '*/15 * * * *' },
+        jobId: 'veriff-decision-recovery',
+        removeOnComplete: true,
+        removeOnFail: 100,
+    }
+);
+
 // Local-disk staged-upload sweep: in local storage mode, staged uploads land on
 // disk under ./tmp. In bucket mode a lifecycle rule handles this (see
 // src/scripts/put-tmp-lifecycle.ts) and the local dir is absent, so this is a no-op.
@@ -618,6 +629,12 @@ export const maintenanceWorker = new Worker(
         if (job.name === 'payment-outbox') {
             const { processOutboxEvents } = await import('../modules/payments/payment-outbox.worker.js');
             await processOutboxEvents(25);
+            return;
+        }
+
+        if (job.name === 'veriff-decision-recovery') {
+            const { recoverPendingVeriffDecisions } = await import('../modules/dl-verification/dl-verification.service.js');
+            await recoverPendingVeriffDecisions();
             return;
         }
 

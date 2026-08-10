@@ -7,9 +7,19 @@ import { manualSessionId } from './dl-review.service.js';
 import type { DlVerificationStatus, Prisma } from '@prisma/client';
 
 const VERIFF_BASE_URL = process.env.VERIFF_BASE_URL || 'https://stationapi.veriff.com/v1';
-const VERIFF_API_KEY = process.env.VERIFF_API_KEY || '';
-const VERIFF_SHARED_SECRET = process.env.VERIFF_SHARED_SECRET || '';
 const VERIFF_CALLBACK_URL = process.env.VERIFF_CALLBACK_URL || '';
+const VERIFF_DECISION_RECOVERY_LIMIT = Number(process.env.VERIFF_DECISION_RECOVERY_LIMIT || '50');
+const VERIFF_DECISION_RECOVERY_MIN_AGE_MINUTES = Number(process.env.VERIFF_DECISION_RECOVERY_MIN_AGE_MINUTES || '5');
+
+const TERMINAL_DECISION_STATUSES = new Set([
+  'approved',
+  'declined',
+  'resubmission_requested',
+  'expired',
+]);
+
+const getVeriffApiKey = () => process.env.VERIFF_API_KEY || '';
+const getVeriffSharedSecret = () => process.env.VERIFF_SHARED_SECRET || '';
 
 // Veriff only accepts HTTPS return URLs (API error 1302). Drop anything else
 // instead of letting the session-create call fail with a 400.
@@ -161,13 +171,13 @@ export const createVeriffSession = async (
   try {
     const payloadString = JSON.stringify(payload);
     const signature = crypto
-      .createHmac('sha256', VERIFF_SHARED_SECRET)
+      .createHmac('sha256', getVeriffSharedSecret())
       .update(payloadString)
       .digest('hex');
 
     const response = await axios.post(`${VERIFF_BASE_URL}/sessions`, payloadString, {
       headers: {
-        'X-AUTH-CLIENT': VERIFF_API_KEY,
+        'X-AUTH-CLIENT': getVeriffApiKey(),
         'X-HMAC-SIGNATURE': signature,
         'Content-Type': 'application/json',
       },
@@ -314,7 +324,7 @@ const HEX_SHA256 = /^[0-9a-f]{64}$/i;
  * would then be enough to self-approve a driving licence.
  */
 export const assertVeriffWebhookConfigured = (): void => {
-  if (VERIFF_SHARED_SECRET) return;
+  if (getVeriffSharedSecret()) return;
   const message =
     'VERIFF_SHARED_SECRET is not set; the Veriff decision webhook cannot be authenticated.';
   if (process.env.NODE_ENV === 'production') {
@@ -331,7 +341,8 @@ export const validateWebhookSignature = (
   signature: string,
 ): boolean => {
   // Fail closed rather than validating everything against an empty-key HMAC.
-  if (!VERIFF_SHARED_SECRET) {
+  const sharedSecret = getVeriffSharedSecret();
+  if (!sharedSecret) {
     logError('Veriff webhook rejected: VERIFF_SHARED_SECRET is not configured');
     return false;
   }
@@ -343,7 +354,7 @@ export const validateWebhookSignature = (
   }
 
   const expected = crypto
-    .createHmac('sha256', VERIFF_SHARED_SECRET)
+    .createHmac('sha256', sharedSecret)
     .update(payload)
     .digest();
   const provided = Buffer.from(signature, 'hex');
@@ -354,6 +365,9 @@ export const validateWebhookSignature = (
 
   return crypto.timingSafeEqual(provided, expected);
 };
+
+const buildSessionSignature = (sessionId: string): string =>
+  crypto.createHmac('sha256', getVeriffSharedSecret()).update(sessionId).digest('hex');
 
 /**
  * Veriff person fields may arrive as a plain string or as `{ value }`.
@@ -379,6 +393,11 @@ interface VeriffWebhookVerification {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
+
+const extractDecisionStatus = (body: unknown): string | null => {
+  if (!isRecord(body) || !isRecord(body.verification)) return null;
+  return typeof body.verification.status === 'string' ? body.verification.status : null;
+};
 
 // ─── Handle webhook decision from Veriff ───────────────────────────
 export const handleWebhookDecision = async (body: unknown) => {
@@ -575,4 +594,110 @@ export const getVerificationStatus = async (userId: string) => {
       updatedAt: latest.updatedAt,
     },
   };
+};
+
+export const recoverPendingVeriffDecisions = async () => {
+  if (!getVeriffApiKey() || !getVeriffSharedSecret()) {
+    logWarn('Veriff decision recovery skipped: API credentials are not fully configured');
+    return { scanned: 0, updated: 0, skipped: 0 };
+  }
+
+  const cutoff = new Date(Date.now() - VERIFF_DECISION_RECOVERY_MIN_AGE_MINUTES * 60 * 1000);
+  const candidates = await prisma.dlVerification.findMany({
+    where: {
+      status: 'PENDING',
+      updatedAt: { lte: cutoff },
+    },
+    orderBy: { updatedAt: 'asc' },
+    take: VERIFF_DECISION_RECOVERY_LIMIT,
+    select: {
+      id: true,
+      userId: true,
+      veriffSessionId: true,
+      updatedAt: true,
+    },
+  });
+
+  let updated = 0;
+  let skipped = 0;
+
+  for (const record of candidates) {
+    if (record.veriffSessionId.startsWith('manual:')) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      const response = await axios.get(
+        `${VERIFF_BASE_URL}/sessions/${record.veriffSessionId}/decision`,
+        {
+          headers: {
+            'X-AUTH-CLIENT': getVeriffApiKey(),
+            'X-HMAC-SIGNATURE': buildSessionSignature(record.veriffSessionId),
+            'Content-Type': 'application/json',
+          },
+          responseType: 'text',
+          transformResponse: [(data) => data],
+        },
+      );
+
+      const rawBody = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+      const responseSignature = response.headers['x-hmac-signature'];
+
+      if (typeof responseSignature !== 'string' || !validateWebhookSignature(rawBody, responseSignature)) {
+        logWarn('Veriff decision recovery skipped: invalid response signature', {
+          sessionId: record.veriffSessionId,
+        });
+        skipped++;
+        continue;
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch {
+        logWarn('Veriff decision recovery skipped: response is not valid JSON', {
+          sessionId: record.veriffSessionId,
+        });
+        skipped++;
+        continue;
+      }
+
+      const decisionStatus = extractDecisionStatus(parsed);
+      if (!decisionStatus || !TERMINAL_DECISION_STATUSES.has(decisionStatus)) {
+        skipped++;
+        continue;
+      }
+
+      const result = await handleWebhookDecision(parsed);
+      if (result.success) {
+        updated++;
+      } else {
+        skipped++;
+      }
+    } catch (error: any) {
+      const statusCode = error?.response?.status;
+      if (statusCode === 404) {
+        logWarn('Veriff decision recovery: session not found', {
+          sessionId: record.veriffSessionId,
+          userId: record.userId,
+        });
+      } else {
+        logError('Veriff decision recovery failed', error, {
+          sessionId: record.veriffSessionId,
+          userId: record.userId,
+          statusCode,
+        });
+      }
+      skipped++;
+    }
+  }
+
+  logDebug('Veriff decision recovery complete', {
+    scanned: candidates.length,
+    updated,
+    skipped,
+  });
+
+  return { scanned: candidates.length, updated, skipped };
 };
