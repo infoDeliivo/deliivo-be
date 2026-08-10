@@ -8,6 +8,7 @@ import {
     adminOpenBookingDisputeSchema,
     bookingIdParamSchema,
     rejectVehicleSchema,
+    userIdParamSchema,
     vehicleIdParamSchema,
 } from './admin.validator.js';
 import * as dlReviewController from '../dl-verification/dl-review.controller.js';
@@ -31,7 +32,7 @@ router.post('/users/:id/ban', adminController.banUser as any);
 router.post('/users/:id/unban', adminController.unbanUser as any);
 router.post(
     '/users/:id/require-veriff',
-    validate({ params: dlUserIdParamSchema }),
+    validate({ params: userIdParamSchema }),
     asyncHandler<AuthRequest>(adminController.requireVeriffForUser),
 );
 router.get('/stats', adminController.getStats as any);

@@ -4,6 +4,10 @@ export const vehicleIdParamSchema = z.object({
     id: z.string().uuid('A valid vehicle id is required'),
 });
 
+export const userIdParamSchema = z.object({
+    id: z.string().uuid('A valid user id is required'),
+});
+
 export const rejectVehicleSchema = z.object({
     // The reason is shown to the driver verbatim in the rejection notification, so it
     // must actually say something.
