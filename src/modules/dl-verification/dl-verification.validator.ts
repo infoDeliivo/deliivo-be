@@ -91,3 +91,13 @@ export const declineDlSchema = z.object({
 });
 
 export type DeclineDlInput = z.infer<typeof declineDlSchema>;
+
+export const resubmitDlSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'A resubmission reason is required')
+    .max(500, 'Resubmission reason must be 500 characters or fewer'),
+});
+
+export type ResubmitDlInput = z.infer<typeof resubmitDlSchema>;

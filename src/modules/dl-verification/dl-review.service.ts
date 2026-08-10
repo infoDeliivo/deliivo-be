@@ -267,3 +267,36 @@ export const declineDlDocument = async (
 
   return { record, dlVerified: false };
 };
+
+/**
+ * Admin requests a re-submission. This keeps the manual-review path open but makes the
+ * current document explicitly non-approved until the driver uploads a new one.
+ */
+export const requestDlResubmission = async (
+  userId: string,
+  reason: string,
+  adminId: string | null,
+) => {
+  await loadPendingRow(userId);
+
+  const [record] = await prisma.$transaction([
+    prisma.dlVerification.update({
+      where: { veriffSessionId: manualSessionId(userId) },
+      data: {
+        status: 'RESUBMISSION_REQUESTED',
+        declineReason: reason,
+        reviewedById: adminId,
+        reviewedAt: new Date(),
+        nameMatch: false,
+        dobMatch: false,
+        genderMatch: false,
+        decisionPayload: payload('RESUBMISSION_REQUESTED', { adminId, reason }),
+      },
+    }),
+    prisma.user.update({ where: { id: userId }, data: { dlVerified: false } }),
+  ]);
+
+  logWarn('DL_MANUAL_RESUBMISSION_REQUESTED', { adminId, targetUserId: userId });
+
+  return { record, dlVerified: false };
+};

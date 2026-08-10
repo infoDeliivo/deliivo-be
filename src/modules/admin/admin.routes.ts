@@ -11,7 +11,7 @@ import {
     vehicleIdParamSchema,
 } from './admin.validator.js';
 import * as dlReviewController from '../dl-verification/dl-review.controller.js';
-import { declineDlSchema, dlUserIdParamSchema } from '../dl-verification/dl-verification.validator.js';
+import { declineDlSchema, dlUserIdParamSchema, resubmitDlSchema } from '../dl-verification/dl-verification.validator.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { AuthRequest } from '../../types/auth.js';
 
@@ -62,6 +62,11 @@ router.post(
     '/dl-verifications/:userId/decline',
     validate({ params: dlUserIdParamSchema, body: declineDlSchema }),
     asyncHandler<AuthRequest>(dlReviewController.decline),
+);
+router.post(
+    '/dl-verifications/:userId/resubmit',
+    validate({ params: dlUserIdParamSchema, body: resubmitDlSchema }),
+    asyncHandler<AuthRequest>(dlReviewController.requestResubmission),
 );
 
 router.post('/bookings/:id/refund', adminController.adminRefundBooking as any);
