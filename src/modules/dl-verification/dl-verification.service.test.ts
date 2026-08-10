@@ -106,56 +106,57 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
         expect(mockPrisma.dlVerification.updateMany.mock.calls[0][0].where.status).toBe('PENDING');
     });
 
-    it('supersedes nothing when the identity does not match', async () => {
+    it('still verifies and supersedes stale rows when Veriff approves with an identity mismatch', async () => {
         await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1991-05-15', gender: 'M' }),
         );
 
-        expect(mockPrisma.dlVerification.updateMany).not.toHaveBeenCalled();
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
+        expect(mockPrisma.dlVerification.updateMany).toHaveBeenCalled();
     });
 
-    it('blocks with IDENTITY_MISMATCH when the DOB differs', async () => {
+    it('approves but flags DOB mismatch when the DOB differs', async () => {
         const res = await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1991-05-15', gender: 'M' }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
         expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
-            expect.objectContaining({ data: expect.objectContaining({ status: 'IDENTITY_MISMATCH', dobMatch: false }) }),
+            expect.objectContaining({ data: expect.objectContaining({ status: 'APPROVED', dobMatch: false }) }),
         );
     });
 
-    it('blocks with IDENTITY_MISMATCH when the gender differs', async () => {
+    it('approves but flags gender mismatch when the gender differs', async () => {
         const res = await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'F' }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
         expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
             expect.objectContaining({ data: expect.objectContaining({ genderMatch: false }) }),
         );
     });
 
-    it('blocks with IDENTITY_MISMATCH when the name differs', async () => {
+    it('approves but flags name mismatch when the name differs', async () => {
         mockPrisma.user.findUnique.mockResolvedValue({ firstName: 'Jane', lastName: 'Doe', dob: profile.dob, gender: 'FEMALE' });
         const res = await handleWebhookDecision(
             buildBody('approved', { firstName: 'John', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
     });
 
-    it('blocks with IDENTITY_MISMATCH when the profile has no last name', async () => {
+    it('approves but flags name mismatch when the profile has no last name', async () => {
         mockPrisma.user.findUnique.mockResolvedValue({ firstName: 'Jon', lastName: null, dob: profile.dob, gender: 'MALE' });
         const res = await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
         expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
             expect.objectContaining({ data: expect.objectContaining({ nameMatch: false }) }),
         );
@@ -175,19 +176,19 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
         );
     });
 
-    // KYC-grade matching: a field the document does not assert is a mismatch, not a
-    // field to be skipped. An approved decision with nothing to compare verifies nobody.
-    it('withholds verification when DOB/gender are absent from the payload', async () => {
+    // Missing fields remain mismatch flags, but Veriff approval still verifies the
+    // licence document.
+    it('approves but flags mismatches when DOB/gender are absent from the payload', async () => {
         const res = await handleWebhookDecision(buildBody('approved', { firstName: 'Jon', lastName: 'Smith' }));
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
         expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
             expect.objectContaining({ data: expect.objectContaining({ dobMatch: false, genderMatch: false }) }),
         );
     });
 
-    it('withholds verification when the document carries an extra middle name', async () => {
+    it('approves but flags mismatch when the document carries an extra middle name', async () => {
         const res = await handleWebhookDecision(
             buildBody('approved', {
                 firstName: 'Jon Michael',
@@ -197,8 +198,8 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
             }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
     });
 
     it('does not verify or match-check a declined decision', async () => {

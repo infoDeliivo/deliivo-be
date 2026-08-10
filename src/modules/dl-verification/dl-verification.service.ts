@@ -568,14 +568,12 @@ export const handleWebhookDecision = async (body: unknown) => {
           { name: verifiedName, dob: verifiedDob, gender: verifiedGender },
         )
       : null;
-  const approvedAndMatched = mappedStatus === 'APPROVED' && match?.overall === true;
+  const approvedByVeriff = mappedStatus === 'APPROVED';
+  const approvedAndMatched = approvedByVeriff && match?.overall === true;
 
-  // Hard block: an approved decision whose identity does not match is flagged
-  // IDENTITY_MISMATCH and does NOT verify the user.
-  const finalStatus: DlVerificationStatus =
-    mappedStatus === 'APPROVED' && !approvedAndMatched
-      ? 'IDENTITY_MISMATCH'
-      : (mappedStatus as DlVerificationStatus);
+  // Veriff approval means the licence document passed. Identity comparison remains
+  // stored as admin-visible risk flags instead of blocking DL verification.
+  const finalStatus = mappedStatus as DlVerificationStatus;
 
   // Update verification record
   await prisma.dlVerification.update({
@@ -597,8 +595,9 @@ export const handleWebhookDecision = async (body: unknown) => {
     },
   });
 
-  // Only mark the user DL-verified when approved AND the identity matches.
-  if (approvedAndMatched) {
+  // Mark the user DL-verified when Veriff approves the licence. Name/DOB/gender
+  // mismatches remain visible on the record for admin review.
+  if (approvedByVeriff) {
     await prisma.$transaction([
       prisma.user.update({
         where: { id: userId },
@@ -616,8 +615,10 @@ export const handleWebhookDecision = async (body: unknown) => {
         data: { status: 'SUPERSEDED' },
       }),
     ]);
-  } else if (mappedStatus === 'APPROVED') {
-    logWarn('Veriff webhook: DL approved but identity mismatch — verification withheld', {
+  }
+
+  if (approvedByVeriff && !approvedAndMatched) {
+    logWarn('Veriff webhook: DL approved with identity mismatch', {
       sessionId,
       userId,
       nameMatch: match?.nameMatch,
