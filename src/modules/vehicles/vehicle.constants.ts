@@ -17,6 +17,7 @@ export const REQUIRED_DOCUMENT_TYPES: readonly DocumentType[] = [
     DocumentType.VEHICLE_IMAGE_FRONT,
     DocumentType.VEHICLE_IMAGE_BACK,
     DocumentType.VEHICLE_DOCUMENT,
+    DocumentType.INSURANCE_DOCUMENT,
 ];
 
 /**
