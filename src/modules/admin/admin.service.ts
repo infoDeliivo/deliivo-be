@@ -9,6 +9,7 @@ import redis from '../../cache/redis.js';
 import { getContentSummary } from '../content/content.service.js';
 import { DISPUTE_STATUSES, OPEN_DISPUTE_STATUSES } from '../dispute/dispute.constants.js';
 import { manualSessionId } from '../dl-verification/dl-review.service.js';
+import { recoverPendingVeriffDecisionsForUser } from '../dl-verification/dl-verification.service.js';
 import { sendMail } from '../mail/mail.service.js';
 
 const emergencyAlertSelect = {
@@ -562,6 +563,17 @@ export const requireVeriffForUser = async (userId: string, adminId: string | nul
         dlVerified: false,
         requiresVeriff: true,
     };
+};
+
+export const syncUserVeriffStatus = async (userId: string) => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true },
+    });
+
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    return recoverPendingVeriffDecisionsForUser(userId);
 };
 
 /* ================= BAN / UNBAN USER ================= */

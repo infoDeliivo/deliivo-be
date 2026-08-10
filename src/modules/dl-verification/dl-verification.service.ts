@@ -604,14 +604,15 @@ export const handleWebhookDecision = async (body: unknown) => {
         where: { id: userId },
         data: { dlVerified: true },
       }),
-      // Close any open manual submission. Veriff is the authority, so leaving the
-      // upload PENDING would keep it in the admin queue where a decline would
-      // revoke the verification just granted. Scoped to PENDING so a manual row an
-      // admin already decided stays as the historical record it is. updateMany
-      // rather than update: most drivers have no manual row, and this must be a
-      // no-op rather than a throw when nothing matches.
+      // Close stale pending attempts for this user. Veriff is the authority; once one
+      // session approves, older pending Veriff/manual rows are historical noise and
+      // must not continue to surface as the current admin state.
       prisma.dlVerification.updateMany({
-        where: { veriffSessionId: manualSessionId(userId), status: 'PENDING' },
+        where: {
+          userId,
+          status: 'PENDING',
+          veriffSessionId: { not: sessionId },
+        },
         data: { status: 'SUPERSEDED' },
       }),
     ]);
@@ -667,7 +668,13 @@ export const getVerificationStatus = async (userId: string) => {
   };
 };
 
-export const recoverPendingVeriffDecisions = async () => {
+type VeriffDecisionRecoveryOptions = {
+  userId?: string;
+  includeFresh?: boolean;
+  limit?: number;
+};
+
+export const recoverPendingVeriffDecisions = async (options: VeriffDecisionRecoveryOptions = {}) => {
   if (!getVeriffApiKey() || !getVeriffSharedSecret()) {
     logWarn('Veriff decision recovery skipped: API credentials are not fully configured');
     return { scanned: 0, updated: 0, skipped: 0 };
@@ -676,11 +683,12 @@ export const recoverPendingVeriffDecisions = async () => {
   const cutoff = new Date(Date.now() - VERIFF_DECISION_RECOVERY_MIN_AGE_MINUTES * 60 * 1000);
   const candidates = await prisma.dlVerification.findMany({
     where: {
+      ...(options.userId ? { userId: options.userId } : {}),
       status: 'PENDING',
-      updatedAt: { lte: cutoff },
+      ...(options.includeFresh ? {} : { updatedAt: { lte: cutoff } }),
     },
     orderBy: { updatedAt: 'asc' },
-    take: VERIFF_DECISION_RECOVERY_LIMIT,
+    take: options.limit ?? VERIFF_DECISION_RECOVERY_LIMIT,
     select: {
       id: true,
       userId: true,
@@ -748,3 +756,6 @@ export const recoverPendingVeriffDecisions = async () => {
 
   return { scanned: candidates.length, updated, skipped };
 };
+
+export const recoverPendingVeriffDecisionsForUser = async (userId: string) =>
+  recoverPendingVeriffDecisions({ userId, includeFresh: true, limit: 20 });

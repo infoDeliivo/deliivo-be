@@ -35,6 +35,11 @@ router.post(
     validate({ params: userIdParamSchema }),
     asyncHandler<AuthRequest>(adminController.requireVeriffForUser),
 );
+router.post(
+    '/users/:id/sync-veriff',
+    validate({ params: userIdParamSchema }),
+    asyncHandler<AuthRequest>(adminController.syncUserVeriffStatus),
+);
 router.get('/stats', adminController.getStats as any);
 router.get('/stats/trends', adminController.getMonitoringTrends as any);
 router.get('/ops/summary', adminController.getOperationsSummary as any);

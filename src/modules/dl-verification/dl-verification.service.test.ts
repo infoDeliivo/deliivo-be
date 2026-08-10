@@ -80,15 +80,19 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
         );
     });
 
-    // Without this, a manual submission left open after Veriff approves stays in the
-    // admin queue, where declining it would revoke the verification just granted.
-    it('closes an open manual submission when it verifies the driver', async () => {
+    // Without this, older pending Veriff/manual rows can keep showing as the user's
+    // current state in admin after a later session approves.
+    it('supersedes stale pending submissions when it verifies the driver', async () => {
         await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jón', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
         );
 
         expect(mockPrisma.dlVerification.updateMany).toHaveBeenCalledWith({
-            where: { veriffSessionId: 'manual:user-1', status: 'PENDING' },
+            where: {
+                userId: 'user-1',
+                status: 'PENDING',
+                veriffSessionId: { not: 'veriff-session-1' },
+            },
             data: { status: 'SUPERSEDED' },
         });
     });

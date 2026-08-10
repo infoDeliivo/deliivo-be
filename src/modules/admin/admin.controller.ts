@@ -80,6 +80,19 @@ export const requireVeriffForUser = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const syncUserVeriffStatus = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.syncUserVeriffStatus(req.params.id as string);
+        return sendSuccess(res, { message: 'Veriff status synced', data: result });
+    } catch (error: any) {
+        if (error.message === 'USER_NOT_FOUND') {
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+        }
+        logError('[ADMIN] Veriff sync failed', error, { userId: req.params.id });
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to sync Veriff status' });
+    }
+};
+
 /* ================= STATS ================= */
 export const getStats = async (req: AuthRequest, res: Response) => {
     try {
