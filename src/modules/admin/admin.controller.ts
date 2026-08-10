@@ -62,6 +62,24 @@ export const unbanUser = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const requireVeriffForUser = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.requireVeriffForUser(req.params.id as string, req.user?.id ?? null);
+        return sendSuccess(res, { message: 'User marked as requiring Veriff', data: result });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'USER_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+            case 'MANUAL_APPROVAL_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'No manual approval is available to convert to Veriff' });
+            case 'ALREADY_VERIFF_VERIFIED':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'User is already verified through Veriff' });
+            default:
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to require Veriff for user' });
+        }
+    }
+};
+
 /* ================= STATS ================= */
 export const getStats = async (req: AuthRequest, res: Response) => {
     try {

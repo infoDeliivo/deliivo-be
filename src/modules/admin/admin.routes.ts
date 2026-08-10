@@ -29,6 +29,11 @@ router.get('/sos', adminController.listEmergencyAlerts as any);
 router.post('/sos/:id/status', adminController.updateEmergencyAlertStatus as any);
 router.post('/users/:id/ban', adminController.banUser as any);
 router.post('/users/:id/unban', adminController.unbanUser as any);
+router.post(
+    '/users/:id/require-veriff',
+    validate({ params: dlUserIdParamSchema }),
+    asyncHandler<AuthRequest>(adminController.requireVeriffForUser),
+);
 router.get('/stats', adminController.getStats as any);
 router.get('/stats/trends', adminController.getMonitoringTrends as any);
 router.get('/ops/summary', adminController.getOperationsSummary as any);

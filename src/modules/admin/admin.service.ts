@@ -8,6 +8,7 @@ import { PAYMENT_STATUSES, markBookingPaymentRefunded } from '../payments/paymen
 import redis from '../../cache/redis.js';
 import { getContentSummary } from '../content/content.service.js';
 import { DISPUTE_STATUSES, OPEN_DISPUTE_STATUSES } from '../dispute/dispute.constants.js';
+import { manualSessionId } from '../dl-verification/dl-review.service.js';
 
 const emergencyAlertSelect = {
     id: true,
@@ -329,6 +330,8 @@ export const getUserDetails = async (userId: string) => {
         driverEarnings,
         payoutEligible,
         paidOut,
+        approvedVeriffChecks,
+        approvedManualChecks,
         openDisputes,
         reportsMade,
         reportsReceived,
@@ -382,6 +385,20 @@ export const getUserDetails = async (userId: string) => {
             _sum: { amountTotal: true },
             _count: { _all: true },
         }),
+        prisma.dlVerification.count({
+            where: {
+                userId,
+                status: 'APPROVED',
+                veriffSessionId: { not: manualSessionId(userId) },
+            },
+        }),
+        prisma.dlVerification.count({
+            where: {
+                userId,
+                status: 'APPROVED',
+                veriffSessionId: manualSessionId(userId),
+            },
+        }),
         prisma.dispute.count({
             where: {
                 resolvedAt: null,
@@ -399,9 +416,20 @@ export const getUserDetails = async (userId: string) => {
     ]);
 
     const { vehicles, dlVerifications, paymentMethods, ...profile } = user;
+    const verificationFlags = {
+        completeOnboardingVerified: profile.onboardingStatus === 'COMPLETED',
+        veriffVerified: approvedVeriffChecks > 0,
+        manualLicenseApproved: approvedManualChecks > 0,
+        licenseVerified: Boolean(profile.dlVerified),
+        vehicleVerified: vehicles.some((vehicle) => vehicle.verificationStatus === VehicleVerificationStatus.APPROVED),
+        canRequireVeriff: approvedManualChecks > 0 && approvedVeriffChecks === 0 && Boolean(profile.dlVerified),
+    };
 
     return {
-        user: profile,
+        user: {
+            ...profile,
+            verificationFlags,
+        },
         vehicles: vehicles.map(mapAdminVehicle),
         dlVerifications: dlVerifications.map((record) => {
             const { documentImageKey, ...rest } = record;
@@ -441,6 +469,60 @@ export const getUserDetails = async (userId: string) => {
         },
         publishedRides,
         bookedRides,
+    };
+};
+
+export const requireVeriffForUser = async (userId: string, adminId: string | null) => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, dlVerified: true },
+    });
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    const manualApprovedRow = await prisma.dlVerification.findUnique({
+        where: { veriffSessionId: manualSessionId(userId) },
+        select: { id: true, status: true },
+    });
+
+    if (!manualApprovedRow || manualApprovedRow.status !== 'APPROVED') {
+        throw new Error('MANUAL_APPROVAL_NOT_FOUND');
+    }
+
+    const existingVeriffApproval = await prisma.dlVerification.findFirst({
+        where: {
+            userId,
+            status: 'APPROVED',
+            veriffSessionId: { not: manualSessionId(userId) },
+        },
+        select: { id: true },
+    });
+    if (existingVeriffApproval) {
+        throw new Error('ALREADY_VERIFF_VERIFIED');
+    }
+
+    await prisma.$transaction([
+        prisma.dlVerification.update({
+            where: { veriffSessionId: manualSessionId(userId) },
+            data: {
+                status: 'SUPERSEDED',
+                decisionPayload: {
+                    source: 'ADMIN',
+                    action: 'REQUIRE_VERIFF',
+                    at: new Date().toISOString(),
+                    adminId,
+                } as Prisma.InputJsonValue,
+            },
+        }),
+        prisma.user.update({
+            where: { id: userId },
+            data: { dlVerified: false },
+        }),
+    ]);
+
+    return {
+        id: userId,
+        dlVerified: false,
+        requiresVeriff: true,
     };
 };
 
