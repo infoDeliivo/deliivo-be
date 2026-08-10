@@ -99,6 +99,32 @@ const reconcilePendingVeriffSessionsForUser = async (userId: string) => {
   }
 };
 
+const normalizeLegacyApprovedMismatchRows = async (userId: string) => {
+  const rows = await prisma.dlVerification.findMany({
+    where: {
+      userId,
+      status: 'IDENTITY_MISMATCH',
+      documentImageKey: null,
+      veriffSessionId: { not: { startsWith: 'manual:' } },
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: 20,
+    select: {
+      veriffSessionId: true,
+      decisionPayload: true,
+    },
+  });
+
+  let updated = 0;
+  for (const row of rows) {
+    const status = extractDecisionStatus(row.decisionPayload);
+    if (status !== 'approved') continue;
+    const result = await handleWebhookDecision(row.decisionPayload);
+    if (result.success) updated++;
+  }
+  return updated;
+};
+
 // ─── Create a Veriff session for DL verification ───────────────────
 export const createVeriffSession = async (
   options: CreateVeriffSessionOptions
@@ -473,6 +499,51 @@ const fetchSignedVeriffText = async (path: string, sessionId: string) => {
   }
 };
 
+const buildFallbackDecisionPayload = async (sessionId: string, userId: string): Promise<unknown | null> => {
+  const attemptsBody = await fetchSignedVeriffText(`/sessions/${sessionId}/attempts`, sessionId);
+  if (!isRecord(attemptsBody) || !Array.isArray(attemptsBody.verifications)) return null;
+
+  const attempts = attemptsBody.verifications
+    .filter(isRecord)
+    .filter((attempt) => typeof attempt.status === 'string')
+    .sort((left, right) => {
+      const leftTime = typeof left.createdTime === 'string' ? Date.parse(left.createdTime) : 0;
+      const rightTime = typeof right.createdTime === 'string' ? Date.parse(right.createdTime) : 0;
+      return rightTime - leftTime;
+    });
+
+  const latestAttempt = attempts.find((attempt) =>
+    TERMINAL_DECISION_STATUSES.has(String(attempt.status))
+  );
+
+  if (!latestAttempt) return null;
+
+  const status = String(latestAttempt.status);
+  let person: Record<string, unknown> | undefined;
+
+  if (status === 'approved') {
+    const personBody = await fetchSignedVeriffText(`/sessions/${sessionId}/person`, sessionId);
+    if (!isRecord(personBody) || !isRecord(personBody.person)) return null;
+    person = {
+      firstName: personBody.person.firstName,
+      lastName: personBody.person.lastName,
+      dateOfBirth: personBody.person.dateOfBirth,
+      gender: personBody.person.gender,
+    };
+  }
+
+  return {
+    verification: {
+      id: sessionId,
+      status,
+      code: typeof latestAttempt.code === 'number' ? latestAttempt.code : null,
+      reasonCode: typeof latestAttempt.reasonCode === 'string' ? latestAttempt.reasonCode : undefined,
+      vendorData: userId,
+      ...(person ? { person } : {}),
+    },
+  };
+};
+
 // ─── Handle webhook decision from Veriff ───────────────────────────
 export const handleWebhookDecision = async (body: unknown) => {
   const verification: VeriffWebhookVerification | null =
@@ -721,8 +792,12 @@ export const recoverPendingVeriffDecisions = async (options: VeriffDecisionRecov
       );
       const decisionStatus = extractDecisionStatus(parsed);
       if (!decisionStatus) {
-        skipped++;
-        continue;
+        const fallback = await buildFallbackDecisionPayload(record.veriffSessionId, record.userId);
+        if (!fallback) {
+          skipped++;
+          continue;
+        }
+        parsed = fallback;
       } else if (!TERMINAL_DECISION_STATUSES.has(decisionStatus)) {
         skipped++;
         continue;
@@ -761,5 +836,8 @@ export const recoverPendingVeriffDecisions = async (options: VeriffDecisionRecov
   return { scanned: candidates.length, updated, skipped };
 };
 
-export const recoverPendingVeriffDecisionsForUser = async (userId: string) =>
-  recoverPendingVeriffDecisions({ userId, includeFresh: true, limit: 20 });
+export const recoverPendingVeriffDecisionsForUser = async (userId: string) => {
+  const recovered = await recoverPendingVeriffDecisions({ userId, includeFresh: true, limit: 20 });
+  const normalized = await normalizeLegacyApprovedMismatchRows(userId);
+  return { ...recovered, normalized };
+};
