@@ -60,10 +60,43 @@ interface CreateVeriffSessionOptions {
 // creates it.
 const hasApprovedVerification = async (userId: string): Promise<boolean> => {
   const existing = await prisma.dlVerification.findFirst({
-    where: { userId, status: 'APPROVED' },
+    where: {
+      userId,
+      status: 'APPROVED',
+      documentImageKey: null,
+      veriffSessionId: { not: { startsWith: 'manual:' } },
+    },
     select: { id: true },
   });
   return existing !== null;
+};
+
+const findPendingVeriffSession = async (userId: string) =>
+  prisma.dlVerification.findFirst({
+    where: {
+      userId,
+      status: 'PENDING',
+      documentImageKey: null,
+      veriffSessionId: { not: { startsWith: 'manual:' } },
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      id: true,
+      veriffSessionId: true,
+      veriffSessionUrl: true,
+    },
+  });
+
+const reconcilePendingVeriffSessionsForUser = async (userId: string) => {
+  try {
+    return await recoverPendingVeriffDecisionsForUser(userId);
+  } catch (error) {
+    logWarn('Veriff pending-session reconciliation failed before creating a session', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 };
 
 // ─── Create a Veriff session for DL verification ───────────────────
@@ -89,8 +122,22 @@ export const createVeriffSession = async (
     tag,
   } = options;
 
+  await reconcilePendingVeriffSessionsForUser(userId);
+
   if (await hasApprovedVerification(userId)) {
     return { success: false, reason: 'ALREADY_VERIFIED' };
+  }
+
+  const pendingSession = await findPendingVeriffSession(userId);
+  if (pendingSession) {
+    return {
+      success: true,
+      data: {
+        verificationId: pendingSession.id,
+        sessionId: pendingSession.veriffSessionId,
+        sessionUrl: pendingSession.veriffSessionUrl,
+      },
+    };
   }
 
   const callbackUrl = resolveCallbackUrl(callback);
@@ -632,6 +679,8 @@ export const handleWebhookDecision = async (body: unknown) => {
 
 // ─── Get DL verification status for a user ─────────────────────────
 export const getVerificationStatus = async (userId: string) => {
+  await reconcilePendingVeriffSessionsForUser(userId);
+
   // Ordered by updatedAt, not createdAt: the manual row is an upsert whose createdAt
   // never moves off the first submission, so a re-upload or a fresh decline would
   // otherwise lose to an older-but-newer-created Veriff row and the driver would
@@ -686,6 +735,8 @@ export const recoverPendingVeriffDecisions = async (options: VeriffDecisionRecov
     where: {
       ...(options.userId ? { userId: options.userId } : {}),
       status: 'PENDING',
+      documentImageKey: null,
+      veriffSessionId: { not: { startsWith: 'manual:' } },
       ...(options.includeFresh ? {} : { updatedAt: { lte: cutoff } }),
     },
     orderBy: { updatedAt: 'asc' },

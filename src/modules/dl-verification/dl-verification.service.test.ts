@@ -34,6 +34,7 @@ jest.mock('axios', () => ({
 import axios from 'axios';
 
 import {
+    createVeriffSession,
     getVerificationStatus,
     handleWebhookDecision,
     recoverPendingVeriffDecisions,
@@ -384,6 +385,41 @@ describe('registerVeriffSession', () => {
             success: true,
             data: { verificationId: 'rec-1', sessionId: options.sessionId, sessionUrl: options.sessionUrl },
         });
+    });
+});
+
+describe('createVeriffSession', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        delete process.env.VERIFF_API_KEY;
+        delete process.env.VERIFF_SHARED_SECRET;
+        mockPrisma.dlVerification.findMany.mockResolvedValue([]);
+        mockPrisma.dlVerification.findFirst
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({
+                id: 'rec-pending',
+                veriffSessionId: 'veriff-pending',
+                veriffSessionUrl: 'https://alchemy.veriff.com/v/pending',
+            });
+    });
+
+    it('reuses an existing pending Veriff session instead of creating a duplicate', async () => {
+        const res = await createVeriffSession({
+            userId: 'user-1',
+            firstName: 'Jon',
+            lastName: 'Smith',
+        });
+
+        expect(res).toEqual({
+            success: true,
+            data: {
+                verificationId: 'rec-pending',
+                sessionId: 'veriff-pending',
+                sessionUrl: 'https://alchemy.veriff.com/v/pending',
+            },
+        });
+        expect(mockedAxios.post).not.toHaveBeenCalled();
+        expect(mockPrisma.dlVerification.create).not.toHaveBeenCalled();
     });
 });
 
