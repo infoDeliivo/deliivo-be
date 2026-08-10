@@ -420,14 +420,18 @@ export const getUserDetails = async (userId: string) => {
             where: {
                 userId,
                 status: 'APPROVED',
-                veriffSessionId: { not: manualSessionId(userId) },
+                documentImageKey: null,
+                veriffSessionId: { not: { startsWith: 'manual:' } },
             },
         }),
         prisma.dlVerification.count({
             where: {
                 userId,
                 status: 'APPROVED',
-                veriffSessionId: manualSessionId(userId),
+                OR: [
+                    { veriffSessionId: { startsWith: 'manual:' } },
+                    { documentImageKey: { not: null } },
+                ],
             },
         }),
         prisma.dispute.count({
@@ -523,7 +527,8 @@ export const requireVeriffForUser = async (userId: string, adminId: string | nul
         where: {
             userId,
             status: 'APPROVED',
-            veriffSessionId: { not: manualSessionId(userId) },
+            documentImageKey: null,
+            veriffSessionId: { not: { startsWith: 'manual:' } },
         },
         select: { id: true },
     });
