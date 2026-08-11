@@ -457,7 +457,7 @@ export const getUserDetails = async (userId: string) => {
         manualLicenseApproved: approvedManualChecks > 0,
         licenseVerified: Boolean(profile.dlVerified),
         vehicleVerified: vehicles.some((vehicle) => vehicle.verificationStatus === VehicleVerificationStatus.APPROVED),
-        canRequireVeriff: approvedManualChecks > 0 && approvedVeriffChecks === 0 && Boolean(profile.dlVerified),
+        canRequireVeriff: approvedVeriffChecks === 0,
     };
 
     return {
@@ -519,10 +519,6 @@ export const requireVeriffForUser = async (userId: string, adminId: string | nul
         select: { id: true, status: true },
     });
 
-    if (!manualApprovedRow || manualApprovedRow.status !== 'APPROVED') {
-        throw new Error('MANUAL_APPROVAL_NOT_FOUND');
-    }
-
     const existingVeriffApproval = await prisma.dlVerification.findFirst({
         where: {
             userId,
@@ -536,24 +532,27 @@ export const requireVeriffForUser = async (userId: string, adminId: string | nul
         throw new Error('ALREADY_VERIFF_VERIFIED');
     }
 
-    await prisma.$transaction([
-        prisma.dlVerification.update({
-            where: { veriffSessionId: manualSessionId(userId) },
-            data: {
-                status: 'SUPERSEDED',
-                decisionPayload: {
-                    source: 'ADMIN',
-                    action: 'REQUIRE_VERIFF',
-                    at: new Date().toISOString(),
-                    adminId,
-                } as Prisma.InputJsonValue,
-            },
-        }),
-        prisma.user.update({
+    await prisma.$transaction(async (tx) => {
+        if (manualApprovedRow?.status === 'APPROVED') {
+            await tx.dlVerification.update({
+                where: { veriffSessionId: manualSessionId(userId) },
+                data: {
+                    status: 'SUPERSEDED',
+                    decisionPayload: {
+                        source: 'ADMIN',
+                        action: 'REQUIRE_VERIFF',
+                        at: new Date().toISOString(),
+                        adminId,
+                    } as Prisma.InputJsonValue,
+                },
+            });
+        }
+
+        await tx.user.update({
             where: { id: userId },
             data: { dlVerified: false },
-        }),
-    ]);
+        });
+    });
 
     await notifyAdminVerificationChange(user, {
         type: 'verification.veriff.required',
