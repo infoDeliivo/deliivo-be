@@ -45,3 +45,18 @@ export const adminOpenBookingDisputeSchema = z.object({
 
 export type AdminForceCompleteBookingInput = z.infer<typeof adminForceCompleteBookingSchema>;
 export type AdminOpenBookingDisputeInput = z.infer<typeof adminOpenBookingDisputeSchema>;
+
+export const adminVerificationEmailSchema = z.object({
+    subject: z
+        .string()
+        .trim()
+        .min(3, 'Email subject is required')
+        .max(160, 'Email subject must be 160 characters or fewer'),
+    text: z
+        .string()
+        .trim()
+        .min(20, 'Email text is required')
+        .max(5000, 'Email text must be 5000 characters or fewer'),
+});
+
+export type AdminVerificationEmailInput = z.infer<typeof adminVerificationEmailSchema>;

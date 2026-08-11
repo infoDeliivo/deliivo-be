@@ -5,6 +5,7 @@ import * as adminController from './admin.controller.js';
 import { pricingConfigCreateSchema, pricingConfigIdSchema, pricingConfigUpdateSchema } from '../pricing/pricing.validator.js';
 import {
     adminForceCompleteBookingSchema,
+    adminVerificationEmailSchema,
     adminOpenBookingDisputeSchema,
     bookingIdParamSchema,
     rejectVehicleSchema,
@@ -39,6 +40,16 @@ router.post(
     '/users/:id/sync-veriff',
     validate({ params: userIdParamSchema }),
     asyncHandler<AuthRequest>(adminController.syncUserVeriffStatus),
+);
+router.get(
+    '/users/:id/verification-email/draft',
+    validate({ params: userIdParamSchema }),
+    asyncHandler<AuthRequest>(adminController.getDriverVerificationEmailDraft),
+);
+router.post(
+    '/users/:id/verification-email/send',
+    validate({ params: userIdParamSchema, body: adminVerificationEmailSchema }),
+    asyncHandler<AuthRequest>(adminController.sendDriverVerificationEmail),
 );
 router.get('/stats', adminController.getStats as any);
 router.get('/stats/trends', adminController.getMonitoringTrends as any);

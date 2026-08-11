@@ -93,6 +93,48 @@ export const syncUserVeriffStatus = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const getDriverVerificationEmailDraft = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.buildDriverVerificationEmailDraft(req.params.id as string);
+        return sendSuccess(res, { message: 'Verification email draft generated', data: result });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'USER_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+            case 'USER_EMAIL_MISSING':
+                return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'This user has no email address' });
+            case 'USER_NOT_DRIVER_CANDIDATE':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'This email is only available for users who have started driver verification' });
+            default:
+                logError('[ADMIN] verification email draft failed', error, { userId: req.params.id });
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to generate verification email' });
+        }
+    }
+};
+
+export const sendDriverVerificationEmail = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.sendDriverVerificationEmail(
+            req.params.id as string,
+            { subject: req.body.subject, text: req.body.text },
+            req.user?.id ?? null,
+        );
+        return sendSuccess(res, { message: 'Verification email sent', data: result });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'USER_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+            case 'USER_EMAIL_MISSING':
+                return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'This user has no email address' });
+            case 'USER_NOT_DRIVER_CANDIDATE':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'This email is only available for users who have started driver verification' });
+            default:
+                logError('[ADMIN] verification email send failed', error, { userId: req.params.id });
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to send verification email' });
+        }
+    }
+};
+
 /* ================= STATS ================= */
 export const getStats = async (req: AuthRequest, res: Response) => {
     try {
