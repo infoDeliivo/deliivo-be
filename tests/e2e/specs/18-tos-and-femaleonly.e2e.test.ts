@@ -42,7 +42,7 @@ beforeAll(async () => {
   const femalePaxResult = await signupAndVerifyEmail(femalePaxEmail);
   const femalePaxAccount = toAccountState(femalePaxResult, femalePaxEmail);
   femalePaxToken = femalePaxAccount.accessToken;
-  await authed(femalePaxToken).put('/users/me', { name: 'Female Passenger', salutation: 'MS' });
+  await authed(femalePaxToken).put('/users/me', { firstName: 'Female', lastName: 'Passenger', salutation: 'MS' });
   await authed(femalePaxToken).post('/auth/accept-tos', { tosVersion: '1.0', privacyVersion: '1.0' });
 
   // Male passenger (has ToS)
@@ -50,7 +50,7 @@ beforeAll(async () => {
   const malePaxResult = await signupAndVerifyEmail(malePaxEmail);
   const malePaxAccount = toAccountState(malePaxResult, malePaxEmail);
   malePaxToken = malePaxAccount.accessToken;
-  await authed(malePaxToken).put('/users/me', { name: 'Male Passenger', salutation: 'MR' });
+  await authed(malePaxToken).put('/users/me', { firstName: 'Male', lastName: 'Passenger', salutation: 'MR' });
   await authed(malePaxToken).post('/auth/accept-tos', { tosVersion: '1.0', privacyVersion: '1.0' });
 
   // Female driver — needs ToS + dlVerified + vehicle
@@ -58,7 +58,7 @@ beforeAll(async () => {
   const femaleDriverResult = await signupAndVerifyEmail(femaleDriverEmail);
   const femaleDriverAccount = toAccountState(femaleDriverResult, femaleDriverEmail);
   femaleDriverToken = femaleDriverAccount.accessToken;
-  await authed(femaleDriverToken).put('/users/me', { name: 'Female Driver', salutation: 'MS' });
+  await authed(femaleDriverToken).put('/users/me', { firstName: 'Female', lastName: 'Driver', salutation: 'MS' });
   await authed(femaleDriverToken).post('/auth/accept-tos', { tosVersion: '1.0', privacyVersion: '1.0' });
 
   // Add vehicle for female driver

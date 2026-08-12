@@ -86,7 +86,7 @@ npm run test:e2e -- --no-server-check
 | `ACCESS_TOKEN_SECRET` | Any 32+ char string | JWT access token signing |
 | `REFRESH_TOKEN_SECRET` | Any 32+ char string | JWT refresh token signing |
 | `JWT_SECRET` | Any 32+ char string | Legacy JWT fallback |
-| `BOOKING_PAYMENT_MODE` | `bypass` | Skip Stripe payment collection for bookings |
+| `BOOKING_PAYMENT_MODE` | `bypass` | Skip Stripe payment collection for bookings. Also skips the publish-eligibility bank-account gate |
 | `STRIPE_SECRET_KEY` | `sk_test_...` | Required by Stripe SDK init (can be dummy in bypass mode) |
 | `STRIPE_WEBHOOK_SECRET` | `whsec_...` | Required by webhook signature validation |
 

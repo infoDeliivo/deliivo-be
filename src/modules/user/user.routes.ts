@@ -11,7 +11,7 @@ const router = express.Router();
 // Get basic user info
 router.get('/me', userController.getMe as unknown as express.RequestHandler);
 
-// Update basic profile (name, nickName, salutation, etc.)
+// Update basic profile (firstName, lastName, salutation, etc.)
 router.put('/me', userController.updateProfile as unknown as express.RequestHandler);
 
 // Get full profile with travel preferences, vehicles, and stats

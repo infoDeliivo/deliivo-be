@@ -770,6 +770,39 @@
         }
       }
     },
+    "/api/v1/publish-ride/eligibility": {
+      "get": {
+        "operationId": "publishRideGetEligibility",
+        "summary": "GET publish-ride/eligibility",
+        "description": "Every requirement the driver must satisfy before a ride can be published, as exactly three gates \u2014 one per task the driver has left:\n\n- `DL_VERIFICATION` \u2014 the driving licence must be verified. Unsatisfied with `reason: \"DRIVER_NOT_VERIFIED\"`, or `\"DL_IDENTITY_MISMATCH\"` when the licence came back approved but its identity did not match the profile. Never skippable: this is the platform's KYC.\n- `BANK_ACCOUNT` \u2014 a connected Stripe account able to receive payouts. `reason: \"BANK_ACCOUNT_REQUIRED\"`.\n- `VEHICLE` \u2014 a vehicle that exists and has been approved by an admin. `reason: \"VEHICLE_REQUIRED\"` when none has been added, `\"VEHICLE_NOT_VERIFIED\"` while it awaits review, `\"VEHICLE_REJECTED\"` once an admin has turned it down. In the latter two cases it carries a `vehicle` object holding `verificationStatus` and the admin's `rejectionReason`, so the driver is told what to fix. Editing the vehicle or re-uploading a document returns it to the review queue.\n\nAlways returns 200 \u2014 `eligible: false` is a normal body. Requirements disabled by an environment bypass flag are reported with `skipped: true` and `satisfied: true`; for `VEHICLE` the bypass covers admin approval only, a vehicle must still exist. Accepting the Terms of Service is not a publish requirement \u2014 it is enforced when booking a ride.",
+        "tags": [
+          "Publish Ride"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
     "/api/v1/publish-ride/draft/publish": {
       "post": {
         "operationId": "publishRidePostDraftPublish",

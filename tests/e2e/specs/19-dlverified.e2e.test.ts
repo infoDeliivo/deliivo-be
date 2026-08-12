@@ -38,7 +38,8 @@ beforeAll(async () => {
   unverifiedDriverId = account.id;
 
   await authed(unverifiedDriverToken).put('/users/me', {
-    name: 'Unverified Driver',
+    firstName: 'Unverified',
+    lastName: 'Driver',
     salutation: 'MR',
   });
   await authed(unverifiedDriverToken).post('/auth/accept-tos', {

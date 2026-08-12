@@ -25,7 +25,8 @@ import {
   RouteLocationSuggestionsResult,
 } from './publish-ride.types.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
-import { getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { assertDriverCanPublish } from './driver-eligibility.service.js';
+import { DEFAULT_BALTIC_PRICING_CONFIG, getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
 import { calculatePrice, PricingConfigData } from '../pricing/pricing.calculator.js';
 import { createNotification } from '../notification/notification.service.js';
 import { googleService } from '../maps/google.service.js';
@@ -43,11 +44,28 @@ const MAX_DESTINATION_DROPOFF_POINTS = 3;
 const MAX_GROUP_SUGGESTIONS = 3;
 const INTRACITY_ROUTE_THRESHOLD_METERS = 25000;
 const CITY_POINT_RADIUS_METERS = Number(process.env.PUBLISH_CITY_POINT_RADIUS_METERS || '15000');
-const STOPOVER_POINT_RADIUS_METERS = Number(process.env.PUBLISH_STOPOVER_POINT_RADIUS_METERS || '5000');
+const STOPOVER_POINT_RADIUS_METERS = Number(process.env.PUBLISH_STOPOVER_POINT_RADIUS_METERS || '15000');
+const STOPOVER_CITY_SEARCH_RADIUS_METERS = Number(process.env.PUBLISH_STOPOVER_CITY_SEARCH_RADIUS_METERS || '30000');
+const STOPOVER_ROUTE_SAMPLE_INTERVAL_METERS = Number(process.env.PUBLISH_STOPOVER_ROUTE_SAMPLE_INTERVAL_METERS || '20000');
+const STOPOVER_MAX_ROUTE_SAMPLES = Number(process.env.PUBLISH_STOPOVER_MAX_ROUTE_SAMPLES || '8');
 const ROUTE_POINT_RADIUS_METERS = Number(process.env.PUBLISH_ROUTE_POINT_RADIUS_METERS || '10000');
 const BALTIC_COUNTRY_CODES = new Set(['EE', 'LV', 'LT']);
+const EUROPE_COUNTRY_CODES = new Set([
+  'AL', 'AD', 'AT', 'BY', 'BE', 'BA', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
+  'DE', 'GR', 'HU', 'IS', 'IE', 'IT', 'XK', 'LV', 'LI', 'LT', 'LU', 'MT', 'MD', 'MC',
+  'ME', 'NL', 'MK', 'NO', 'PL', 'PT', 'RO', 'SM', 'RS', 'SK', 'SI', 'ES', 'SE', 'CH',
+  'UA', 'GB', 'VA',
+]);
+const ACTIVE_DRIVER_RIDE_STATUSES = [
+  RideStatus.PUBLISHED,
+  RideStatus.SCHEDULED,
+  RideStatus.READY_TO_START,
+  RideStatus.IN_PROGRESS,
+  RideStatus.COMPLETION_PENDING,
+] as const;
+const MIN_OVERLAP_DURATION_SECONDS = 60 * 60;
 
-const validateBalticPlace = async (placeId: string) => {
+const getPlaceCountryCode = async (placeId: string) => {
   let details: any;
   try {
     details = await googleService.placeDetails(placeId);
@@ -60,7 +78,87 @@ const validateBalticPlace = async (placeId: string) => {
     ?.short_name?.toUpperCase();
 
   if (!countryCode) throw new Error('LOCATION_COUNTRY_UNVERIFIED');
+  return countryCode;
+};
+
+const validateBalticPlace = async (placeId: string) => {
+  const countryCode = await getPlaceCountryCode(placeId);
   if (!BALTIC_COUNTRY_CODES.has(countryCode)) throw new Error('LOCATION_OUTSIDE_BALTICS');
+};
+
+const validateEuropeanDestinationPlace = async (placeId: string) => {
+  const countryCode = await getPlaceCountryCode(placeId);
+  if (!EUROPE_COUNTRY_CODES.has(countryCode)) throw new Error('DESTINATION_OUTSIDE_EUROPE');
+};
+
+const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date => {
+  const [hours = 0, minutes = 0] = departureTime.split(':').map(Number);
+  return new Date(Date.UTC(
+    departureDate.getUTCFullYear(),
+    departureDate.getUTCMonth(),
+    departureDate.getUTCDate(),
+    hours,
+    minutes,
+    0,
+    0,
+  ));
+};
+
+const addDaysUtc = (date: Date, days: number): Date => {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+};
+
+const endTimeForRideWindow = (start: Date, durationSeconds?: number | null): Date => {
+  const durationMs = Math.max(durationSeconds ?? 0, MIN_OVERLAP_DURATION_SECONDS) * 1000;
+  return new Date(start.getTime() + durationMs);
+};
+
+const assertDriverHasNoOverlappingRide = async (
+  driverId: string,
+  departureDate: Date,
+  departureTime: string,
+  routeDurationSeconds?: number | null,
+) => {
+  const draftStart = combineDepartureDateTimeUtc(departureDate, departureTime);
+  const draftEnd = endTimeForRideWindow(draftStart, routeDurationSeconds);
+  const dayStart = new Date(Date.UTC(
+    departureDate.getUTCFullYear(),
+    departureDate.getUTCMonth(),
+    departureDate.getUTCDate(),
+    0,
+    0,
+    0,
+    0,
+  ));
+
+  const existingRides = await prisma.ride.findMany({
+    where: {
+      driverId,
+      status: { in: [...ACTIVE_DRIVER_RIDE_STATUSES] },
+      departureDate: {
+        gte: addDaysUtc(dayStart, -1),
+        lte: addDaysUtc(dayStart, 1),
+      },
+    },
+    select: {
+      id: true,
+      departureDate: true,
+      departureTime: true,
+      routeDurationSeconds: true,
+    },
+  });
+
+  const overlaps = existingRides.some((ride) => {
+    const existingStart = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
+    const existingEnd = endTimeForRideWindow(existingStart, ride.routeDurationSeconds);
+    return draftStart.getTime() < existingEnd.getTime() && existingStart.getTime() < draftEnd.getTime();
+  });
+
+  if (overlaps) {
+    throw new Error('DRIVER_RIDE_TIME_CONFLICT');
+  }
 };
 
 // ============================================================
@@ -218,6 +316,11 @@ export const createWithOrigin = async (
   driverId: string,
   input: CreateOriginInput,
 ): Promise<DraftRide> => {
+  // Gate the flow at its entry point so a driver is not walked through twelve steps
+  // before learning they cannot publish. The same three gates are re-checked at publish,
+  // because a licence or a Connect account can change state while the draft is alive.
+  await assertDriverCanPublish(driverId);
+
   await validateBalticPlace(input.originPlaceId);
 
   // Delete any existing draft for this user
@@ -274,7 +377,7 @@ export const updateDestination = async (
   driverId: string,
   input: UpdateDestinationInput,
 ): Promise<DraftRide> => {
-  await validateBalticPlace(input.destinationPlaceId);
+  await validateEuropeanDestinationPlace(input.destinationPlaceId);
 
   const draft = await getDraft(driverId);
   draft.destinationPlaceId = input.destinationPlaceId;
@@ -645,6 +748,22 @@ function samplePointsAlongRoute(
   return sampled;
 }
 
+function selectEvenlySpacedRouteSamples<T>(points: T[], maxSamples: number): T[] {
+  if (maxSamples <= 0) return [];
+  if (points.length <= maxSamples) return points;
+  if (maxSamples === 1) return [points[Math.floor(points.length / 2)]];
+
+  const selected: T[] = [];
+  const lastIndex = points.length - 1;
+
+  for (let index = 0; index < maxSamples; index += 1) {
+    const pointIndex = Math.round((index * lastIndex) / (maxSamples - 1));
+    selected.push(points[pointIndex]);
+  }
+
+  return selected;
+}
+
 const toSuggestion = (
   place: any,
   origin: { lat: number; lng: number },
@@ -781,8 +900,8 @@ export const getStopoversAlongRoute = async (
     throw new Error('INVALID_POLYLINE');
   }
 
-  // 2. Sample points along the route (every ~30km)
-  const sampledPoints = samplePointsAlongRoute(decodedPoints, 30000);
+  // 2. Sample points along the route densely enough to catch key cities near the corridor.
+  const sampledPoints = samplePointsAlongRoute(decodedPoints, STOPOVER_ROUTE_SAMPLE_INTERVAL_METERS);
 
   if (sampledPoints.length === 0) {
     // Route is too short for stopovers
@@ -798,14 +917,14 @@ export const getStopoversAlongRoute = async (
   const allSuggestions: StopoverSuggestion[] = [];
   const seenPlaceIds = new Set<string>();
 
-  // Limit to max 5 sample points to avoid excessive API calls
-  const pointsToQuery = sampledPoints.slice(0, 5);
+  // Limit API calls while spreading lookups across the whole route.
+  const pointsToQuery = selectEvenlySpacedRouteSamples(sampledPoints, STOPOVER_MAX_ROUTE_SAMPLES);
 
   for (const point of pointsToQuery) {
     try {
       const url = new URL('https://maps.googleapis.com/maps/api/place/nearbysearch/json');
       url.searchParams.set('location', `${point.lat},${point.lng}`);
-      url.searchParams.set('radius', '15000'); // 15km radius
+      url.searchParams.set('radius', String(STOPOVER_CITY_SEARCH_RADIUS_METERS));
       url.searchParams.set('type', 'locality'); // cities/towns
       url.searchParams.set('key', GOOGLE_API_KEY);
 
@@ -813,9 +932,13 @@ export const getStopoversAlongRoute = async (
       const data = (await response.json()) as any;
 
       if (data.results && Array.isArray(data.results)) {
-        for (const place of data.results.slice(0, 3)) {
-          // max 3 per sample
+        for (const place of data.results.slice(0, 5)) {
           if (seenPlaceIds.has(place.place_id)) continue;
+          const routeDistanceMeters = distanceFromRouteMeters(
+            { lat: place.geometry.location.lat, lng: place.geometry.location.lng },
+            draft.routePolyline,
+          );
+          if (routeDistanceMeters > STOPOVER_CITY_SEARCH_RADIUS_METERS) continue;
           seenPlaceIds.add(place.place_id);
 
           const distFromOrigin = haversineDistance(
@@ -841,8 +964,13 @@ export const getStopoversAlongRoute = async (
     }
   }
 
-  // 4. Sort by distance from origin
-  allSuggestions.sort((a, b) => a.distanceFromOriginMeters - b.distanceFromOriginMeters);
+  // 4. Sort by route order, preferring locality/city results before generic places.
+  allSuggestions.sort((a, b) => {
+    const aLocality = a.types?.includes('locality') ? 0 : 1;
+    const bLocality = b.types?.includes('locality') ? 0 : 1;
+    if (aLocality !== bLocality) return aLocality - bLocality;
+    return a.distanceFromOriginMeters - b.distanceFromOriginMeters;
+  });
 
   // 5. Calculate arrival times if departure time and duration are available
   const totalDistanceKm = (draft.routeDistanceMeters || 0) / 1000;
@@ -1041,16 +1169,7 @@ export const updateCapacity = async (
 //  STEP 11: GET RECOMMENDED PRICE
 // ============================================================
 
-const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = {
-  id: 'default-baltic-distance-pricing',
-  regionCode: 'BALTIC',
-  currency: 'EUR',
-  minRatePerKm: 0.06,
-  recommendedRatePerKm: 0.08,
-  maxRatePerKm: 0.12,
-  minimumSeatPrice: 3,
-  roundingStrategy: 'NEAREST_EURO',
-};
+const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = DEFAULT_BALTIC_PRICING_CONFIG;
 
 export const getRecommendedPrice = async (
   driverId: string,
@@ -1421,23 +1540,18 @@ export const publishRide = async (driverId: string) => {
 
   await Promise.all([
     validateBalticPlace(draft.originPlaceId),
-    validateBalticPlace(draft.destinationPlaceId),
+    validateEuropeanDestinationPlace(draft.destinationPlaceId),
   ]);
 
-    // Validate driver has accepted ToS and has verified DL
+    // Re-check every requirement at publish time: a licence can expire or a Connect
+    // account can be restricted while the draft is alive. Unlike the START stage, ToS is
+    // enforced here — it is the consent given when committing the ride.
+    await assertDriverCanPublish(driverId);
+
     const driver = await prisma.user.findUnique({
         where: { id: driverId },
-        select: { dlVerified: true, tosAcceptedAt: true, gender: true },
+        select: { gender: true },
     });
-
-    if (!driver?.tosAcceptedAt) {
-        throw new Error('TOS_NOT_ACCEPTED');
-    }
-
-    const skipDlCheck = process.env.SKIP_DL_VERIFICATION === 'true';
-    if (!driver?.dlVerified && !skipDlCheck) {
-        throw new Error('DRIVER_NOT_VERIFIED');
-    }
 
     if (draft.femaleOnly && driver?.gender !== 'FEMALE') {
         throw new Error('FEMALE_ONLY_NOT_ALLOWED');
@@ -1451,6 +1565,13 @@ export const publishRide = async (driverId: string) => {
         throw new Error('MEETING_POINTS_REQUIRED');
     }
 
+    await assertDriverHasNoOverlappingRide(
+        driverId,
+        new Date(draft.departureDate!),
+        draft.departureTime!,
+        draft.routeDurationSeconds,
+    );
+
     const meetingPoints = [...draft.pickups, ...draft.dropoffs, ...(draft.stopovers || [])];
     if (meetingPoints.some((point) => (
       distanceFromRouteMeters({ lat: point.lat, lng: point.lng }, draft.routePolyline!) > ROUTE_POINT_RADIUS_METERS
@@ -1458,7 +1579,8 @@ export const publishRide = async (driverId: string) => {
       throw new Error('MEETING_POINT_OUTSIDE_ROUTE');
     }
 
-  // Validate user has a verified vehicle
+  // Presence and approval were both asserted above; this lookup only supplies the id
+  // written onto the ride row.
   const vehicle = await prisma.vehicle.findFirst({
     where: { userId: driverId, deletedAt: null },
   });
@@ -1466,9 +1588,6 @@ export const publishRide = async (driverId: string) => {
   if (!vehicle) {
     throw new Error('VEHICLE_REQUIRED');
   }
-  // if (!vehicle.isVerified) {
-  //     throw new Error('VEHICLE_NOT_VERIFIED');
-  // }
 
   // ---- Atomic DB insert ---- //
   const ride = await prisma.$transaction(async (tx) => {
@@ -1592,6 +1711,7 @@ export const publishRide = async (driverId: string) => {
                     rideId: newRide.id,
                     distanceKm,
                     selectedPricePerSeat: newRide.basePricePerSeat,
+                    tx,
                 });
                 if (!priceValidation.valid) {
                     throw new Error(`PRICE_OUT_OF_RANGE: ${priceValidation.reason}`);

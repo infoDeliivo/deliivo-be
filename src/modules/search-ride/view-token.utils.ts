@@ -17,7 +17,9 @@ const isValidRef = (value: string): value is SegmentPointRef =>
     (value.startsWith('waypoint:') && value.slice('waypoint:'.length).trim().length > 0);
 
 const getSecret = (): string => {
-    const secret = process.env.SEGMENT_VIEW_TOKEN_SECRET || process.env.JWT_SECRET;
+    const secret = process.env.SEGMENT_VIEW_TOKEN_SECRET
+        || process.env.JWT_SECRET
+        || process.env.ACCESS_TOKEN_SECRET;
     if (secret) {
         return secret;
     }

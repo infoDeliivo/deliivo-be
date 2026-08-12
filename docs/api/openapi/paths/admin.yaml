@@ -1,0 +1,412 @@
+{
+  "paths": {
+    "/api/v1/admin/vehicles": {
+      "get": {
+        "operationId": "adminGetVehicles",
+        "summary": "GET admin/vehicles",
+        "description": "Vehicle review queue, oldest first. Private documents (the vehicle registry) are returned as `previewKey` only \u2014 exchange the key for a short-lived signed URL via `GET /api/v1/uploads/read`, which admins may call for any owner's key.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Filter by review state. Omit to return every status.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "APPROVED",
+                "REJECTED"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/vehicles/{id}/verify": {
+      "post": {
+        "operationId": "adminVerifyVehicle",
+        "summary": "POST admin/vehicles/{id}/verify",
+        "description": "Approve a vehicle. Sets `verificationStatus` to APPROVED, keeps `isVerified` in sync, and notifies the driver that they can now publish rides.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/vehicles/{id}/reject": {
+      "post": {
+        "operationId": "adminRejectVehicle",
+        "summary": "POST admin/vehicles/{id}/reject",
+        "description": "Reject a vehicle. Sets `verificationStatus` to REJECTED, stores the reason, and sends it to the driver verbatim so they know what to re-upload.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "description": "Shown to the driver verbatim."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/dl-verifications": {
+      "get": {
+        "operationId": "adminListDlSubmissions",
+        "summary": "GET admin/dl-verifications",
+        "description": "Driving-licence review queue, oldest first. Only submissions carrying an uploaded image are listed \u2014 a Veriff record has nothing for an admin to look at. The photo is returned as `previewKey`: a private object key exchanged for a short-lived signed URL via `GET /api/v1/uploads/read`. Superseded submissions are hidden unless requested by name.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "APPROVED",
+                "DECLINED",
+                "SUPERSEDED",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/dl-verifications/{userId}/approve": {
+      "post": {
+        "operationId": "adminApproveDlSubmission",
+        "summary": "POST admin/dl-verifications/{userId}/approve",
+        "description": "Approves a manually reviewed driving licence. Marks the record APPROVED, stamps the reviewing admin, and sets `user.dlVerified`. The identity match flags are set true because a human read the document against the profile \u2014 that is the identity check on this path.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          },
+          "409": {
+            "description": "The submission was already settled \u2014 it was superseded by a Veriff approval, or the driver is verified through another record"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/dl-verifications/{userId}/decline": {
+      "post": {
+        "operationId": "adminDeclineDlSubmission",
+        "summary": "POST admin/dl-verifications/{userId}/decline",
+        "description": "Declines a manually reviewed driving licence. The reason is shown to the driver verbatim so they know what to re-upload, so it must be non-empty. Clears `user.dlVerified`.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "example": "The photo is blurred \u2014 please re-upload a clear image of the front of your licence."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          },
+          "409": {
+            "description": "The submission was already settled \u2014 it was superseded by a Veriff approval, or the driver is verified through another record"
+          }
+        }
+      }
+    }
+  }
+}

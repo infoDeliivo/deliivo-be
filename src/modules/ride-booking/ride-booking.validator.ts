@@ -59,10 +59,13 @@ export const bookingIdParamSchema = z.object({
 
 /* ================= LIST BOOKINGS QUERY SCHEMA ================= */
 const bookingStatusValues = Object.values(BookingStatus);
+const legacyBookingStatusValues = ['PENDING', 'ACCEPTED', 'WITHDRAWN', 'REJECTED', 'EXPIRED'];
 
 export const listBookingsQuerySchema = z.object({
     status: z.string().optional().refine(
-        (value) => !value || value.split(',').every((status) => bookingStatusValues.includes(status as BookingStatus)),
+        (value) => !value || value.split(',').every((status) => (
+            bookingStatusValues.includes(status as BookingStatus) || legacyBookingStatusValues.includes(status)
+        )),
         'Invalid booking status'
     ),
     page: z.coerce.number().int().min(1).default(1),

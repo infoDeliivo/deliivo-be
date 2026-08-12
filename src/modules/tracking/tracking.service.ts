@@ -39,6 +39,13 @@ const buildEta = (
     };
 };
 
+const activeTargetForStatus = (status: string) => {
+    if (['CONFIRMED', 'WAITING_FOR_PICKUP', 'DRIVER_ARRIVED'].includes(status)) return 'pickup';
+    if (['ONBOARD', 'IN_PROGRESS', 'DROP_PENDING'].includes(status)) return 'dropoff';
+    if (status === 'COMPLETED') return 'complete';
+    return 'none';
+};
+
 // ============================================================
 //  CREATE TRACKING LINK
 // ============================================================
@@ -157,6 +164,9 @@ export const getTrackingData = async (token: string) => {
         ? { lat: dropoffWaypoint.lat, lng: dropoffWaypoint.lng }
         : { lat: link.booking.ride.destinationLat, lng: link.booking.ride.destinationLng };
     const currentPoint = latestLocation ? { lat: latestLocation.lat, lng: latestLocation.lng } : null;
+    const activeTarget = activeTargetForStatus(link.booking.status);
+    const pickupEta = buildEta(currentPoint, pickupPoint);
+    const dropoffEta = buildEta(currentPoint, dropoffPoint);
 
     return {
         rideId: link.booking.rideId,
@@ -170,9 +180,16 @@ export const getTrackingData = async (token: string) => {
         departureDate: link.booking.ride.departureDate,
         departureTime: link.booking.ride.departureTime,
         location: latestLocation,
+        activeTarget,
+        activeTargetAddress: activeTarget === 'pickup'
+            ? (link.booking.pickupAddress || link.booking.ride.originAddress)
+            : activeTarget === 'dropoff'
+                ? (link.booking.dropoffAddress || link.booking.ride.destinationAddress)
+                : null,
+        activeEta: activeTarget === 'pickup' ? pickupEta : activeTarget === 'dropoff' ? dropoffEta : null,
         eta: {
-            pickup: buildEta(currentPoint, pickupPoint),
-            dropoff: buildEta(currentPoint, dropoffPoint),
+            pickup: pickupEta,
+            dropoff: dropoffEta,
             scheduledPickupTime: pickupWaypoint?.estimatedArrivalTime ?? link.booking.ride.departureTime,
             scheduledDropoffTime: dropoffWaypoint?.estimatedArrivalTime ?? null,
         },
@@ -206,14 +223,24 @@ export const revokeTrackingLink = async (linkId: string, userId: string) => {
 export const listTrackingLinks = async (bookingId: string, userId: string) => {
     const booking = await prisma.rideBooking.findUnique({
         where: { id: bookingId },
-        select: { passengerId: true },
+        select: {
+            passengerId: true,
+            ride: {
+                select: { driverId: true },
+            },
+        },
     });
 
-    if (!booking || booking.passengerId !== userId) throw new Error('FORBIDDEN');
+    if (!booking || (booking.passengerId !== userId && booking.ride.driverId !== userId)) {
+        throw new Error('FORBIDDEN');
+    }
 
     return prisma.trackingLink.findMany({
         where: { bookingId, revokedAt: null },
         select: { id: true, token: true, expiresAt: true, accessScope: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
-    });
+    }).then((links) => links.map((link) => ({
+        ...link,
+        trackingUrl: `/tracking/${link.token}`,
+    })));
 };

@@ -66,6 +66,25 @@ export const searchRides = async (req: AuthRequest, res: Response) => {
 };
 
 /* ================= GET RIDE DETAILS ================= */
+export const getAvailableRides = async (req: AuthRequest, res: Response) => {
+    try {
+        const query = req.query as unknown as { page?: number; limit?: number };
+        const viewerId = req.user?.id;
+        const result = await SearchRideService.getAvailableRides(query, viewerId);
+
+        return sendSuccess(res, {
+            message: 'Available rides fetched successfully',
+            data: result,
+        });
+    } catch (error: any) {
+        logError('Available rides fetch error', error);
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: error.message || 'Failed to fetch available rides',
+        });
+    }
+};
+
 export const getRideDetails = async (req: AuthRequest, res: Response) => {
     try {
         const rideId = req.params.id as string;

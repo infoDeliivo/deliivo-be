@@ -1,6 +1,8 @@
 import { Response } from 'express';
+import { VehicleVerificationStatus } from '@prisma/client';
 import { AuthRequest } from '../../types/auth.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
+import { logError } from '../../utils/logger.js';
 import * as AdminService from './admin.service.js';
 import { createPricingConfig as createPricingConfigService, listPricingConfigs as listPricingConfigsService, updatePricingConfig as updatePricingConfigService } from '../pricing/pricing.service.js';
 
@@ -18,6 +20,19 @@ export const listUsers = async (req: AuthRequest, res: Response) => {
         return sendSuccess(res, { message: 'Users fetched', data: result });
     } catch {
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch users' });
+    }
+};
+
+export const getUserDetails = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.getUserDetails(req.params.id as string);
+        return sendSuccess(res, { message: 'User details fetched', data: result });
+    } catch (error: any) {
+        if (error.message === 'USER_NOT_FOUND') {
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+        }
+        logError('[ADMIN] user detail failed', error);
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch user details' });
     }
 };
 
@@ -44,6 +59,79 @@ export const unbanUser = async (req: AuthRequest, res: Response) => {
         if (error.message === 'USER_NOT_FOUND')
             return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to unban user' });
+    }
+};
+
+export const requireVeriffForUser = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.requireVeriffForUser(req.params.id as string, req.user?.id ?? null);
+        return sendSuccess(res, { message: 'User marked as requiring Veriff', data: result });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'USER_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+            case 'MANUAL_APPROVAL_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'No manual approval is available to convert to Veriff' });
+            case 'ALREADY_VERIFF_VERIFIED':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'User is already verified through Veriff' });
+            default:
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to require Veriff for user' });
+        }
+    }
+};
+
+export const syncUserVeriffStatus = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.syncUserVeriffStatus(req.params.id as string);
+        return sendSuccess(res, { message: 'Veriff status synced', data: result });
+    } catch (error: any) {
+        if (error.message === 'USER_NOT_FOUND') {
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+        }
+        logError('[ADMIN] Veriff sync failed', error, { userId: req.params.id });
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to sync Veriff status' });
+    }
+};
+
+export const getDriverVerificationEmailDraft = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.buildDriverVerificationEmailDraft(req.params.id as string);
+        return sendSuccess(res, { message: 'Verification email draft generated', data: result });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'USER_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+            case 'USER_EMAIL_MISSING':
+                return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'This user has no email address' });
+            case 'USER_NOT_DRIVER_CANDIDATE':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'This email is only available for users who have started driver verification' });
+            default:
+                logError('[ADMIN] verification email draft failed', error, { userId: req.params.id });
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to generate verification email' });
+        }
+    }
+};
+
+export const sendDriverVerificationEmail = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.sendDriverVerificationEmail(
+            req.params.id as string,
+            { subject: req.body.subject, text: req.body.text },
+            req.user?.id ?? null,
+        );
+        return sendSuccess(res, { message: 'Verification email sent', data: result });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'USER_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+            case 'USER_EMAIL_MISSING':
+                return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'This user has no email address' });
+            case 'USER_NOT_DRIVER_CANDIDATE':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'This email is only available for users who have started driver verification' });
+            default:
+                logError('[ADMIN] verification email send failed', error, { userId: req.params.id });
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to send verification email' });
+        }
     }
 };
 
@@ -135,15 +223,55 @@ export const updateEmergencyAlertStatus = async (req: AuthRequest, res: Response
     }
 };
 
+/* ================= LIST VEHICLES (REVIEW QUEUE) ================= */
+export const listVehicles = async (req: AuthRequest, res: Response) => {
+    try {
+        const statusParam = typeof req.query.status === 'string'
+            ? req.query.status.toUpperCase()
+            : undefined;
+        const status = statusParam && statusParam in VehicleVerificationStatus
+            ? (statusParam as VehicleVerificationStatus)
+            : undefined;
+
+        const result = await AdminService.listVehicles({
+            page: req.query.page ? Number(req.query.page) : undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            status,
+        });
+        return sendSuccess(res, { message: 'Vehicles fetched', data: result });
+    } catch (error) {
+        logError('[ADMIN] list vehicles failed', error);
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch vehicles' });
+    }
+};
+
 /* ================= VERIFY VEHICLE ================= */
 export const verifyVehicle = async (req: AuthRequest, res: Response) => {
     try {
-        const result = await AdminService.verifyVehicle(req.params.id as string);
+        const result = await AdminService.verifyVehicle(req.params.id as string, req.user?.id);
         return sendSuccess(res, { message: 'Vehicle verified', data: result });
     } catch (error: any) {
         if (error.message === 'VEHICLE_NOT_FOUND')
             return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Vehicle not found' });
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to verify vehicle' });
+    }
+};
+
+/* ================= REJECT VEHICLE ================= */
+export const rejectVehicle = async (req: AuthRequest, res: Response) => {
+    try {
+        const { reason } = req.body as { reason: string };
+        const result = await AdminService.rejectVehicle(
+            req.params.id as string,
+            reason,
+            req.user?.id,
+        );
+        return sendSuccess(res, { message: 'Vehicle rejected', data: result });
+    } catch (error: any) {
+        if (error.message === 'VEHICLE_NOT_FOUND')
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Vehicle not found' });
+        logError('[ADMIN] reject vehicle failed', error);
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to reject vehicle' });
     }
 };
 
@@ -162,6 +290,57 @@ export const adminRefundBooking = async (req: AuthRequest, res: Response) => {
                 return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'No captured payment to refund' });
             default:
                 return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to refund booking' });
+        }
+    }
+};
+
+export const adminForceCompleteBooking = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.adminForceCompleteBooking(
+            req.params.id as string,
+            req.user.id,
+            req.body.reason,
+        );
+        return sendSuccess(res, { message: 'Booking force-completed', data: result });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'BOOKING_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Booking not found' });
+            case 'BOOKING_NOT_FORCE_COMPLETABLE':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'Booking is not in a force-completable state' });
+            case 'RIDE_NOT_FORCE_COMPLETABLE':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'Ride is not in a force-completable state' });
+            case 'OPEN_DISPUTE_EXISTS':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'Resolve the open dispute before force-completing this booking' });
+            default:
+                logError('[ADMIN] force-complete booking failed', error);
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to force-complete booking' });
+        }
+    }
+};
+
+export const adminOpenBookingDispute = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.adminOpenBookingDispute(
+            req.params.id as string,
+            req.user.id,
+            req.body.reason,
+            req.body.description,
+        );
+        return sendSuccess(res, {
+            status: result.created ? HttpStatus.CREATED : HttpStatus.OK,
+            message: result.created ? 'Dispute opened' : 'Open dispute already exists',
+            data: result,
+        });
+    } catch (error: any) {
+        switch (error.message) {
+            case 'BOOKING_NOT_FOUND':
+                return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Booking not found' });
+            case 'BOOKING_ALREADY_TERMINAL':
+                return sendError(res, { status: HttpStatus.CONFLICT, message: 'Booking is already terminal' });
+            default:
+                logError('[ADMIN] open booking dispute failed', error);
+                return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to open dispute' });
         }
     }
 };

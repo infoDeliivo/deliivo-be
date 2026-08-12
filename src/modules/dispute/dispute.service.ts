@@ -97,10 +97,12 @@ export const createDispute = async (params: {
         throw new Error('FORBIDDEN_DISPUTE');
     }
 
-    // Check for existing open dispute on this booking
+    // Check for an existing open dispute by the same reporter on this booking.
+    // The other participant can still raise their own report with their own evidence.
     const existing = await prisma.dispute.findFirst({
         where: {
             bookingId: params.bookingId,
+            raisedBy: params.raisedBy,
             status: { in: OPEN_DISPUTE_STATUSES },
         },
     });
@@ -536,7 +538,7 @@ export const getDisputeById = async (disputeId: string) => {
         include: {
             booking: {
                 include: {
-                    passenger: { select: { id: true, name: true, avatarUrl: true } },
+                    passenger: { select: { id: true, firstName: true, avatarUrl: true } },
                     payment: true,
                 },
             },

@@ -51,7 +51,7 @@ export const listBlockedUsers = async (blockerId: string) => {
         select: {
             id: true,
             createdAt: true,
-            blocked: { select: { id: true, name: true, avatarUrl: true } },
+            blocked: { select: { id: true, firstName: true, avatarUrl: true } },
         },
         orderBy: { createdAt: 'desc' },
     });

@@ -42,6 +42,7 @@ import {
 } from '../payments/payment.service.js';
 import { emitToUsers } from '../../socket/index.js';
 import { calculateAgeYears, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
+import { formatBookingReference } from '../../utils/booking-reference.js';
 import { isBookingWindowClosed } from './booking-window.js';
 
 type RideWaypointDetails = {
@@ -79,7 +80,7 @@ type RideWithDetails = {
     currency: string;
     driver: {
         id: string;
-        name: string | null;
+        firstName: string | null;
         avatarUrl: string | null;
     };
     vehicle?: {
@@ -110,6 +111,12 @@ type BookingWithRideDetails = {
     stripePaymentIntentId: string | null;
     paymentCurrency: string | null;
     ride: RideWithDetails;
+    ratings?: Array<{
+        id: string;
+        stars: number;
+        reviewText: string | null;
+        createdAt: Date;
+    }>;
 };
 
 const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
@@ -204,7 +211,7 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
         include: {
             passenger: {
                 select: {
-                    name: true,
+                    firstName: true,
                     avatarUrl: true,
                 },
             },
@@ -272,11 +279,11 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
             userId: booking.ride.driverId,
             type: DRIVER_DECISION_NOTIFICATION_TYPE,
             title: 'New ride request',
-            body: `${booking.passenger.name ?? 'Rider'} wants ${originAddress} to ${destinationAddress}`,
+            body: `${booking.passenger.firstName ?? 'Rider'} wants ${originAddress} to ${destinationAddress}`,
             data: {
                 bookingId: booking.id,
                 rideId: booking.ride.id,
-                passengerName: booking.passenger.name ?? 'Rider',
+                passengerName: booking.passenger.firstName ?? 'Rider',
                 passengerAvatarUrl: booking.passenger.avatarUrl ?? '',
                 originAddress,
                 destinationAddress,
@@ -373,6 +380,27 @@ const mapRideInfo = (ride: RideWithDetails) => ({
         isVerified: ride.vehicle.isVerified,
     } : null,
 });
+
+const LEGACY_BOOKING_STATUS_ALIASES: Record<string, BookingStatus> = {
+    PENDING: BookingStatus.DRIVER_PENDING,
+    ACCEPTED: BookingStatus.CONFIRMED,
+    WITHDRAWN: BookingStatus.CANCELLED,
+    REJECTED: BookingStatus.CANCELLED,
+    EXPIRED: BookingStatus.CANCELLED,
+};
+
+const normalizeBookingStatusFilter = (status: unknown): BookingStatus[] => {
+    if (!status) return [];
+    const validStatuses = new Set(Object.values(BookingStatus));
+    return Array.from(new Set(
+        String(status)
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .map((item) => LEGACY_BOOKING_STATUS_ALIASES[item] || item)
+            .filter((item): item is BookingStatus => validStatuses.has(item as BookingStatus))
+    ));
+};
 
 const mapSegmentRideInfo = (
     ride: RideWithDetails,
@@ -485,6 +513,7 @@ const mapBookingResponse = (
 
     return {
         id: booking.id,
+        bookingReference: formatBookingReference(booking.id),
         rideId: booking.rideId,
         passengerId: booking.passengerId,
         seatsBooked: booking.seatsBooked,
@@ -553,6 +582,22 @@ const resolveSegmentAddress = (
 ): string => {
     if (!waypointId) return defaultAddress;
     return waypoints.find((waypoint) => waypoint.id === waypointId)?.address ?? defaultAddress;
+};
+
+const assertExplicitMeetingPointsSelected = (
+    ride: { waypoints?: Array<{ waypointType: string }> },
+    resolvedPickupWaypointId: string | null,
+    resolvedDropoffWaypointId: string | null
+) => {
+    const hasConcretePickup = ride.waypoints?.some((waypoint) => waypoint.waypointType === 'PICKUP') ?? false;
+    const hasConcreteDropoff = ride.waypoints?.some((waypoint) => waypoint.waypointType === 'DROPOFF') ?? false;
+
+    if (hasConcretePickup && !resolvedPickupWaypointId) {
+        throw new Error('PICKUP_POINT_REQUIRED');
+    }
+    if (hasConcreteDropoff && !resolvedDropoffWaypointId) {
+        throw new Error('DROPOFF_POINT_REQUIRED');
+    }
 };
 
 const notifyRiderBookingState = async (params: {
@@ -650,7 +695,7 @@ export const createBooking = async (
                 driver: {
                     select: {
                         id: true,
-                        name: true,
+                        firstName: true,
                         avatarUrl: true,
                         stripeAccountId: true,
                         stripeOnboardingComplete: true,
@@ -706,7 +751,7 @@ export const createBooking = async (
         const passenger = await tx.user.findUnique({
             where: { id: passengerId },
             select: {
-                name: true,
+                firstName: true,
                 avatarUrl: true,
                 gender: true,
             },
@@ -750,6 +795,7 @@ export const createBooking = async (
 
         const resolvedPickupWaypointId = riderView.bookingContext.pickupWaypointId;
         const resolvedDropoffWaypointId = riderView.bookingContext.dropoffWaypointId;
+        assertExplicitMeetingPointsSelected(ride, resolvedPickupWaypointId, resolvedDropoffWaypointId);
 
         // Resolve segment positions for per-segment capacity tracking
         const pickupPoint = points.find(p => p.waypointId === resolvedPickupWaypointId && resolvedPickupWaypointId !== null)
@@ -849,7 +895,7 @@ export const createBooking = async (
                         driver: {
                             select: {
                                 id: true,
-                                name: true,
+                                firstName: true,
                                 avatarUrl: true,
                             },
                         },
@@ -874,7 +920,7 @@ export const createBooking = async (
     });
 
     if (bypassBookingPaymentMode) {
-        const passengerName = bookingSeed.passenger?.name ?? 'Rider';
+        const passengerName = bookingSeed.passenger?.firstName ?? 'Rider';
         const originAddress = resolveSegmentAddress(
             bookingSeed.ride.originAddress,
             bookingSeed.resolvedPickupWaypointId,
@@ -1084,7 +1130,7 @@ export const createBooking = async (
                         driver: {
                             select: {
                                 id: true,
-                                name: true,
+                                firstName: true,
                                 avatarUrl: true,
                             },
                         },
@@ -1396,7 +1442,7 @@ export const getBookingById = async (
                     driver: {
                         select: {
                             id: true,
-                            name: true,
+                            firstName: true,
                             avatarUrl: true,
                         },
                     },
@@ -1418,6 +1464,16 @@ export const getBookingById = async (
                     },
                 },
             },
+            ratings: {
+                where: { raterId: passengerId },
+                select: {
+                    id: true,
+                    stars: true,
+                    reviewText: true,
+                    createdAt: true,
+                },
+                take: 1,
+            },
         },
     });
 
@@ -1431,6 +1487,7 @@ export const getBookingById = async (
         dropOtp: (booking as any).dropOtp ?? null,
         pickupOtpVerifiedAt: booking.pickupOtpVerifiedAt,
         dropOtpVerifiedAt: booking.dropOtpVerifiedAt,
+        ratingByViewer: booking.ratings?.[0] ?? null,
     };
 };
 
@@ -1475,9 +1532,7 @@ export const listUserBookings = async (
     query: ListBookingsQuery
 ): Promise<BookingListResponse> => {
     const { status, page = 1, limit = 10 } = query;
-    const statuses = status
-        ? String(status).split(',').filter(Boolean) as BookingStatus[]
-        : [];
+    const statuses = normalizeBookingStatusFilter(status);
 
     const where: Prisma.RideBookingWhereInput = {
         passengerId,
@@ -1494,7 +1549,7 @@ export const listUserBookings = async (
                         driver: {
                             select: {
                                 id: true,
-                                name: true,
+                                firstName: true,
                                 avatarUrl: true,
                             },
                         },
@@ -1632,6 +1687,11 @@ export const getBookingPricePreview = async (
     if (!riderView) {
         throw new Error('INVALID_BOOKING_SEGMENT');
     }
+    assertExplicitMeetingPointsSelected(
+        ride,
+        riderView.bookingContext.pickupWaypointId,
+        riderView.bookingContext.dropoffWaypointId
+    );
 
     // Calculate price breakdown
     const priceBreakdown = calculateBookingPrice(

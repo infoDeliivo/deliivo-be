@@ -162,3 +162,53 @@ paths:
                     example: "APPROVED"
         '401':
           description: "HMAC validation failed or header missing"
+
+  /api/v1/dl-verification/document:
+    post:
+      tags:
+        - "DL Verification"
+      summary: "Submit a driving licence photo for manual review"
+      operationId: submitDlDocument
+      description: >
+        Manual-review fallback for a driver who does not complete the Veriff flow. The
+        licence photo is uploaded first through the private `vehicle_draft_document_private`
+        target; this endpoint attaches the resulting object key so an admin can read it in
+        the review queue. Re-submitting after a decline clears the previous reason and
+        returns the driver to the queue. Refused with 409 when the driver is already
+        verified, by Veriff or by an earlier manual approval.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - documentImageKey
+              properties:
+                documentImageKey:
+                  type: string
+                  maxLength: 500
+                  example: "uploads/vehicle-documents/1f0c.../licence.jpg"
+                  description: >
+                    Private S3 object key for the licence photo. Must begin with
+                    `uploads/vehicle-documents/` — a public key is rejected, since a KYC
+                    document must never be world-readable.
+      responses:
+        '201':
+          description: "Driving licence submitted for review"
+          content:
+            application/json:
+              schema:
+                $ref: "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+        '400':
+          $ref: "../components/responses/errors.yaml#/BadRequest"
+        '401':
+          $ref: "../components/responses/errors.yaml#/Unauthorized"
+        '404':
+          $ref: "../components/responses/errors.yaml#/NotFound"
+        '409':
+          description: "The driving licence is already verified"
+        '500':
+          $ref: "../components/responses/errors.yaml#/ServerError"

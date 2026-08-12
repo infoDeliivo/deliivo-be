@@ -8,6 +8,8 @@ import {
     sendMessageSchema,
     sendImageSchema,
     sendLocationSchema,
+    openConversationSchema,
+    openBookingConversationSchema,
     markReadSchema,
 } from './chat.validator.js';
 
@@ -22,6 +24,20 @@ router.get(
 
 // Get unread message count
 router.get('/unread-count', controller.getUnreadCount);
+
+// Open or create a conversation with an active ride participant
+router.post(
+    '/open',
+    validate({ body: openConversationSchema }),
+    controller.openConversation,
+);
+
+// Open or create a conversation for a specific active booking
+router.post(
+    '/open-booking',
+    validate({ body: openBookingConversationSchema }),
+    controller.openBookingConversation,
+);
 
 // Get messages in a conversation (paginated)
 router.get(

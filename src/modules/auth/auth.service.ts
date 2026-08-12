@@ -1,5 +1,6 @@
 import { prisma } from '../../config/index.js';
 import { generateTokens, verifyRefreshToken } from '../token/tokens.service.js';
+import { createHash, timingSafeEqual } from 'crypto';
 import { Role } from '../user/user.constants.js';
 import { logError } from '../../utils/logger.js';
 import { OAuth2Client } from 'google-auth-library';
@@ -27,7 +28,10 @@ export const googleAuthService = async (idToken: string) => {
     user = await prisma.user.create({
       data: {
         email,
-        name: payload.name?.trim() || null,
+        // Google returns the two parts separately, so they map straight across
+        // rather than being split back out of the display name.
+        firstName: payload.given_name?.trim() || null,
+        lastName: payload.family_name?.trim() || null,
         avatarUrl: payload.picture || null,
         emailVerified: true,
         isVerified: true,
@@ -40,7 +44,8 @@ export const googleAuthService = async (idToken: string) => {
       data: {
         emailVerified: true,
         isVerified: true,
-        ...(!user.name && payload.name ? { name: payload.name.trim() } : {}),
+        ...(!user.firstName && payload.given_name ? { firstName: payload.given_name.trim() } : {}),
+        ...(!user.lastName && payload.family_name ? { lastName: payload.family_name.trim() } : {}),
         ...(!user.avatarUrl && payload.picture ? { avatarUrl: payload.picture } : {}),
       },
     });
@@ -52,6 +57,47 @@ export const googleAuthService = async (idToken: string) => {
     user,
     next: user.onboardingStatus === 'COMPLETED' ? 'home' as const : 'onboarding' as const,
   };
+};
+
+const constantTimeEquals = (left: string, right: string): boolean => {
+  const leftHash = createHash('sha256').update(left).digest();
+  const rightHash = createHash('sha256').update(right).digest();
+  return timingSafeEqual(leftHash, rightHash);
+};
+
+export const temporaryAdminLoginService = async (email: string, password: string) => {
+  if (process.env.TEMP_ADMIN_LOGIN_ENABLED !== 'true') {
+    throw new Error('TEMP_ADMIN_LOGIN_DISABLED');
+  }
+
+  const configuredEmail = process.env.TEMP_ADMIN_LOGIN_EMAIL;
+  const configuredPassword = process.env.TEMP_ADMIN_LOGIN_PASSWORD;
+
+  if (!configuredEmail || !configuredPassword) {
+    throw new Error('TEMP_ADMIN_LOGIN_NOT_CONFIGURED');
+  }
+
+  const normalizedEmail = normalizeAuthIdentifier('email', email);
+  if (
+    !constantTimeEquals(normalizedEmail, normalizeAuthIdentifier('email', configuredEmail))
+    || !constantTimeEquals(password, configuredPassword)
+  ) {
+    throw new Error('INVALID_TEMP_ADMIN_LOGIN');
+  }
+
+  const user = await prisma.user.findFirst({
+    where: {
+      email: { equals: normalizedEmail, mode: 'insensitive' },
+      role: Role.ADMIN,
+    },
+  });
+
+  if (!user || user.isBanned) {
+    throw new Error('INVALID_TEMP_ADMIN_LOGIN');
+  }
+
+  const tokens = await generateTokens({ id: user.id, role: Role.ADMIN });
+  return { tokens, user };
 };
 
 const identifierWhere = (method: string, identifier: string) => {

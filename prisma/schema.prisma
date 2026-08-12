@@ -58,10 +58,19 @@ enum VehicleType {
 }
 
 enum DocumentType {
+  // Legacy single car photo. Read as an alias of VEHICLE_IMAGE_FRONT.
   VEHICLE_IMAGE
+  VEHICLE_IMAGE_FRONT
+  VEHICLE_IMAGE_BACK
   VEHICLE_DOCUMENT
   DRIVING_LICENSE
   INSURANCE_DOCUMENT
+}
+
+enum VehicleVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum DlVerificationStatus {
@@ -70,13 +79,18 @@ enum DlVerificationStatus {
   DECLINED
   RESUBMISSION_REQUESTED
   EXPIRED
+  IDENTITY_MISMATCH
+  // A manual submission closed out because Veriff approved the same driver first.
+  // Veriff is the authority, so an admin must not be able to decline it afterwards
+  // and revoke a verification that was legitimately granted.
+  SUPERSEDED
 }
 
 model User {
   id String @id @default(uuid())
 
-  name       String?     @db.VarChar(255)
-  nickName   String?     @db.VarChar(255)
+  firstName  String?     @db.VarChar(255)
+  lastName   String?     @db.VarChar(255)
   salutation Salutation?
   gender     Gender?
   dob        DateTime?
@@ -98,6 +112,9 @@ model User {
 
   stripeAccountId          String?
   stripeOnboardingComplete Boolean @default(false)
+  stripeAccountName        String?
+  stripeNameMatch          Boolean?
+  stripeDobMatch           Boolean?
 
   tosAcceptedAt     DateTime?
   tosVersion        String?
@@ -127,7 +144,8 @@ model User {
   notifications Notification[]
 
   // DL Verification relations
-  dlVerifications DlVerification[]
+  dlVerifications         DlVerification[]
+  dlVerificationsReviewed DlVerification[] @relation("DlVerificationsReviewed")
 
   // Report / Block relations
   reportsMade     UserReport[] @relation("ReportsMade")
@@ -173,8 +191,15 @@ model Vehicle {
   year       Int?
   imageUrl     String?
   imageKey     String?
+  // Kept in sync with verificationStatus (true iff APPROVED) so existing readers
+  // keep working. verificationStatus is the source of truth for admin review.
   isVerified Boolean      @default(false)
   deletedAt  DateTime?
+
+  verificationStatus VehicleVerificationStatus @default(PENDING)
+  rejectionReason    String?
+  reviewedAt         DateTime?
+  reviewedById       String?
 
   documents VehicleDocument[]
   rides     Ride[]
@@ -184,6 +209,7 @@ model Vehicle {
 
   @@index([userId])
   @@index([userId, deletedAt])
+  @@index([verificationStatus])
 }
 
 model VehicleDocument {
@@ -995,10 +1021,26 @@ model DlVerification {
   decisionCode     Int?
   reasonCode       String?
   decisionPayload  Json?
+  verifiedName     String?
+  verifiedDob      String?
+  verifiedGender   String?
+  nameMatch        Boolean?
+  dobMatch         Boolean?
+  genderMatch      Boolean?
+
+  // Manual admin review. A driver who does not complete Veriff can upload a licence
+  // photo instead; an admin reads it and approves or declines with a reason. The
+  // image is a private S3 key served only through GET /uploads/read.
+  documentImageKey String?
+  declineReason    String?
+  reviewedById     String?
+  reviewedBy       User?     @relation("DlVerificationsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt       DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([veriffSessionId])
+  @@index([status])
 }

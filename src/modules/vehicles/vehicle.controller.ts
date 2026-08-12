@@ -79,8 +79,12 @@ export const updateVehicleDetails = async (req: AuthRequest, res: Response) => {
       year: req.body.year,
     });
 
-    // Invalidate vehicle cache after update
-    await deleteCache(cacheKeys.vehicle(vehicleId));
+    // Both caches: the list one backs /profile/vehicle, which must show a re-queued
+    // review status immediately after the edit that caused it.
+    await Promise.all([
+      deleteCache(cacheKeys.vehicle(vehicleId)),
+      deleteCache(cacheKeys.userVehicles(req.user.id)),
+    ]);
 
     return sendSuccess(res, {
       message: 'Vehicle details updated successfully',
@@ -288,17 +292,29 @@ export const saveVehicleFromDraft = async (req: AuthRequest, res: Response) => {
       USER_NOT_FOUND: HttpStatus.NOT_FOUND,
       LICENSE_REQUIRED: HttpStatus.BAD_REQUEST,
       MAX_VEHICLE_LIMIT_REACHED: HttpStatus.CONFLICT,
+      VEHICLE_DOCUMENTS_REQUIRED: HttpStatus.BAD_REQUEST,
+      DL_DOCUMENT_REQUIRED: HttpStatus.BAD_REQUEST,
     };
     const messageMap: Record<string, string> = {
       DRAFT_NOT_FOUND: 'No vehicle draft found',
       USER_NOT_FOUND: 'User not found — please sign up or log in again',
       LICENSE_REQUIRED: 'License info is required before saving',
       MAX_VEHICLE_LIMIT_REACHED: 'Maximum vehicle limit reached',
+      DL_DOCUMENT_REQUIRED: 'Upload a photo of your driving licence before adding a vehicle',
     };
 
+    // VEHICLE_DOCUMENTS_REQUIRED carries the missing types after a colon so the app can
+    // tell the driver exactly what is still outstanding.
+    const [code, detail] = String(error.message).split(':');
+    const missingDocuments = code === 'VEHICLE_DOCUMENTS_REQUIRED' && detail
+      ? detail.split(',')
+      : null;
+
     return sendError(res, {
-      status: statusMap[error.message] || HttpStatus.INTERNAL_ERROR,
-      message: messageMap[error.message] || 'Failed to save vehicle',
+      status: statusMap[code] || HttpStatus.INTERNAL_ERROR,
+      message: missingDocuments
+        ? `Missing required vehicle documents: ${missingDocuments.join(', ')}`
+        : messageMap[code] || 'Failed to save vehicle',
     });
   }
 };

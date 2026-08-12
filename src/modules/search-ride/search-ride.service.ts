@@ -38,28 +38,69 @@ const EXACT_ORIGIN_DEST_BONUS = 100;
 const PICKUP_AT_ORIGIN_BONUS = 20;
 const DROP_AT_DEST_BONUS = 20;
 const ALT_ROUTE_PENALTY = 30;
+const RIDE_TIME_ZONE = 'Europe/Tallinn';
 const departurePeriodFilter = (period?: SearchRideQuery['departurePeriod']): Prisma.StringFilter | undefined => {
   if (period === 'morning') return { gte: '05:00', lt: '12:00' };
   if (period === 'afternoon') return { gte: '12:00', lt: '17:00' };
   if (period === 'evening') return { gte: '17:00', lte: '23:59' };
   return undefined;
 };
-const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date => {
+
+const rideTimeFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: RIDE_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
+const getRideTimeParts = (date: Date) => {
+  const parts = rideTimeFormatter.formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value || '0');
+
+  return {
+    year: value('year'),
+    month: value('month'),
+    day: value('day'),
+    hour: value('hour'),
+    minute: value('minute'),
+    second: value('second'),
+  };
+};
+
+const getRideTimeOffsetMs = (date: Date): number => {
+  const zoned = getRideTimeParts(date);
+  return Date.UTC(
+    zoned.year,
+    zoned.month - 1,
+    zoned.day,
+    zoned.hour,
+    zoned.minute,
+    zoned.second,
+  ) - date.getTime();
+};
+
+const combineDepartureDateTimeInRideTimezone = (departureDate: Date, departureTime: string): Date => {
   const [hours = 0, minutes = 0] = departureTime.split(':').map(Number);
-  return new Date(Date.UTC(
+  const utcGuess = Date.UTC(
     departureDate.getUTCFullYear(),
     departureDate.getUTCMonth(),
     departureDate.getUTCDate(),
     hours,
     minutes,
-  ));
+  );
+  const offsetMs = getRideTimeOffsetMs(new Date(utcGuess));
+  return new Date(utcGuess - offsetMs);
 };
 
 export const isFutureRideDeparture = (
   departureDate: Date,
   departureTime: string,
   now = new Date(),
-): boolean => combineDepartureDateTimeUtc(departureDate, departureTime).getTime() > now.getTime();
+): boolean => combineDepartureDateTimeInRideTimezone(departureDate, departureTime).getTime() > now.getTime();
 const activeBookingStatuses = [
   'PAYMENT_PENDING',
   'DRIVER_PENDING',
@@ -102,8 +143,8 @@ type RideBookingWithRider = {
   updatedAt?: Date;
   passenger?: {
     id: string;
-    name: string | null;
-    nickName: string | null;
+    firstName: string | null;
+    lastName: string | null;
     phone: string | null;
     avatarUrl: string | null;
   };
@@ -155,8 +196,8 @@ const rideDetailsBookingInclude = {
     passenger: {
       select: {
         id: true,
-        name: true,
-        nickName: true,
+        firstName: true,
+        lastName: true,
         phone: true,
         avatarUrl: true,
       },
@@ -449,7 +490,7 @@ export const searchRides = async (
         driver: {
           select: {
             id: true,
-            name: true,
+            firstName: true,
             avatarUrl: true,
             isVerified: true,
           },
@@ -548,7 +589,7 @@ export const searchRides = async (
         driverId: ride.driverId,
         driver: {
           id: ride.driver.id,
-          name: ride.driver.name,
+          firstName: ride.driver.firstName,
           avatarUrl: ride.driver.avatarUrl,
           isVerified: ride.driver.isVerified,
           rating: trustStats?.rating,
@@ -628,6 +669,172 @@ const getOrderBy = (sortBy: string, sortOrder: string): Prisma.RideOrderByWithRe
   }
 };
 
+export const getAvailableRides = async (
+  query: { page?: number; limit?: number },
+  viewerId?: string,
+): Promise<SearchRideResponse> => {
+  const page = Number(query.page) || 1;
+  const limit = Number(query.limit) || 10;
+  const skip = (page - 1) * limit;
+  const now = new Date();
+  const rideNow = getRideTimeParts(now);
+  const todayRideDate = new Date(Date.UTC(rideNow.year, rideNow.month - 1, rideNow.day));
+  const currentRideTime = `${String(rideNow.hour).padStart(2, '0')}:${String(rideNow.minute).padStart(2, '0')}`;
+
+  const whereClause: Prisma.RideWhereInput = {
+    status: RideStatus.PUBLISHED,
+    availableSeats: { gte: 1 },
+    OR: [
+      { departureDate: { gt: todayRideDate } },
+      { departureDate: { equals: todayRideDate }, departureTime: { gt: currentRideTime } },
+    ],
+  };
+
+  if (viewerId) {
+    whereClause.driverId = { not: viewerId };
+    whereClause.bookings = {
+      none: {
+        passengerId: viewerId,
+        status: { in: activeBookingStatuses },
+      },
+    };
+  }
+
+  const isViewerFemale = await canViewerAccessFemaleOnlyRides(viewerId);
+  if (!isViewerFemale) {
+    whereClause.femaleOnly = false;
+  }
+
+  const [candidateRides, total] = await Promise.all([
+    prisma.ride.findMany({
+      where: whereClause,
+      include: {
+        driver: {
+          select: {
+            id: true,
+            firstName: true,
+            avatarUrl: true,
+            isVerified: true,
+          },
+        },
+        bookings: bookingWithRiderInclude,
+      },
+      orderBy: [{ departureDate: 'asc' }, { departureTime: 'asc' }],
+      skip,
+      take: limit,
+    }),
+    prisma.ride.count({ where: whereClause }),
+  ]);
+
+  const rides = candidateRides.filter((ride) => isFutureRideDeparture(ride.departureDate, ride.departureTime));
+  const vehicleIds = Array.from(
+    new Set(rides.map((ride) => ride.vehicleId).filter((vehicleId): vehicleId is string => Boolean(vehicleId))),
+  );
+  const driverIdsWithoutVehicle = Array.from(
+    new Set(rides.filter((ride) => !ride.vehicleId).map((ride) => ride.driverId)),
+  );
+  const vehicles = vehicleIds.length
+    ? await prisma.vehicle.findMany({
+        where: { id: { in: vehicleIds }, deletedAt: null },
+        select: {
+          id: true,
+          brand: true,
+          model_num: true,
+          model_name: true,
+          type: true,
+          color: true,
+          year: true,
+          imageUrl: true,
+          isVerified: true,
+        },
+      })
+    : [];
+  const fallbackVehicles = driverIdsWithoutVehicle.length
+    ? await prisma.vehicle.findMany({
+        where: { userId: { in: driverIdsWithoutVehicle }, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          userId: true,
+          brand: true,
+          model_num: true,
+          model_name: true,
+          type: true,
+          color: true,
+          year: true,
+          imageUrl: true,
+          isVerified: true,
+        },
+      })
+    : [];
+  const vehicleById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
+  const fallbackVehicleByDriverId = new Map<string, DriverVehicleDetails>();
+  fallbackVehicles.forEach((vehicle) => {
+    if (!fallbackVehicleByDriverId.has(vehicle.userId)) {
+      fallbackVehicleByDriverId.set(vehicle.userId, vehicle);
+    }
+  });
+  const driverTrustStats = await loadDriverTrustStats(rides.map((ride) => ride.driverId));
+
+  return {
+    rides: rides.map((ride) => {
+      const trustStats = driverTrustStats.get(ride.driverId);
+      const hasActiveBooking = viewerId
+        ? ride.bookings.some((booking) => booking.passengerId === viewerId)
+        : false;
+      return {
+        id: ride.id,
+        driverId: ride.driverId,
+        driver: {
+          id: ride.driver.id,
+          firstName: ride.driver.firstName,
+          avatarUrl: ride.driver.avatarUrl,
+          isVerified: ride.driver.isVerified,
+          rating: trustStats?.rating,
+          ratingCount: trustStats?.ratingCount,
+          successfulPublishedRides: trustStats?.successfulPublishedRides,
+          successfulCompletedRides: trustStats?.successfulCompletedRides,
+        },
+        vehicle: mapRideVehicle(
+          ride.vehicleId
+            ? (vehicleById.get(ride.vehicleId) ?? null)
+            : (fallbackVehicleByDriverId.get(ride.driverId) ?? null),
+        ),
+        bookings: mapVisibleRideBookings(ride.bookings, ride.driverId, viewerId),
+        originPlaceId: ride.originPlaceId,
+        originAddress: ride.originAddress,
+        originLat: ride.originLat,
+        originLng: ride.originLng,
+        destinationPlaceId: ride.destinationPlaceId,
+        destinationAddress: ride.destinationAddress,
+        destinationLat: ride.destinationLat,
+        destinationLng: ride.destinationLng,
+        routePolyline: ride.routePolyline,
+        routeDistanceMeters: ride.routeDistanceMeters,
+        routeDurationSeconds: ride.routeDurationSeconds,
+        departureDate: ride.departureDate,
+        departureTime: ride.departureTime,
+        availableSeats: ride.availableSeats,
+        basePricePerSeat: ride.basePricePerSeat,
+        currency: ride.currency,
+        status: ride.status,
+        femaleOnly: ride.femaleOnly,
+        noSmoking: ride.noSmoking,
+        alcoholFreeRide: ride.alcoholFreeRide,
+        noBicycles: ride.noBicycles,
+        childSeatAvailable: ride.childSeatAvailable,
+        hasActiveBooking,
+      };
+    }),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+};
+
 /* ================= GET RIDE DETAILS ================= */
 export const getRideDetails = async (rideId: string, viewerId?: string): Promise<RideDetailsResponse | null> => {
   const canViewFemaleOnly = await canViewerAccessFemaleOnlyRides(viewerId);
@@ -637,7 +844,7 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
       driver: {
         select: {
           id: true,
-          name: true,
+          firstName: true,
           avatarUrl: true,
         },
       },
@@ -699,7 +906,7 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
     driverId: ride.driverId,
     driver: {
       id: ride.driver.id,
-      name: ride.driver.name,
+      firstName: ride.driver.firstName,
       avatarUrl: ride.driver.avatarUrl,
     },
     vehicle: mapRideVehicle(vehicle),
@@ -749,7 +956,7 @@ export const getRideViewByToken = async (
       driver: {
         select: {
           id: true,
-          name: true,
+          firstName: true,
           avatarUrl: true,
         },
       },
@@ -1035,7 +1242,7 @@ export const searchRidesAdvanced = async (
       driver: {
         select: {
           id: true,
-          name: true,
+          firstName: true,
           avatarUrl: true,
           isVerified: true,
         },
@@ -1259,7 +1466,7 @@ export const searchRidesAdvanced = async (
       driverId: ride.driverId,
       driver: {
         id: ride.driver.id,
-        name: ride.driver.name,
+        firstName: ride.driver.firstName,
         avatarUrl: ride.driver.avatarUrl,
         isVerified: ride.driver.isVerified,
         rating: trustStats?.rating,

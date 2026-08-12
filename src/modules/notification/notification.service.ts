@@ -166,34 +166,26 @@ export const createNotification = async (input: CreateNotificationInput) => {
     // Try real-time delivery via WebSocket
     let deliveredViaSocket = false;
     try {
-        const { getIO, getUserSocketIds } = await import('../../socket/index.js');
+        const { getIO, emitToUsers } = await import('../../socket/index.js');
         const io = getIO();
-        
+
         if (!io) {
             logger.warn('Socket.IO not initialized');
         } else {
-            const socketIds = await getUserSocketIds(userId);
+            const payload = {
+                type: 'notification.new',
+                data: {
+                    id: notification.id,
+                    title: notification.title,
+                    body: notification.body,
+                    notificationType: notification.type,
+                    data: normalizedData,
+                    preview: true,
+                    createdAt: notification.createdAt,
+                },
+            };
 
-            if (socketIds.length > 0) {
-                // User is ONLINE — deliver via WebSocket
-                const payload = {
-                    type: 'notification.new',
-                    data: {
-                        id: notification.id,
-                        title: notification.title,
-                        body: notification.body,
-                        notificationType: notification.type,
-                        data: normalizedData,
-                        preview: true,
-                        createdAt: notification.createdAt,
-                    },
-                };
-
-                socketIds.forEach((sid: string) => {
-                    io.to(sid).emit('notification:new', payload);
-                });
-                deliveredViaSocket = true;
-            }
+            deliveredViaSocket = (await emitToUsers([userId], 'notification:new', payload)) > 0;
         }
     } catch (error) {
         logger.error('WebSocket notification emit error:', error);

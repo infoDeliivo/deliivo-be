@@ -146,6 +146,36 @@ describe('submitBookingRating', () => {
         ).rejects.toThrow('RATING_ALREADY_SUBMITTED');
     });
 
+    it('maps database unique constraint races to duplicate rating errors', async () => {
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            id: 'booking-race',
+            rideId: 'ride-race',
+            status: BookingStatus.COMPLETED,
+            passengerId: 'passenger-race',
+            ride: { driverId: 'driver-race' },
+        });
+        mockPrisma.rideRating.findUnique.mockResolvedValue(null);
+
+        const tx = {
+            rideRating: {
+                create: jest.fn().mockRejectedValue({
+                    code: 'P2002',
+                    meta: { target: ['bookingId', 'raterId'] },
+                }),
+            },
+            userRatingStats: {
+                findUnique: jest.fn(),
+                create: jest.fn(),
+                update: jest.fn(),
+            },
+        };
+        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+
+        await expect(
+            submitBookingRating('passenger-race', 'booking-race', { stars: 5 })
+        ).rejects.toThrow('RATING_ALREADY_SUBMITTED');
+    });
+
     it('allows rating after a failed pickup outcome', async () => {
         mockPrisma.rideBooking.findUnique.mockResolvedValue({
             id: 'booking-noshow',

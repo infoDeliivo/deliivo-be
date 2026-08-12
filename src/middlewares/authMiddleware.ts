@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../config/index.js';
 import { verifyAccessToken } from '../modules/token/tokens.service.js';
+import { logWarn } from '../utils/logger.js';
 
 export interface AuthRequest extends Request {
   user?: any;
@@ -8,8 +9,8 @@ export interface AuthRequest extends Request {
 
 const authUserSelect = {
   id: true,
-  name: true,
-  nickName: true,
+  firstName: true,
+  lastName: true,
   salutation: true,
   gender: true,
   dob: true,
@@ -76,10 +77,16 @@ export const optionalProtect = async (req: AuthRequest, res: Response, next: Nex
   try {
     req.user = await authenticateBearerToken(req);
     if (!req.user || isDeletedAccount(req.user)) {
-      return res.status(401).json({ message: 'Not authorized, user unavailable' });
+      req.user = undefined;
+      return next();
     }
     return next();
-  } catch {
-    return res.status(401).json({ message: 'Not authorized, token failed' });
+  } catch (error) {
+    req.user = undefined;
+    logWarn('Ignoring invalid optional auth token', {
+      path: req.originalUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return next();
   }
 };

@@ -1,5 +1,5 @@
 import { prisma } from '../../config/index.js';
-import { BookingStatus } from '@prisma/client';
+import { BookingStatus, Prisma, RideStatus } from '@prisma/client';
 import type { SendMessageInput, ImagePayload, LocationPayload } from './chat.types.js';
 
 // ============ HELPERS ============
@@ -31,24 +31,258 @@ const getMessagePreview = (type: string, text?: string | null): string => {
 };
 
 /**
- * Check if two users have a confirmed booking between them.
+ * Check if two users have an active ride booking between them.
  * One user must be the passenger and the other must be the driver of the ride.
- * Only allows chat for CONFIRMED bookings — blocked after ride completion or cancellation.
+ * Chat stays writable during ride-day booking states and closes when the ride closes.
  */
-export const hasConfirmedBooking = async (userId1: string, userId2: string): Promise<boolean> => {
+const CHAT_PRE_START_BOOKING_STATUSES: BookingStatus[] = [
+    BookingStatus.PAYMENT_PENDING,
+    BookingStatus.DRIVER_PENDING,
+    BookingStatus.CONFIRMED,
+];
+
+const CHAT_RIDE_DAY_BOOKING_STATUSES: BookingStatus[] = [
+    BookingStatus.WAITING_FOR_PICKUP,
+    BookingStatus.DRIVER_ARRIVED,
+    BookingStatus.OTP_PENDING,
+    BookingStatus.IN_PROGRESS,
+    BookingStatus.ONBOARD,
+    BookingStatus.DROP_PENDING,
+    BookingStatus.DRIVER_DROPPED,
+    BookingStatus.COMPLETED,
+];
+
+const CHAT_ENABLED_BOOKING_STATUSES: BookingStatus[] = [
+    ...CHAT_PRE_START_BOOKING_STATUSES,
+    ...CHAT_RIDE_DAY_BOOKING_STATUSES,
+];
+
+const CHAT_CLOSED_RIDE_STATUSES: RideStatus[] = [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.EXPIRED];
+
+const isActiveRideSession = (ride: {
+    status: RideStatus | string;
+    actualStartTime?: Date | null;
+    actualEndTime?: Date | null;
+}): boolean =>
+    !ride.actualEndTime
+    && !(CHAT_CLOSED_RIDE_STATUSES as readonly string[]).includes(ride.status)
+    && (ride.status === RideStatus.IN_PROGRESS || Boolean(ride.actualStartTime));
+
+const isOpenRideSession = (ride: {
+    status: RideStatus | string;
+    actualEndTime?: Date | null;
+}): boolean =>
+    !ride.actualEndTime
+    && !(CHAT_CLOSED_RIDE_STATUSES as readonly string[]).includes(ride.status);
+
+const isChatAvailableForBooking = (
+    booking: {
+        status: BookingStatus | string;
+        ride: {
+            status: RideStatus | string;
+            actualStartTime?: Date | null;
+            actualEndTime?: Date | null;
+        };
+    }
+): boolean => {
+    if ((CHAT_PRE_START_BOOKING_STATUSES as readonly string[]).includes(booking.status)) {
+        return isActiveRideSession(booking.ride);
+    }
+
+    if ((CHAT_RIDE_DAY_BOOKING_STATUSES as readonly string[]).includes(booking.status)) {
+        return isOpenRideSession(booking.ride);
+    }
+
+    return false;
+};
+
+type BookingChatContext = {
+    id: string;
+    passengerId: string;
+    status: string;
+    ride: {
+        driverId: string;
+        status: string;
+        actualStartTime: Date | null;
+        actualEndTime: Date | null;
+    };
+};
+
+type ConversationChatContext = {
+    id: string;
+    userAId: string;
+    userBId: string;
+};
+
+type MessageRow = {
+    id: string;
+    conversationId: string;
+    senderId: string;
+    receiverId: string;
+    type: string;
+    text: string | null;
+    payloadJson: unknown;
+    clientMsgId: string | null;
+    deliveredAt: Date | null;
+    readAt: Date | null;
+    createdAt: Date;
+};
+
+const getConversationChatContext = async (
+    userId: string,
+    conversationId: string,
+): Promise<ConversationChatContext | null> => {
+    const rows = await prisma.$queryRaw<ConversationChatContext[]>(Prisma.sql`
+        SELECT "id", "userAId", "userBId"
+        FROM "Conversation"
+        WHERE "id" = ${conversationId}
+          AND ("userAId" = ${userId} OR "userBId" = ${userId})
+        LIMIT 1
+    `);
+
+    return rows[0] || null;
+};
+
+const getBookingChatContext = async (bookingId: string): Promise<BookingChatContext | null> => {
+    const rows = await prisma.$queryRaw<Array<{
+        id: string;
+        passengerId: string;
+        status: string;
+        driverId: string;
+        rideStatus: string;
+        actualStartTime: Date | null;
+        actualEndTime: Date | null;
+    }>>(Prisma.sql`
+        SELECT
+            b."id",
+            b."passengerId",
+            b."status"::text AS "status",
+            r."driverId",
+            r."status"::text AS "rideStatus",
+            r."actualStartTime",
+            r."actualEndTime"
+        FROM "RideBooking" b
+        JOIN "Ride" r ON r."id" = b."rideId"
+        WHERE b."id" = ${bookingId}
+        LIMIT 1
+    `);
+
+    const row = rows[0];
+    if (!row) return null;
+
+    return {
+        id: row.id,
+        passengerId: row.passengerId,
+        status: row.status,
+        ride: {
+            driverId: row.driverId,
+            status: row.rideStatus,
+            actualStartTime: row.actualStartTime,
+            actualEndTime: row.actualEndTime,
+        },
+    };
+};
+
+const getConversationMessages = async (
+    conversationId: string,
+    cursor: string | undefined,
+    limit: number,
+): Promise<MessageRow[]> => {
+    if (cursor) {
+        const cursorRows = await prisma.$queryRaw<Array<{ createdAt: Date }>>(Prisma.sql`
+            SELECT "createdAt"
+            FROM "Message"
+            WHERE "id" = ${cursor}
+              AND "conversationId" = ${conversationId}
+            LIMIT 1
+        `);
+        const cursorCreatedAt = cursorRows[0]?.createdAt;
+        if (!cursorCreatedAt) return [];
+
+        return prisma.$queryRaw<MessageRow[]>(Prisma.sql`
+            SELECT
+                "id",
+                "conversationId",
+                "senderId",
+                "receiverId",
+                "type"::text AS "type",
+                "text",
+                "payloadJson",
+                "clientMsgId",
+                "deliveredAt",
+                "readAt",
+                "createdAt"
+            FROM "Message"
+            WHERE "conversationId" = ${conversationId}
+              AND "createdAt" < ${cursorCreatedAt}
+            ORDER BY "createdAt" DESC
+            LIMIT ${limit + 1}
+        `);
+    }
+
+    return prisma.$queryRaw<MessageRow[]>(Prisma.sql`
+        SELECT
+            "id",
+            "conversationId",
+            "senderId",
+            "receiverId",
+            "type"::text AS "type",
+            "text",
+            "payloadJson",
+            "clientMsgId",
+            "deliveredAt",
+            "readAt",
+            "createdAt"
+        FROM "Message"
+        WHERE "conversationId" = ${conversationId}
+        ORDER BY "createdAt" DESC
+        LIMIT ${limit + 1}
+    `);
+};
+
+const activeRideSessionWhere = () => ({
+    actualEndTime: null,
+    status: { notIn: CHAT_CLOSED_RIDE_STATUSES },
+    OR: [
+        { status: RideStatus.IN_PROGRESS },
+        { actualStartTime: { not: null } },
+    ],
+});
+
+const openRideSessionWhere = () => ({
+    actualEndTime: null,
+    status: { notIn: CHAT_CLOSED_RIDE_STATUSES },
+});
+
+export const hasActiveRideChat = async (userId1: string, userId2: string): Promise<boolean> => {
     const booking = await prisma.rideBooking.findFirst({
         where: {
-            status: BookingStatus.CONFIRMED,
             OR: [
-                // userId1 is passenger, userId2 is driver
                 {
-                    passengerId: userId1,
-                    ride: { driverId: userId2 },
+                    status: { in: CHAT_PRE_START_BOOKING_STATUSES },
+                    OR: [
+                        {
+                            passengerId: userId1,
+                            ride: { driverId: userId2, ...activeRideSessionWhere() },
+                        },
+                        {
+                            passengerId: userId2,
+                            ride: { driverId: userId1, ...activeRideSessionWhere() },
+                        },
+                    ],
                 },
-                // userId2 is passenger, userId1 is driver
                 {
-                    passengerId: userId2,
-                    ride: { driverId: userId1 },
+                    status: { in: CHAT_RIDE_DAY_BOOKING_STATUSES },
+                    OR: [
+                        {
+                            passengerId: userId1,
+                            ride: { driverId: userId2, ...openRideSessionWhere() },
+                        },
+                        {
+                            passengerId: userId2,
+                            ride: { driverId: userId1, ...openRideSessionWhere() },
+                        },
+                    ],
                 },
             ],
         },
@@ -56,6 +290,22 @@ export const hasConfirmedBooking = async (userId1: string, userId2: string): Pro
     });
 
     return !!booking;
+};
+
+export const hasActiveRideChatForBooking = async (
+    userId: string,
+    peerId: string,
+    bookingId: string,
+): Promise<boolean> => {
+    const booking = await getBookingChatContext(bookingId);
+
+    if (!booking) return false;
+
+    const isPassengerToDriver = booking.passengerId === userId && booking.ride.driverId === peerId;
+    const isDriverToPassenger = booking.ride.driverId === userId && booking.passengerId === peerId;
+    if (!isPassengerToDriver && !isDriverToPassenger) return false;
+
+    return isChatAvailableForBooking(booking);
 };
 
 // ============ CONVERSATION OPERATIONS ============
@@ -80,6 +330,56 @@ export const getOrCreateConversation = async (userId1: string, userId2: string) 
     return conversation;
 };
 
+export const openConversation = async (userId: string, receiverId: string) => {
+    if (userId === receiverId) {
+        throw new Error('CANNOT_MESSAGE_SELF');
+    }
+
+    const chatAvailable = await hasActiveRideChat(userId, receiverId);
+    if (!chatAvailable) {
+        throw new Error('CHAT_NOT_ACTIVE');
+    }
+
+    const conversation = await getOrCreateConversation(userId, receiverId);
+    return {
+        id: conversation.id,
+        conversationId: conversation.id,
+        chatAvailable,
+        peerId: receiverId,
+    };
+};
+
+export const openBookingConversation = async (userId: string, bookingId: string) => {
+    const booking = await getBookingChatContext(bookingId);
+
+    if (!booking) {
+        throw new Error('BOOKING_NOT_FOUND');
+    }
+
+    const peerId = userId === booking.passengerId
+        ? booking.ride.driverId
+        : userId === booking.ride.driverId
+            ? booking.passengerId
+            : null;
+
+    if (!peerId) {
+        throw new Error('FORBIDDEN_BOOKING_PARTICIPANT');
+    }
+
+    if (!isChatAvailableForBooking(booking)) {
+        throw new Error('CHAT_NOT_ACTIVE');
+    }
+
+    const conversation = await getOrCreateConversation(userId, peerId);
+    return {
+        id: conversation.id,
+        conversationId: conversation.id,
+        chatAvailable: true,
+        peerId,
+        bookingId: booking.id,
+    };
+};
+
 /**
  * Get paginated conversation list for a user with last message and peer info.
  */
@@ -100,10 +400,10 @@ export const getConversations = async (
         }),
         include: {
             userA: {
-                select: { id: true, name: true, avatarUrl: true },
+                select: { id: true, firstName: true, avatarUrl: true },
             },
             userB: {
-                select: { id: true, name: true, avatarUrl: true },
+                select: { id: true, firstName: true, avatarUrl: true },
             },
             messages: {
                 orderBy: { createdAt: 'desc' },
@@ -150,7 +450,14 @@ export const getConversations = async (
         };
     });
 
-    return { items, nextCursor, hasMore };
+    const itemsWithAvailability = await Promise.all(
+        items.map(async (item) => ({
+            ...item,
+            chatAvailable: await hasActiveRideChat(userId, item.peer.id),
+        })),
+    );
+
+    return { conversations: itemsWithAvailability, items: itemsWithAvailability, nextCursor, hasMore };
 };
 
 // ============ MESSAGE OPERATIONS ============
@@ -165,7 +472,7 @@ export const getConversations = async (
  * - For LOCATION: payloadJson should contain LocationPayload (latitude, longitude, etc.)
  */
 export const sendMessage = async (senderId: string, data: SendMessageInput) => {
-    const { receiverId, text, clientMsgId, type = 'TEXT', payloadJson } = data;
+    const { receiverId, text, clientMsgId, bookingId, type = 'TEXT', payloadJson } = data;
 
     // Prevent sending to self
     if (senderId === receiverId) {
@@ -173,9 +480,11 @@ export const sendMessage = async (senderId: string, data: SendMessageInput) => {
     }
 
     // Check booking authorization — only rider↔driver with a confirmed booking can chat
-    const canChat = await hasConfirmedBooking(senderId, receiverId);
+    const canChat = bookingId
+        ? await hasActiveRideChatForBooking(senderId, receiverId, bookingId)
+        : await hasActiveRideChat(senderId, receiverId);
     if (!canChat) {
-        throw new Error('NO_CONFIRMED_BOOKING');
+        throw new Error('CHAT_NOT_ACTIVE');
     }
 
     // Validate message content based on type
@@ -241,47 +550,26 @@ export const getMessages = async (
     conversationId: string,
     cursor?: string,
     limit: number = 30,
+    bookingId?: string,
 ) => {
-    // Verify user is participant
-    const conversation = await prisma.conversation.findFirst({
-        where: {
-            id: conversationId,
-            OR: [{ userAId: userId }, { userBId: userId }],
-        },
-    });
+    const conversation = await getConversationChatContext(userId, conversationId);
 
     if (!conversation) {
         throw new Error('CONVERSATION_NOT_FOUND');
     }
 
-    const messages = await prisma.message.findMany({
-        where: { conversationId },
-        orderBy: { createdAt: 'desc' },
-        take: limit + 1,
-        ...(cursor && {
-            cursor: { id: cursor },
-            skip: 1,
-        }),
-        select: {
-            id: true,
-            conversationId: true,
-            senderId: true,
-            receiverId: true,
-            type: true,
-            text: true,
-            payloadJson: true,
-            clientMsgId: true,
-            deliveredAt: true,
-            readAt: true,
-            createdAt: true,
-        },
-    });
+    const messages = await getConversationMessages(conversationId, cursor, limit);
 
     const hasMore = messages.length > limit;
     const results = hasMore ? messages.slice(0, limit) : messages;
     const nextCursor = hasMore ? results[results.length - 1].id : null;
 
-    return { messages: results, nextCursor, hasMore };
+    const peerId = conversation.userAId === userId ? conversation.userBId : conversation.userAId;
+    const chatAvailable = bookingId
+        ? await hasActiveRideChatForBooking(userId, peerId, bookingId)
+        : await hasActiveRideChat(userId, peerId);
+
+    return { messages: results, nextCursor, hasMore, chatAvailable, peerId };
 };
 
 // ============ RECEIPT OPERATIONS ============

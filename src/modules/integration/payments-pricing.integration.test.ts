@@ -486,11 +486,10 @@ describe('Pricing Calculator', () => {
         expect(result.reason).toContain('below minimum');
     });
 
-    test('rejects price above maximum', () => {
+    test('allows price above suggested maximum', () => {
         const calculation = calculatePrice(100, config);
         const result = validateDriverPrice(20, calculation);
-        expect(result.valid).toBe(false);
-        expect(result.reason).toContain('above maximum');
+        expect(result.valid).toBe(true);
     });
 
     test('calculates segment prices proportionally', () => {
@@ -538,14 +537,15 @@ describe('Pricing Service', () => {
         expect(pricingSnapshots[0].selectedPricePerSeat).toBe(10);
     });
 
-    test('rejects invalid price on validation', async () => {
+    test('accepts price above suggested maximum on validation', async () => {
         const result = await validateAndSnapshotPricing({
             rideId: 'ride-002',
             distanceKm: 150,
             selectedPricePerSeat: 30, // way above max (18)
             regionCode: 'BALTIC',
         });
-        expect(result.valid).toBe(false);
+        expect(result.valid).toBe(true);
+        expect(result.snapshotId).toBeDefined();
     });
 });
 

@@ -4,12 +4,13 @@ import { UserRole, OnboardingStatus } from '@prisma/client';
 import fs from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { ensureDefaultPricingConfig } from '../modules/pricing/pricing.service.js';
 
 async function main() {
   const adminEmail = process.env.ADMIN_SEED_EMAIL || 'admin@test.dev';
   const adminPhone = process.env.ADMIN_SEED_PHONE || '+37251009999';
-  const adminName = process.env.ADMIN_SEED_NAME || 'Admin Baltic';
-  const adminNickName = process.env.ADMIN_SEED_NICKNAME || 'admin-baltic';
+  const adminFirstName = process.env.ADMIN_SEED_NAME || 'Admin';
+  const adminLastName = process.env.ADMIN_SEED_LAST_NAME || 'Baltic';
 
   const [existingByEmail, existingByPhone] = await Promise.all([
     adminEmail ? prisma.user.findUnique({ where: { email: adminEmail } }) : Promise.resolve(null),
@@ -31,8 +32,8 @@ async function main() {
 
   const adminPayload = {
     role: UserRole.ADMIN,
-    name: adminName,
-    nickName: adminNickName,
+    firstName: adminFirstName,
+    lastName: adminLastName,
     emailVerified: true,
     phoneVerified: !phoneBelongsToOtherUser,
     isVerified: true,
@@ -52,6 +53,9 @@ async function main() {
       });
 
   console.log(`Seeded admin user: ${admin.email} (${admin.id})`);
+
+  const pricingConfig = await ensureDefaultPricingConfig();
+  console.log(`Seeded pricing config: ${pricingConfig.regionCode} (${pricingConfig.id})`);
 
   const contentFilePath = path.resolve(process.cwd(), 'content', 'blog-posts.json');
   try {

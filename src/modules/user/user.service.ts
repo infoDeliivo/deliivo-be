@@ -22,8 +22,8 @@ export const getMeService = async (userId: string) => {
         select: {
           id: true,
           role: true,
-          name: true,
-          nickName: true,
+          firstName: true,
+          lastName: true,
           salutation: true,
           gender: true,
           dob: true,
@@ -95,8 +95,8 @@ export const getFullProfileService = async (
     const userBasicInfo: UserBasicInfo = {
       id: userWithRelations.id,
       role: userWithRelations.role,
-      name: userWithRelations.name,
-      nickName: userWithRelations.nickName,
+      firstName: userWithRelations.firstName,
+      lastName: userWithRelations.lastName,
       salutation: userWithRelations.salutation,
       gender: userWithRelations.gender,
       dob: userWithRelations.dob,
@@ -178,7 +178,6 @@ export const getFullProfileService = async (
 // ====================== UPDATE FULL PROFILE SERVICE (Transaction) ======================
 /**
  * Updates user profile and travel preferences atomically
- * - Checks for duplicate nickName
  * - Uses Prisma transaction for multi-table updates
  * - Upserts travel preferences
  */
@@ -193,26 +192,12 @@ export const updateFullProfileService = async (
       return { success: false, reason: 'INVALID_DATE_OF_BIRTH' };
     }
 
-    // Check for duplicate nickName if provided
-    if (basicData.nickName) {
-      const existingUser = await prisma.user.findFirst({
-        where: {
-          nickName: basicData.nickName,
-          NOT: { id: userId },
-        },
-      });
-
-      if (existingUser) {
-        return { success: false, reason: 'USERNAME_EXISTS' };
-      }
-    }
-
     // Use transaction for multi-table updates
     await prisma.$transaction(async (tx) => {
       // Build update data for user (only include provided fields)
       const userUpdateData: Record<string, unknown> = {};
-      if (basicData.name !== undefined) userUpdateData.name = basicData.name;
-      if (basicData.nickName !== undefined) userUpdateData.nickName = basicData.nickName;
+      if (basicData.firstName !== undefined) userUpdateData.firstName = basicData.firstName;
+      if (basicData.lastName !== undefined) userUpdateData.lastName = basicData.lastName;
       if (basicData.salutation !== undefined) userUpdateData.salutation = basicData.salutation;
       if (basicData.gender !== undefined) userUpdateData.gender = basicData.gender;
       if (parsedDob !== undefined) userUpdateData.dob = parsedDob;
@@ -266,7 +251,8 @@ export const updateFullProfileService = async (
 export const completeOnBoardingStep1Service = async (
   userId: string,
   data: {
-    name: string;
+    firstName: string;
+    lastName: string;
     salutation: 'MS' | 'MR' | 'MRS' | 'MX' | 'OTHER';
     gender: 'MALE' | 'FEMALE' | 'NON_BINARY' | 'OTHER' | 'PREFER_NOT_TO_SAY';
     dob: string;
@@ -281,19 +267,27 @@ export const completeOnBoardingStep1Service = async (
       return { success: false, user: null, reason: 'User not found' };
     }
 
-    if (existingUser.onboardingStatus === enums.OnboardingStatus.COMPLETED) {
-      return { success: false, reason: 'Onboarding already completed' };
-    }
-
     const dob = parseDateOnlyAsUtc(data.dob);
     if (!dob) {
       return { success: false, user: null, reason: 'Invalid date of birth' };
     }
 
+    if (
+      existingUser.onboardingStatus === enums.OnboardingStatus.COMPLETED &&
+      existingUser.firstName &&
+      existingUser.lastName &&
+      existingUser.salutation &&
+      existingUser.gender &&
+      existingUser.dob
+    ) {
+      return { success: true, user: existingUser, alreadyCompleted: true };
+    }
+
     const user = await prisma.user.update({
       where: { id: userId },
       data: {
-        name: data.name,
+        firstName: data.firstName,
+        lastName: data.lastName,
         salutation: data.salutation,
         gender: data.gender,
         dob,
@@ -309,26 +303,38 @@ export const completeOnBoardingStep1Service = async (
 };
 
 // ====================== LEGACY UPDATE PROFILE SERVICE ======================
+// PUT /users/me carries no request validator, so the payload is whatever the client
+// sent. Only these columns may be written from it — spreading the body into
+// prisma.user.update let a caller set role, isBanned, dlVerified or isVerified.
+const UPDATABLE_PROFILE_FIELDS = ['firstName', 'lastName', 'salutation', 'gender'] as const;
+
 export const updateProfileService = async (userId: string, payload: Record<string, unknown>) => {
   try {
-    const { username } = payload;
+    const userData: Record<string, unknown> = {};
 
-    if (username) {
-      const exists = await prisma.user.findFirst({
-        where: {
-          nickName: username as string,
-          NOT: { id: userId },
-        },
-      });
+    for (const field of UPDATABLE_PROFILE_FIELDS) {
+      if (payload[field] !== undefined) userData[field] = payload[field];
+    }
 
-      if (exists) {
-        return { success: false, reason: 'USERNAME_EXISTS' };
+    // dob arrives as YYYY-MM-DD, which Prisma rejects as a DateTime. The full-profile
+    // service parses it the same way; without this the whole update failed with a
+    // generic 'Internal server error'.
+    if (payload.dob !== undefined) {
+      const parsedDob =
+        typeof payload.dob === 'string' ? parseDateOnlyAsUtc(payload.dob) : null;
+      if (!parsedDob) {
+        return { success: false, reason: 'INVALID_DATE_OF_BIRTH' };
       }
+      userData.dob = parsedDob;
+    }
+
+    if (Object.keys(userData).length === 0) {
+      return { success: false, reason: 'NO_UPDATABLE_FIELDS' };
     }
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: payload,
+      data: userData,
     });
 
     if (!updatedUser) {
@@ -360,7 +366,7 @@ export const updateAvatarService = async (userId: string, avatarUrl: string, ava
       data: { avatarUrl, avatarKey },
       select: {
         id: true,
-        name: true,
+        firstName: true,
         email: true,
         avatarUrl: true,
         avatarKey: true,
@@ -421,8 +427,8 @@ export const getPublicProfileService = async (
         select: {
           id: true,
           role: true,
-          name: true,
-          nickName: true,
+          firstName: true,
+          lastName: true,
           avatarUrl: true,
           isVerified: true,
           createdAt: true,
@@ -447,8 +453,8 @@ export const getPublicProfileService = async (
     const publicUserInfo: PublicUserInfo = {
       id: userWithRelations.id,
       role: userWithRelations.role,
-      name: userWithRelations.name,
-      nickName: userWithRelations.nickName,
+      firstName: userWithRelations.firstName,
+      lastName: userWithRelations.lastName,
       avatarUrl: userWithRelations.avatarUrl,
       isVerified: userWithRelations.isVerified,
       memberSince: userWithRelations.createdAt,

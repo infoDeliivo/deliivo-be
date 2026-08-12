@@ -26,12 +26,12 @@ import { isFutureRideDeparture, searchRidesAdvanced } from './search-ride.servic
 import { decodeViewToken } from './view-token.utils';
 
 describe('search departure eligibility', () => {
-    it('excludes a ride after its scheduled departure time', () => {
-        const date = new Date('2026-07-03T00:00:00.000Z');
-        const now = new Date('2026-07-03T10:01:00.000Z');
+    it('excludes a ride after its scheduled departure time in the ride timezone', () => {
+        const date = new Date('2026-08-07T00:00:00.000Z');
+        const now = new Date('2026-08-07T11:32:00.000Z');
 
-        expect(isFutureRideDeparture(date, '10:00', now)).toBe(false);
-        expect(isFutureRideDeparture(date, '10:30', now)).toBe(true);
+        expect(isFutureRideDeparture(date, '13:00', now)).toBe(false);
+        expect(isFutureRideDeparture(date, '15:00', now)).toBe(true);
     });
 });
 

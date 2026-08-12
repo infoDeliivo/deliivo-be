@@ -1,10 +1,17 @@
-import { BookingStatus, Prisma, RideStatus } from '@prisma/client';
+import { randomUUID } from 'crypto';
+import { BookingStatus, DocumentType, Prisma, RideStatus, UserRole, VehicleVerificationStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
+import { createNotification } from '../notification/notification.service.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
-import { markBookingPaymentRefunded } from '../payments/payment.service.js';
+import { PAYMENT_STATUSES, markBookingPaymentRefunded } from '../payments/payment.service.js';
 import redis from '../../cache/redis.js';
 import { getContentSummary } from '../content/content.service.js';
+import { DISPUTE_STATUSES, OPEN_DISPUTE_STATUSES } from '../dispute/dispute.constants.js';
+import { manualSessionId } from '../dl-verification/dl-review.service.js';
+import { recoverPendingVeriffDecisionsForUser } from '../dl-verification/dl-verification.service.js';
+import { sendMail } from '../mail/mail.service.js';
+import { REQUIRED_DOCUMENT_TYPES, requiresFullDocumentSet } from '../vehicles/vehicle.constants.js';
 
 const emergencyAlertSelect = {
     id: true,
@@ -20,7 +27,7 @@ const emergencyAlertSelect = {
     acknowledgedAt: true,
     resolvedAt: true,
     resolvedBy: true,
-    user: { select: { id: true, name: true, email: true, phone: true, avatarUrl: true } },
+    user: { select: { id: true, firstName: true, email: true, phone: true, avatarUrl: true } },
     ride: {
         select: {
             id: true,
@@ -42,6 +49,49 @@ const emergencyAlertSelect = {
     },
 } satisfies Prisma.EmergencyAlertSelect;
 
+const adminUserName = (user: { firstName?: string | null; lastName?: string | null; email?: string | null }) =>
+    [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'there';
+
+const htmlEscape = (value: string) =>
+    value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+const plainTextToHtml = (text: string) =>
+    htmlEscape(text)
+        .split(/\n{2,}/)
+        .map((paragraph) => `<p style="margin:0 0 12px;">${paragraph.replace(/\n/g, '<br />')}</p>`)
+        .join('\n');
+
+const notifyAdminVerificationChange = async (
+    user: { id: string; firstName?: string | null; lastName?: string | null; email?: string | null },
+    input: { type: string; title: string; body: string; subject: string; data?: Record<string, unknown> },
+) => {
+    await createNotification({
+        userId: user.id,
+        type: input.type,
+        title: input.title,
+        body: input.body,
+        data: input.data,
+    });
+
+    if (!user.email) return;
+
+    const text = `${input.title}\n\nHello ${adminUserName(user)},\n\n${input.body}\n\nDeliivo`;
+    const html = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #111827;">
+          <h2 style="margin: 0 0 12px;">${input.title}</h2>
+          <p style="margin: 0 0 12px;">Hello ${adminUserName(user)},</p>
+          <p style="margin: 0 0 12px;">${input.body}</p>
+          <p style="margin: 16px 0 0;">Deliivo</p>
+        </div>
+    `;
+    await sendMail({ to: user.email, subject: input.subject, html, text });
+};
+
 /* ================= LIST USERS ================= */
 export const listUsers = async (query: {
     page?: number;
@@ -55,10 +105,13 @@ export const listUsers = async (query: {
     const limit = Math.min(100, Math.max(1, query.limit ?? 20));
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    // Typed rather than `any`: an untyped where silently compiles against columns that
+    // no longer exist and only fails at runtime.
+    const where: Prisma.UserWhereInput = {};
     if (query.search) {
         where.OR = [
-            { name: { contains: query.search, mode: 'insensitive' } },
+            { firstName: { contains: query.search, mode: 'insensitive' } },
+            { lastName: { contains: query.search, mode: 'insensitive' } },
             { email: { contains: query.search, mode: 'insensitive' } },
             { phone: { contains: query.search, mode: 'insensitive' } },
         ];
@@ -67,7 +120,12 @@ export const listUsers = async (query: {
         where.isBanned = query.isBanned;
     }
     if (query.role) {
-        where.role = query.role.toUpperCase();
+        // Only a real role reaches the query; an unknown value is ignored rather than
+        // handed to Prisma, which would throw on an invalid enum member.
+        const role = query.role.toUpperCase();
+        if (role in UserRole) {
+            where.role = role as UserRole;
+        }
     }
     if (typeof query.dlVerified === 'boolean') {
         where.dlVerified = query.dlVerified;
@@ -81,7 +139,9 @@ export const listUsers = async (query: {
             orderBy: { createdAt: 'desc' },
             select: {
                 id: true,
-                name: true,
+                firstName: true,
+                salutation: true,
+                gender: true,
                 email: true,
                 phone: true,
                 role: true,
@@ -103,6 +163,605 @@ export const listUsers = async (query: {
             limit,
             totalPages: Math.ceil(total / limit),
         },
+    };
+};
+
+const PAID_PAYMENT_STATUSES = [
+    PAYMENT_STATUSES.PAID,
+    PAYMENT_STATUSES.HELD_IN_ESCROW,
+    PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+    PAYMENT_STATUSES.TRANSFER_CREATED,
+    PAYMENT_STATUSES.PAYOUT_COMPLETED,
+    PAYMENT_STATUSES.REFUND_PENDING,
+    PAYMENT_STATUSES.REFUNDED,
+];
+
+const EARNING_PAYMENT_STATUSES = [
+    PAYMENT_STATUSES.HELD_IN_ESCROW,
+    PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+    PAYMENT_STATUSES.TRANSFER_CREATED,
+    PAYMENT_STATUSES.PAYOUT_COMPLETED,
+];
+
+const adminUserDetailRideSelect = {
+    id: true,
+    status: true,
+    originAddress: true,
+    destinationAddress: true,
+    departureDate: true,
+    departureTime: true,
+    totalSeats: true,
+    availableSeats: true,
+    basePricePerSeat: true,
+    currency: true,
+    routeDistanceMeters: true,
+    routeDurationSeconds: true,
+    actualStartTime: true,
+    actualEndTime: true,
+    createdAt: true,
+    vehicle: {
+        select: {
+            id: true,
+            brand: true,
+            model_num: true,
+            model_name: true,
+            type: true,
+            color: true,
+            year: true,
+            imageUrl: true,
+            isVerified: true,
+            verificationStatus: true,
+        },
+    },
+    bookings: {
+        select: {
+            id: true,
+            status: true,
+            passengerId: true,
+            seatsBooked: true,
+            totalPrice: true,
+            paymentAmount: true,
+            paymentCapturedAt: true,
+            refundedAt: true,
+            refundAmount: true,
+            completedAt: true,
+            createdAt: true,
+            passenger: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, avatarUrl: true } },
+            payment: {
+                select: {
+                    id: true,
+                    status: true,
+                    amountTotal: true,
+                    fareAmount: true,
+                    platformFeeAmount: true,
+                    currency: true,
+                    payoutEligibleAt: true,
+                },
+            },
+        },
+        orderBy: { createdAt: 'desc' },
+    },
+    disputes: { select: { id: true, status: true, reason: true, createdAt: true } },
+} satisfies Prisma.RideSelect;
+
+const adminUserDetailBookingSelect = {
+    id: true,
+    rideId: true,
+    passengerId: true,
+    status: true,
+    seatsBooked: true,
+    totalPrice: true,
+    paymentAmount: true,
+    paymentCurrency: true,
+    paymentCapturedAt: true,
+    refundedAt: true,
+    refundAmount: true,
+    completedAt: true,
+    cancelledAt: true,
+    createdAt: true,
+    pickupAddress: true,
+    dropoffAddress: true,
+    payment: {
+        select: {
+            id: true,
+            status: true,
+            amountTotal: true,
+            fareAmount: true,
+            platformFeeAmount: true,
+            currency: true,
+            payoutEligibleAt: true,
+        },
+    },
+    disputes: { select: { id: true, status: true, reason: true, createdAt: true } },
+    ride: {
+        select: {
+            id: true,
+            status: true,
+            originAddress: true,
+            destinationAddress: true,
+            departureDate: true,
+            departureTime: true,
+            currency: true,
+            driver: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, avatarUrl: true } },
+        },
+    },
+} satisfies Prisma.RideBookingSelect;
+
+export const getUserDetails = async (userId: string) => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            salutation: true,
+            gender: true,
+            dob: true,
+            email: true,
+            phone: true,
+            emailVerified: true,
+            phoneVerified: true,
+            avatarUrl: true,
+            role: true,
+            isBanned: true,
+            onboardingStatus: true,
+            isVerified: true,
+            dlVerified: true,
+            stripeAccountId: true,
+            stripeOnboardingComplete: true,
+            stripeAccountName: true,
+            stripeNameMatch: true,
+            stripeDobMatch: true,
+            tosAcceptedAt: true,
+            tosVersion: true,
+            privacyAcceptedAt: true,
+            privacyVersion: true,
+            createdAt: true,
+            updatedAt: true,
+            travelPreference: { select: { chattiness: true, pets: true } },
+            ratingStats: { select: { totalRatings: true, totalStars: true, averageRating: true } },
+            vehicles: {
+                where: { deletedAt: null },
+                orderBy: { createdAt: 'desc' },
+                select: adminVehicleSelect,
+            },
+            dlVerifications: {
+                orderBy: { updatedAt: 'desc' },
+                take: 20,
+                select: {
+                    id: true,
+                    status: true,
+                    veriffSessionId: true,
+                    verifiedName: true,
+                    verifiedDob: true,
+                    verifiedGender: true,
+                    nameMatch: true,
+                    dobMatch: true,
+                    genderMatch: true,
+                    documentImageKey: true,
+                    declineReason: true,
+                    reviewedById: true,
+                    reviewedAt: true,
+                    createdAt: true,
+                    updatedAt: true,
+                },
+            },
+            paymentMethods: {
+                orderBy: { createdAt: 'desc' },
+                select: {
+                    id: true,
+                    brand: true,
+                    last4: true,
+                    expMonth: true,
+                    expYear: true,
+                    isDefault: true,
+                    status: true,
+                    createdAt: true,
+                },
+            },
+        },
+    });
+
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    const [
+        publishedRides,
+        bookedRides,
+        publishedRideCount,
+        completedPublishedRideCount,
+        bookingCount,
+        completedBookingCount,
+        riderPayments,
+        riderRefunds,
+        driverEarnings,
+        payoutEligible,
+        paidOut,
+        approvedVeriffChecks,
+        approvedManualChecks,
+        openDisputes,
+        reportsMade,
+        reportsReceived,
+        blocksMade,
+        blocksReceived,
+    ] = await Promise.all([
+        prisma.ride.findMany({
+            where: { driverId: userId },
+            orderBy: [{ departureDate: 'desc' }, { departureTime: 'desc' }],
+            take: 10,
+            select: adminUserDetailRideSelect,
+        }),
+        prisma.rideBooking.findMany({
+            where: { passengerId: userId },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            select: adminUserDetailBookingSelect,
+        }),
+        prisma.ride.count({ where: { driverId: userId } }),
+        prisma.ride.count({ where: { driverId: userId, status: RideStatus.COMPLETED } }),
+        prisma.rideBooking.count({ where: { passengerId: userId } }),
+        prisma.rideBooking.count({ where: { passengerId: userId, status: BookingStatus.COMPLETED } }),
+        prisma.payment.aggregate({
+            where: { riderId: userId, status: { in: PAID_PAYMENT_STATUSES } },
+            _sum: { amountTotal: true, platformFeeAmount: true },
+            _count: { _all: true },
+        }),
+        prisma.rideBooking.aggregate({
+            where: { passengerId: userId, refundedAt: { not: null } },
+            _sum: { refundAmount: true },
+            _count: { _all: true },
+        }),
+        prisma.payment.aggregate({
+            where: {
+                status: { in: EARNING_PAYMENT_STATUSES },
+                booking: { ride: { driverId: userId } },
+            },
+            _sum: { fareAmount: true, amountTotal: true, platformFeeAmount: true },
+            _count: { _all: true },
+        }),
+        prisma.payment.aggregate({
+            where: {
+                status: PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+                booking: { ride: { driverId: userId } },
+            },
+            _sum: { fareAmount: true },
+            _count: { _all: true },
+        }),
+        prisma.payoutBatch.aggregate({
+            where: { driverId: userId, status: 'COMPLETED' },
+            _sum: { amountTotal: true },
+            _count: { _all: true },
+        }),
+        prisma.dlVerification.count({
+            where: {
+                userId,
+                status: 'APPROVED',
+                documentImageKey: null,
+                veriffSessionId: { not: { startsWith: 'manual:' } },
+            },
+        }),
+        prisma.dlVerification.count({
+            where: {
+                userId,
+                status: 'APPROVED',
+                OR: [
+                    { veriffSessionId: { startsWith: 'manual:' } },
+                    { documentImageKey: { not: null } },
+                ],
+            },
+        }),
+        prisma.dispute.count({
+            where: {
+                resolvedAt: null,
+                OR: [
+                    { raisedBy: userId },
+                    { booking: { passengerId: userId } },
+                    { ride: { driverId: userId } },
+                ],
+            },
+        }),
+        prisma.userReport.count({ where: { reporterId: userId } }),
+        prisma.userReport.count({ where: { reportedId: userId } }),
+        prisma.userBlock.count({ where: { blockerId: userId } }),
+        prisma.userBlock.count({ where: { blockedId: userId } }),
+    ]);
+
+    const { vehicles, dlVerifications, paymentMethods, ...profile } = user;
+    const verificationFlags = {
+        completeOnboardingVerified: profile.onboardingStatus === 'COMPLETED',
+        veriffVerified: approvedVeriffChecks > 0,
+        manualLicenseApproved: approvedManualChecks > 0,
+        licenseVerified: Boolean(profile.dlVerified),
+        vehicleVerified: vehicles.some((vehicle) => vehicle.verificationStatus === VehicleVerificationStatus.APPROVED),
+        canRequireVeriff: approvedVeriffChecks === 0,
+    };
+
+    return {
+        user: {
+            ...profile,
+            verificationFlags,
+        },
+        vehicles: vehicles.map(mapAdminVehicle),
+        dlVerifications: dlVerifications.map((record) => {
+            const { documentImageKey, ...rest } = record;
+            return {
+                ...rest,
+                previewKey: documentImageKey ?? null,
+            };
+        }),
+        paymentMethods,
+        summary: {
+            publishedRideCount,
+            completedPublishedRideCount,
+            bookingCount,
+            completedBookingCount,
+            openDisputes,
+            reportsMade,
+            reportsReceived,
+            blocksMade,
+            blocksReceived,
+            payments: {
+                totalPaid: riderPayments._sum.amountTotal ?? 0,
+                platformFeesPaid: riderPayments._sum.platformFeeAmount ?? 0,
+                paymentCount: riderPayments._count._all,
+                totalRefunded: riderRefunds._sum.refundAmount ?? 0,
+                refundCount: riderRefunds._count._all,
+            },
+            earnings: {
+                totalEarned: driverEarnings._sum.fareAmount ?? 0,
+                grossRideRevenue: driverEarnings._sum.amountTotal ?? 0,
+                platformFeesFromRides: driverEarnings._sum.platformFeeAmount ?? 0,
+                earningPaymentCount: driverEarnings._count._all,
+                payoutEligible: payoutEligible._sum.fareAmount ?? 0,
+                payoutEligibleCount: payoutEligible._count._all,
+                paidOut: paidOut._sum.amountTotal ?? 0,
+                payoutCount: paidOut._count._all,
+            },
+        },
+        publishedRides,
+        bookedRides,
+    };
+};
+
+export const requireVeriffForUser = async (userId: string, adminId: string | null) => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, dlVerified: true, firstName: true, lastName: true, email: true },
+    });
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    const manualApprovedRow = await prisma.dlVerification.findUnique({
+        where: { veriffSessionId: manualSessionId(userId) },
+        select: { id: true, status: true },
+    });
+
+    const existingVeriffApproval = await prisma.dlVerification.findFirst({
+        where: {
+            userId,
+            status: 'APPROVED',
+            documentImageKey: null,
+            veriffSessionId: { not: { startsWith: 'manual:' } },
+        },
+        select: { id: true },
+    });
+    if (existingVeriffApproval) {
+        throw new Error('ALREADY_VERIFF_VERIFIED');
+    }
+
+    await prisma.$transaction(async (tx) => {
+        if (manualApprovedRow?.status === 'APPROVED') {
+            await tx.dlVerification.update({
+                where: { veriffSessionId: manualSessionId(userId) },
+                data: {
+                    status: 'SUPERSEDED',
+                    decisionPayload: {
+                        source: 'ADMIN',
+                        action: 'REQUIRE_VERIFF',
+                        at: new Date().toISOString(),
+                        adminId,
+                    } as Prisma.InputJsonValue,
+                },
+            });
+        }
+
+        await tx.user.update({
+            where: { id: userId },
+            data: { dlVerified: false },
+        });
+    });
+
+    await notifyAdminVerificationChange(user, {
+        type: 'verification.veriff.required',
+        title: 'Veriff verification required',
+        body: 'The Deliivo team has asked you to complete Veriff verification before your licence can remain approved.',
+        subject: 'Deliivo: Veriff verification required',
+        data: { userId, action: 'REQUIRE_VERIFF' },
+    });
+
+    return {
+        id: userId,
+        dlVerified: false,
+        requiresVeriff: true,
+    };
+};
+
+export const syncUserVeriffStatus = async (userId: string) => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true },
+    });
+
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    return recoverPendingVeriffDecisionsForUser(userId);
+};
+
+type VerificationEmailDraft = {
+    to: string;
+    subject: string;
+    text: string;
+    missingItems: string[];
+    isDriverCandidate: boolean;
+};
+
+const REQUIRED_DOCUMENT_LABELS: Record<string, string> = {
+    [DocumentType.VEHICLE_IMAGE_FRONT]: 'vehicle front photo',
+    [DocumentType.VEHICLE_IMAGE_BACK]: 'vehicle rear photo',
+    [DocumentType.VEHICLE_DOCUMENT]: 'vehicle registration document',
+    [DocumentType.INSURANCE_DOCUMENT]: 'insurance document',
+};
+
+const hasApprovedRealVeriff = (records: Array<{ status: string; veriffSessionId: string; documentImageKey: string | null }>) =>
+    records.some((record) =>
+        record.status === 'APPROVED'
+        && !record.veriffSessionId.startsWith('manual:')
+        && record.documentImageKey === null
+    );
+
+const vehicleHasDocumentType = (
+    vehicle: { imageUrl: string | null; documents: Array<{ documentType: DocumentType }> },
+    documentType: DocumentType,
+) => {
+    if (documentType === DocumentType.VEHICLE_IMAGE_FRONT) {
+        return Boolean(vehicle.imageUrl) || vehicle.documents.some((doc) => doc.documentType === DocumentType.VEHICLE_IMAGE_FRONT || doc.documentType === DocumentType.VEHICLE_IMAGE);
+    }
+    return vehicle.documents.some((doc) => doc.documentType === documentType);
+};
+
+export const buildDriverVerificationEmailDraft = async (userId: string): Promise<VerificationEmailDraft> => {
+    await recoverPendingVeriffDecisionsForUser(userId);
+
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            onboardingStatus: true,
+            stripeAccountId: true,
+            stripeOnboardingComplete: true,
+            dlVerifications: {
+                select: {
+                    id: true,
+                    status: true,
+                    veriffSessionId: true,
+                    documentImageKey: true,
+                },
+                orderBy: { updatedAt: 'desc' },
+                take: 20,
+            },
+            vehicles: {
+                where: { deletedAt: null },
+                select: {
+                    id: true,
+                    licenseCountry: true,
+                    licenseNumber: true,
+                    brand: true,
+                    model_name: true,
+                    model_num: true,
+                    imageUrl: true,
+                    documents: {
+                        select: {
+                            documentType: true,
+                        },
+                    },
+                },
+            },
+        },
+    });
+
+    if (!user) throw new Error('USER_NOT_FOUND');
+    if (!user.email) throw new Error('USER_EMAIL_MISSING');
+
+    const hasAnyDocument =
+        user.dlVerifications.some((record) => Boolean(record.documentImageKey))
+        || user.vehicles.some((vehicle) => vehicle.documents.length > 0 || Boolean(vehicle.imageUrl));
+    const hasStartedVeriff = user.dlVerifications.some((record) => !record.veriffSessionId.startsWith('manual:'));
+    const isDriverCandidate = hasStartedVeriff || hasAnyDocument || user.vehicles.length > 0;
+
+    if (!isDriverCandidate) throw new Error('USER_NOT_DRIVER_CANDIDATE');
+
+    const missingItems: string[] = [];
+
+    if (user.onboardingStatus !== 'COMPLETED') {
+        missingItems.push('Complete your profile onboarding.');
+    }
+
+    if (!hasApprovedRealVeriff(user.dlVerifications)) {
+        missingItems.push('Complete Veriff driving licence verification.');
+    }
+
+    if (!user.stripeAccountId || !user.stripeOnboardingComplete) {
+        missingItems.push('Complete payout setup so Deliivo can pay your driver earnings.');
+    }
+
+    if (user.vehicles.length === 0) {
+        missingItems.push('Add your vehicle and upload the required vehicle verification documents.');
+    }
+
+    for (const vehicle of user.vehicles) {
+        if (!requiresFullDocumentSet(vehicle.licenseCountry)) continue;
+        const missingDocumentLabels = REQUIRED_DOCUMENT_TYPES
+            .filter((type) => !vehicleHasDocumentType(vehicle, type))
+            .map((type) => REQUIRED_DOCUMENT_LABELS[type] ?? type.replace(/_/g, ' ').toLowerCase());
+
+        if (missingDocumentLabels.length > 0) {
+            const vehicleName = [vehicle.brand, vehicle.model_name || vehicle.model_num, vehicle.licenseNumber]
+                .filter(Boolean)
+                .join(' ')
+                || 'your vehicle';
+            missingItems.push(`Upload ${missingDocumentLabels.join(', ')} for ${vehicleName}.`);
+        }
+    }
+
+    const displayName = adminUserName(user);
+    const subject = 'Complete your Deliivo driver verification';
+    const itemLines = missingItems.length > 0
+        ? missingItems.map((item, index) => `${index + 1}. ${item}`).join('\n')
+        : '1. Your driver verification items look complete. Please review your Deliivo profile for any latest prompts.';
+    const text = `Hello ${displayName},
+
+We noticed your Deliivo driver setup is not complete yet. Please complete the following items so our team can finish reviewing your account:
+
+${itemLines}
+
+Once these items are completed, the Deliivo team can continue the verification review.
+
+Thank you,
+Deliivo`;
+
+    return {
+        to: user.email,
+        subject,
+        text,
+        missingItems,
+        isDriverCandidate,
+    };
+};
+
+export const sendDriverVerificationEmail = async (
+    userId: string,
+    input: { subject: string; text: string },
+    adminId: string | null,
+) => {
+    const draft = await buildDriverVerificationEmailDraft(userId);
+
+    await sendMail({
+        to: draft.to,
+        subject: input.subject,
+        text: input.text,
+        html: `
+            <div style="font-family: Arial, sans-serif; padding: 20px; color: #111827; line-height: 1.5;">
+              ${plainTextToHtml(input.text)}
+            </div>
+        `,
+    });
+
+    return {
+        to: draft.to,
+        subject: input.subject,
+        missingItems: draft.missingItems,
+        sentBy: adminId,
     };
 };
 
@@ -198,16 +857,208 @@ export const getMonitoringTrends = async (days = 7) => {
     return { points };
 };
 
+/* ================= VEHICLE REVIEW QUEUE ================= */
+
+const adminVehicleSelect = {
+    id: true,
+    userId: true,
+    licenseCountry: true,
+    licenseNumber: true,
+    brand: true,
+    model_num: true,
+    model_name: true,
+    type: true,
+    color: true,
+    year: true,
+    imageUrl: true,
+    isVerified: true,
+    verificationStatus: true,
+    rejectionReason: true,
+    reviewedAt: true,
+    reviewedById: true,
+    createdAt: true,
+    user: { select: { id: true, firstName: true, email: true, phone: true, dlVerified: true } },
+    documents: {
+        select: { id: true, documentType: true, image: true, imageKey: true, createdAt: true },
+    },
+} satisfies Prisma.VehicleSelect;
+
+type AdminVehicle = Prisma.VehicleGetPayload<{ select: typeof adminVehicleSelect }>;
+
+const ACTIVE_RIDE_RESOLUTION_BOOKING_STATUSES: BookingStatus[] = [
+    BookingStatus.CONFIRMED,
+    BookingStatus.WAITING_FOR_PICKUP,
+    BookingStatus.DRIVER_ARRIVED,
+    BookingStatus.OTP_PENDING,
+    BookingStatus.ONBOARD,
+    BookingStatus.DROP_PENDING,
+    BookingStatus.IN_PROGRESS,
+];
+
+const TERMINAL_RIDE_RESOLUTION_BOOKING_STATUSES: BookingStatus[] = [
+    BookingStatus.PAYMENT_FAILED,
+    BookingStatus.CANCELLED,
+    BookingStatus.COMPLETED,
+    BookingStatus.NO_SHOW,
+    BookingStatus.DRIVER_MISSED_PICKUP,
+    BookingStatus.DISPUTED,
+];
+
+const FORCE_COMPLETABLE_RIDE_STATUSES: RideStatus[] = [
+    RideStatus.IN_PROGRESS,
+    RideStatus.COMPLETION_PENDING,
+];
+
+const adminRideEventData = (
+    rideId: string,
+    bookingId: string,
+    adminId: string,
+    eventType: string,
+    reason: string,
+): Prisma.RideEventUncheckedCreateInput => ({
+    rideId,
+    bookingId,
+    actionId: randomUUID(),
+    eventType,
+    actorType: 'ADMIN',
+    actorId: adminId,
+    clientTimestamp: new Date(),
+    validationStatus: 'WARNING',
+    metadataJson: {
+        supportOverride: true,
+        bookingId,
+        reason,
+    } as Prisma.InputJsonValue,
+});
+
+/**
+ * Private documents are exposed as `previewKey`, never as a URL — the admin exchanges the
+ * key for a short-lived signed URL via GET /uploads/read. Mirrors how the driver-facing
+ * vehicle response is shaped.
+ */
+const mapAdminVehicle = (vehicle: AdminVehicle) => {
+    const { documents, ...rest } = vehicle;
+    return {
+        ...rest,
+        documents: documents.map((doc) => ({
+            id: doc.id,
+            documentType: doc.documentType,
+            image: doc.image ?? null,
+            previewKey: doc.imageKey ?? null,
+            createdAt: doc.createdAt,
+        })),
+    };
+};
+
+export const listVehicles = async (query: {
+    page?: number;
+    limit?: number;
+    status?: VehicleVerificationStatus;
+}) => {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.VehicleWhereInput = { deletedAt: null };
+    if (query.status) {
+        where.verificationStatus = query.status;
+    }
+
+    const [vehicles, total] = await Promise.all([
+        prisma.vehicle.findMany({
+            where,
+            skip,
+            take: limit,
+            // Oldest first: a review queue should be worked front to back.
+            orderBy: { createdAt: 'asc' },
+            select: adminVehicleSelect,
+        }),
+        prisma.vehicle.count({ where }),
+    ]);
+
+    return {
+        vehicles: vehicles.map(mapAdminVehicle),
+        pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        },
+    };
+};
+
 /* ================= VERIFY VEHICLE ================= */
-export const verifyVehicle = async (vehicleId: string) => {
-    const vehicle = await prisma.vehicle.findUnique({ where: { id: vehicleId }, select: { id: true } });
+export const verifyVehicle = async (vehicleId: string, reviewedById?: string) => {
+    const vehicle = await prisma.vehicle.findUnique({
+        where: { id: vehicleId },
+        select: { id: true, userId: true, brand: true, model_name: true, model_num: true, user: { select: { id: true, firstName: true, lastName: true, email: true } } },
+    });
     if (!vehicle) throw new Error('VEHICLE_NOT_FOUND');
 
-    return prisma.vehicle.update({
+    const updated = await prisma.vehicle.update({
         where: { id: vehicleId },
-        data: { isVerified: true },
-        select: { id: true, isVerified: true },
+        data: {
+            // isVerified is kept in sync with verificationStatus for existing readers.
+            isVerified: true,
+            verificationStatus: VehicleVerificationStatus.APPROVED,
+            rejectionReason: null,
+            reviewedAt: new Date(),
+            reviewedById: reviewedById ?? null,
+        },
+        select: { id: true, isVerified: true, verificationStatus: true, reviewedAt: true },
     });
+
+    await notifyAdminVerificationChange(vehicle.user, {
+        type: 'vehicle.approved',
+        title: 'Vehicle approved',
+        body: `Your vehicle${[vehicle.brand, vehicle.model_name || vehicle.model_num].filter(Boolean).length ? ` (${[vehicle.brand, vehicle.model_name || vehicle.model_num].filter(Boolean).join(' ')})` : ''} has been approved. You can now publish rides.`,
+        subject: 'Deliivo: vehicle approved',
+        data: { vehicleId },
+    });
+
+    return updated;
+};
+
+/* ================= REJECT VEHICLE ================= */
+export const rejectVehicle = async (
+    vehicleId: string,
+    reason: string,
+    reviewedById?: string,
+) => {
+    const vehicle = await prisma.vehicle.findUnique({
+        where: { id: vehicleId },
+        select: { id: true, userId: true, brand: true, model_name: true, model_num: true, user: { select: { id: true, firstName: true, lastName: true, email: true } } },
+    });
+    if (!vehicle) throw new Error('VEHICLE_NOT_FOUND');
+
+    const updated = await prisma.vehicle.update({
+        where: { id: vehicleId },
+        data: {
+            isVerified: false,
+            verificationStatus: VehicleVerificationStatus.REJECTED,
+            rejectionReason: reason,
+            reviewedAt: new Date(),
+            reviewedById: reviewedById ?? null,
+        },
+        select: {
+            id: true,
+            isVerified: true,
+            verificationStatus: true,
+            rejectionReason: true,
+            reviewedAt: true,
+        },
+    });
+
+    // The reason travels with the notification so the driver knows what to re-upload.
+    await notifyAdminVerificationChange(vehicle.user, {
+        type: 'vehicle.rejected',
+        title: 'Vehicle review updated',
+        body: `Your vehicle review needs attention. Reason: ${reason}`,
+        subject: 'Deliivo: vehicle review update',
+        data: { vehicleId, reason },
+    });
+
+    return updated;
 };
 
 /* ================= ADMIN REFUND BOOKING ================= */
@@ -267,6 +1118,279 @@ export const adminRefundBooking = async (bookingId: string) => {
     return { bookingId, refunded: true };
 };
 
+export const adminForceCompleteBooking = async (
+    bookingId: string,
+    adminId: string,
+    reason: string,
+) => {
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: {
+            payment: true,
+            disputes: { where: { status: { in: OPEN_DISPUTE_STATUSES } }, select: { id: true } },
+            ride: {
+                select: {
+                    id: true,
+                    driverId: true,
+                    status: true,
+                    originAddress: true,
+                    destinationAddress: true,
+                    actualEndTime: true,
+                },
+            },
+            passenger: { select: { id: true } },
+        },
+    });
+
+    if (!booking) throw new Error('BOOKING_NOT_FOUND');
+    if (!ACTIVE_RIDE_RESOLUTION_BOOKING_STATUSES.includes(booking.status)) {
+        throw new Error('BOOKING_NOT_FORCE_COMPLETABLE');
+    }
+    if (!FORCE_COMPLETABLE_RIDE_STATUSES.includes(booking.ride.status)) {
+        throw new Error('RIDE_NOT_FORCE_COMPLETABLE');
+    }
+    if (booking.disputes.length > 0) {
+        throw new Error('OPEN_DISPUTE_EXISTS');
+    }
+
+    const now = new Date();
+    let rideCompleted = false;
+    let paymentMarkedEligible = false;
+
+    await prisma.$transaction(async (tx) => {
+        await tx.rideBooking.update({
+            where: { id: bookingId },
+            data: {
+                status: BookingStatus.COMPLETED,
+                completedAt: now,
+                riderDropoffConfirmedAt: booking.riderDropoffConfirmedAt ?? now,
+            },
+        });
+
+        const remainingActiveBookings = await tx.rideBooking.count({
+            where: {
+                rideId: booking.rideId,
+                id: { not: bookingId },
+                status: { in: ACTIVE_RIDE_RESOLUTION_BOOKING_STATUSES },
+            },
+        });
+
+        if (remainingActiveBookings === 0) {
+            await tx.ride.update({
+                where: { id: booking.rideId },
+                data: {
+                    status: RideStatus.COMPLETED,
+                    actualEndTime: booking.ride.actualEndTime ?? now,
+                },
+            });
+            rideCompleted = true;
+        }
+
+        if (booking.payment?.status === PAYMENT_STATUSES.HELD_IN_ESCROW) {
+            await tx.payment.update({
+                where: { id: booking.payment.id },
+                data: {
+                    status: PAYMENT_STATUSES.PAYOUT_ELIGIBLE,
+                    payoutEligibleAt: now,
+                },
+            });
+            paymentMarkedEligible = true;
+        }
+
+        await tx.rideEvent.create({
+            data: adminRideEventData(
+                booking.rideId,
+                bookingId,
+                adminId,
+                'ADMIN_FORCE_COMPLETED_BOOKING',
+                reason,
+            ),
+        });
+
+        await tx.reconciliationIssue.updateMany({
+            where: {
+                resolvedAt: null,
+                OR: [
+                    { bookingId },
+                    { paymentId: booking.payment?.id ?? '__none__' },
+                    {
+                        metadataJson: {
+                            path: ['rideId'],
+                            equals: booking.rideId,
+                        } as any,
+                    },
+                ],
+            },
+            data: {
+                resolvedBy: adminId,
+                resolvedAt: now,
+                resolution: `Admin force-completed booking: ${reason}`,
+            },
+        });
+    });
+
+    await Promise.all([
+        createNotification({
+            userId: booking.passengerId,
+            type: 'booking.admin_force_completed',
+            title: 'Ride completed by support',
+            body: 'Support reviewed this ride and marked your booking complete.',
+            data: { rideId: booking.rideId, bookingId, reason, deepLink: `app://booking/${bookingId}` },
+        }),
+        createNotification({
+            userId: booking.ride.driverId,
+            type: 'booking.admin_force_completed',
+            title: 'Ride completed by support',
+            body: 'Support reviewed this ride and marked the booking complete.',
+            data: { rideId: booking.rideId, bookingId, reason, deepLink: `app://rides/${booking.rideId}` },
+        }),
+    ]);
+
+    return {
+        bookingId,
+        rideId: booking.rideId,
+        bookingStatus: BookingStatus.COMPLETED,
+        rideCompleted,
+        paymentMarkedEligible,
+    };
+};
+
+export const adminOpenBookingDispute = async (
+    bookingId: string,
+    adminId: string,
+    reason: string,
+    description?: string,
+) => {
+    const booking = await prisma.rideBooking.findUnique({
+        where: { id: bookingId },
+        include: {
+            payment: true,
+            disputes: {
+                where: { status: { in: OPEN_DISPUTE_STATUSES } },
+                orderBy: { createdAt: 'desc' },
+            },
+            ride: {
+                select: {
+                    id: true,
+                    driverId: true,
+                    status: true,
+                    originAddress: true,
+                    destinationAddress: true,
+                },
+            },
+            passenger: { select: { id: true } },
+        },
+    });
+
+    if (!booking) throw new Error('BOOKING_NOT_FOUND');
+    if (booking.disputes[0]) {
+        return { dispute: booking.disputes[0], created: false };
+    }
+    if (TERMINAL_RIDE_RESOLUTION_BOOKING_STATUSES.includes(booking.status)) {
+        throw new Error('BOOKING_ALREADY_TERMINAL');
+    }
+
+    const now = new Date();
+    const route = `${booking.ride.originAddress.split(',')[0]} to ${booking.ride.destinationAddress.split(',')[0]}`;
+    const disputeDescription = description?.trim()
+        || `Support opened a money-resolution dispute for a stuck ride. ${reason}`;
+
+    const dispute = await prisma.$transaction(async (tx) => {
+        const created = await tx.dispute.create({
+            data: {
+                rideId: booking.rideId,
+                bookingId,
+                raisedBy: adminId,
+                reason,
+                description: disputeDescription,
+                status: DISPUTE_STATUSES.NEEDS_MANUAL_REVIEW,
+            },
+        });
+
+        await tx.rideBooking.update({
+            where: { id: bookingId },
+            data: { status: BookingStatus.DISPUTED },
+        });
+
+        if (FORCE_COMPLETABLE_RIDE_STATUSES.includes(booking.ride.status)) {
+            await tx.ride.update({
+                where: { id: booking.rideId },
+                data: { status: RideStatus.DISPUTED },
+            });
+        }
+
+        await tx.rideEvent.create({
+            data: adminRideEventData(
+                booking.rideId,
+                bookingId,
+                adminId,
+                'ADMIN_OPENED_MONEY_DISPUTE',
+                reason,
+            ),
+        });
+
+        await tx.reconciliationIssue.create({
+            data: {
+                paymentId: booking.payment?.id ?? null,
+                bookingId,
+                issueType: 'ADMIN_MONEY_DISPUTE',
+                severity: 'HIGH',
+                description: `Admin opened a money-resolution dispute for ${route}. ${reason}`,
+                internalState: booking.payment?.status ?? booking.status,
+                metadataJson: {
+                    rideId: booking.rideId,
+                    bookingId,
+                    paymentId: booking.payment?.id ?? null,
+                    adminId,
+                },
+            },
+        });
+
+        await tx.reconciliationIssue.updateMany({
+            where: {
+                resolvedAt: null,
+                issueType: { in: ['OVERDUE_RIDE_COMPLETION', 'STALE_ESCROW'] },
+                OR: [
+                    { bookingId },
+                    { paymentId: booking.payment?.id ?? '__none__' },
+                    {
+                        metadataJson: {
+                            path: ['rideId'],
+                            equals: booking.rideId,
+                        } as any,
+                    },
+                ],
+            },
+            data: {
+                resolvedBy: adminId,
+                resolvedAt: now,
+                resolution: `Superseded by admin dispute ${created.id}: ${reason}`,
+            },
+        });
+
+        return created;
+    });
+
+    await Promise.all([
+        createNotification({
+            userId: booking.passengerId,
+            type: 'dispute.admin_opened',
+            title: 'Support opened a ride review',
+            body: 'Support is reviewing this ride and the payment will remain held until the case is resolved.',
+            data: { disputeId: dispute.id, rideId: booking.rideId, bookingId, deepLink: `app://booking/${bookingId}` },
+        }),
+        createNotification({
+            userId: booking.ride.driverId,
+            type: 'dispute.admin_opened',
+            title: 'Support opened a ride review',
+            body: 'Support is reviewing this ride and the payment will remain held until the case is resolved.',
+            data: { disputeId: dispute.id, rideId: booking.rideId, bookingId, deepLink: `app://rides/${booking.rideId}` },
+        }),
+    ]);
+
+    return { dispute, created: true };
+};
+
 export const getOperationsSummary = async () => {
     const checks = { database: false, redis: false };
     try {
@@ -286,11 +1410,12 @@ export const getOperationsSummary = async () => {
         || process.env.GOOGLE_APPLICATION_CREDENTIALS
     );
 
-    const [openReconciliationIssues, payoutEligiblePayments, pendingPaymentRecords, webhookEvents24h, content] = await Promise.all([
+    const [openReconciliationIssues, payoutEligiblePayments, pendingPaymentRecords, webhookEvents24h, pendingVehicles, content] = await Promise.all([
         prisma.reconciliationIssue.count({ where: { resolvedAt: null } }),
         prisma.payment.count({ where: { status: 'PAYOUT_ELIGIBLE' } }),
         prisma.payment.count({ where: { status: { in: ['CREATED', 'PAYMENT_PENDING', 'REFUND_PENDING'] } } }),
         prisma.stripeWebhookEvent.count({ where: { processedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } } }),
+        prisma.vehicle.count({ where: { deletedAt: null, verificationStatus: VehicleVerificationStatus.PENDING } }),
         getContentSummary(),
     ]);
 
@@ -307,6 +1432,7 @@ export const getOperationsSummary = async () => {
             payoutEligiblePayments,
             pendingPaymentRecords,
             webhookEvents24h,
+            pendingVehicles,
         },
         content,
     };
@@ -337,12 +1463,12 @@ export const listRides = async (query: {
                 { id: { contains: search, mode: 'insensitive' } },
                 { originAddress: { contains: search, mode: 'insensitive' } },
                 { destinationAddress: { contains: search, mode: 'insensitive' } },
-                { driver: { name: { contains: search, mode: 'insensitive' } } },
+                { driver: { firstName: { contains: search, mode: 'insensitive' } } },
                 { driver: { email: { contains: search, mode: 'insensitive' } } },
                 { driver: { phone: { contains: search, mode: 'insensitive' } } },
                 { bookings: { some: { id: { contains: search, mode: 'insensitive' } } } },
                 { bookings: { some: { passengerId: { contains: search, mode: 'insensitive' } } } },
-                { bookings: { some: { passenger: { name: { contains: search, mode: 'insensitive' } } } } },
+                { bookings: { some: { passenger: { firstName: { contains: search, mode: 'insensitive' } } } } },
                 { bookings: { some: { passenger: { email: { contains: search, mode: 'insensitive' } } } } },
                 { bookings: { some: { passenger: { phone: { contains: search, mode: 'insensitive' } } } } },
             );
@@ -365,7 +1491,7 @@ export const listRides = async (query: {
                 conditions.push({ driverId: { contains: search, mode: 'insensitive' } });
                 break;
             case 'driverName':
-                conditions.push({ driver: { name: { contains: search, mode: 'insensitive' } } });
+                conditions.push({ driver: { firstName: { contains: search, mode: 'insensitive' } } });
                 break;
             case 'driverEmail':
                 conditions.push({ driver: { email: { contains: search, mode: 'insensitive' } } });
@@ -377,7 +1503,7 @@ export const listRides = async (query: {
                 conditions.push({ bookings: { some: { passengerId: { contains: search, mode: 'insensitive' } } } });
                 break;
             case 'riderName':
-                conditions.push({ bookings: { some: { passenger: { name: { contains: search, mode: 'insensitive' } } } } });
+                conditions.push({ bookings: { some: { passenger: { firstName: { contains: search, mode: 'insensitive' } } } } });
                 break;
             case 'riderEmail':
                 conditions.push({ bookings: { some: { passenger: { email: { contains: search, mode: 'insensitive' } } } } });
@@ -409,8 +1535,11 @@ export const listRides = async (query: {
                 availableSeats: true,
                 basePricePerSeat: true,
                 currency: true,
+                routeDurationSeconds: true,
+                actualStartTime: true,
+                actualEndTime: true,
                 createdAt: true,
-                driver: { select: { id: true, name: true, email: true, phone: true } },
+                driver: { select: { id: true, firstName: true, email: true, phone: true } },
                 bookings: {
                     select: {
                         id: true,
@@ -419,8 +1548,24 @@ export const listRides = async (query: {
                         seatsBooked: true,
                         totalPrice: true,
                         paymentAmount: true,
+                        paymentCapturedAt: true,
+                        completedAt: true,
+                        cancelledAt: true,
+                        onboardedAt: true,
+                        dropoffConfirmedAt: true,
+                        riderDropoffConfirmedAt: true,
                         refundedAt: true,
-                        passenger: { select: { id: true, name: true, email: true, phone: true } },
+                        payment: {
+                            select: {
+                                id: true,
+                                status: true,
+                                amountTotal: true,
+                                fareAmount: true,
+                                currency: true,
+                                payoutEligibleAt: true,
+                            },
+                        },
+                        passenger: { select: { id: true, firstName: true, email: true, phone: true } },
                     },
                     orderBy: { createdAt: 'desc' },
                 },

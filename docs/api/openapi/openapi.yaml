@@ -136,8 +136,20 @@
     "/api/v1/users/{userId}/profile": {
       "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1{userId}~1profile"
     },
+    "/api/v1/publish-ride/eligibility": {
+      "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1eligibility"
+    },
     "/api/v1/publish-ride/draft/origin": {
       "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1origin"
+    },
+    "/api/v1/admin/vehicles": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1vehicles"
+    },
+    "/api/v1/admin/vehicles/{id}/verify": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1vehicles~1{id}~1verify"
+    },
+    "/api/v1/admin/vehicles/{id}/reject": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1vehicles~1{id}~1reject"
     },
     "/api/v1/publish-ride/draft/destination": {
       "$ref": "./paths/publish-ride.yaml#/paths/~1api~1v1~1publish-ride~1draft~1destination"
@@ -318,6 +330,30 @@
     },
     "/socket.io/events": {
       "$ref": "./paths/websocket.yaml#/paths/~1socket.io~1events"
+    },
+    "/api/v1/payments/connect/requirements": {
+      "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1connect~1requirements"
+    },
+    "/api/v1/payments/connect/details": {
+      "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1connect~1details"
+    },
+    "/api/v1/payments/connect/bank-account": {
+      "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1connect~1bank-account"
+    },
+    "/api/v1/payments/connect/terms": {
+      "$ref": "./paths/payments.yaml#/paths/~1api~1v1~1payments~1connect~1terms"
+    },
+    "/api/v1/admin/dl-verifications": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1dl-verifications"
+    },
+    "/api/v1/admin/dl-verifications/{userId}/approve": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1dl-verifications~1{userId}~1approve"
+    },
+    "/api/v1/admin/dl-verifications/{userId}/decline": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1dl-verifications~1{userId}~1decline"
+    },
+    "/api/v1/dl-verification/document": {
+      "$ref": "./paths/dl-verification.yaml#/paths/~1api~1v1~1dl-verification~1document"
     }
   },
   "components": {

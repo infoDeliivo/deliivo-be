@@ -40,4 +40,16 @@ export const pricingConfigCreateSchema = pricingConfigBaseSchema.refine((data) =
 
 export const pricingConfigUpdateSchema = pricingConfigBaseSchema.partial().extend({
     active: z.boolean().optional(),
+}).refine((data) => {
+    if (data.minRatePerKm === undefined || data.recommendedRatePerKm === undefined) return true;
+    return data.minRatePerKm <= data.recommendedRatePerKm;
+}, {
+    message: 'minRatePerKm must be less than or equal to recommendedRatePerKm',
+    path: ['recommendedRatePerKm'],
+}).refine((data) => {
+    if (data.recommendedRatePerKm === undefined || data.maxRatePerKm === undefined) return true;
+    return data.recommendedRatePerKm <= data.maxRatePerKm;
+}, {
+    message: 'recommendedRatePerKm must be less than or equal to maxRatePerKm',
+    path: ['maxRatePerKm'],
 });

@@ -16,6 +16,25 @@ function isBreakerOpen(err: any) {
 }
 
 const isMockMode = () => process.env.GOOGLE_MAPS_MOCK_MODE === 'true';
+const EUROPE_COUNTRY_NAMES = new Set([
+  'albania', 'andorra', 'austria', 'belarus', 'belgium', 'bosnia and herzegovina', 'bulgaria',
+  'croatia', 'cyprus', 'czechia', 'czech republic', 'denmark', 'estonia', 'finland', 'france',
+  'germany', 'greece', 'hungary', 'iceland', 'ireland', 'italy', 'kosovo', 'latvia',
+  'liechtenstein', 'lithuania', 'luxembourg', 'malta', 'moldova', 'monaco', 'montenegro',
+  'netherlands', 'north macedonia', 'norway', 'poland', 'portugal', 'romania', 'san marino',
+  'serbia', 'slovakia', 'slovenia', 'spain', 'sweden', 'switzerland', 'ukraine',
+  'united kingdom', 'uk', 'vatican city',
+]);
+
+const isEuropeanPrediction = (prediction: any) => {
+  const countryTerm = prediction?.terms?.[prediction.terms.length - 1]?.value;
+  if (typeof countryTerm === 'string' && EUROPE_COUNTRY_NAMES.has(countryTerm.trim().toLowerCase())) {
+    return true;
+  }
+
+  const description = String(prediction?.description || '').toLowerCase();
+  return Array.from(EUROPE_COUNTRY_NAMES).some((country) => description.endsWith(`, ${country}`));
+};
 
 // Mock data for autocomplete — Baltic region (Estonia, Latvia, Lithuania)
 const MOCK_PLACES = [
@@ -46,6 +65,9 @@ const MOCK_PLACES = [
   { place_id: 'mock_alytus', description: 'Alytus, Lithuania', lat: 54.3963, lng: 24.0459 },
   { place_id: 'mock_marijampole', description: 'Marijampolė, Lithuania', lat: 54.5594, lng: 23.3500 },
   { place_id: 'mock_druskininkai', description: 'Druskininkai, Lithuania', lat: 54.0166, lng: 23.9697 },
+  // Outbound European destinations
+  { place_id: 'mock_warsaw', description: 'Warsaw, Poland', lat: 52.2297, lng: 21.0122, scope: 'europe', countryCode: 'PL' },
+  { place_id: 'mock_hamburg', description: 'Hamburg, Germany', lat: 53.5511, lng: 9.9937, scope: 'europe', countryCode: 'DE' },
 ];
 
 export const googleService = {
@@ -55,10 +77,14 @@ export const googleService = {
     radius?: number,
     types?: string,
     strictBounds?: boolean,
+    scope: 'baltic' | 'europe' = 'baltic',
   ) {
     if (isMockMode()) {
       const lower = input.toLowerCase();
-      const filtered = MOCK_PLACES.filter(p => p.description.toLowerCase().includes(lower));
+      const filtered = MOCK_PLACES.filter(p => {
+        const isEuropeOnly = (p as any).scope === 'europe';
+        return p.description.toLowerCase().includes(lower) && (scope === 'europe' || !isEuropeOnly);
+      });
       if (location && strictBounds === false) {
         filtered.sort((a, b) => {
           const distanceA = (a.lat - location.lat) ** 2 + (a.lng - location.lng) ** 2;
@@ -69,16 +95,18 @@ export const googleService = {
       return filtered.map(p => ({ description: p.description, place_id: p.place_id }));
     }
 
-    const cacheKey = `autocomplete:v2:baltic:${input}:${location ? `${location.lat},${location.lng}` : 'none'}:${radius || 50000}:${types || 'all'}:${strictBounds ?? 'default'}`;
+    const cacheKey = `autocomplete:v3:${scope}:${input}:${location ? `${location.lat},${location.lng}` : 'none'}:${radius || 50000}:${types || 'all'}:${strictBounds ?? 'default'}`;
 
     // Try to get from cache
     const cached = await redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
 
     // Fetch from Google API
-    const response: any = await googleHttp.autocomplete({ input, location, radius, types, strictBounds });
+    const response: any = await googleHttp.autocomplete({ input, location, radius, types, strictBounds, scope });
 
-    const predictions = response.predictions;
+    const predictions = scope === 'europe'
+      ? response.predictions.filter(isEuropeanPrediction)
+      : response.predictions;
 
     // Cache results for 5 minutes
     await redis.set(cacheKey, JSON.stringify(predictions), 'EX', 300);
@@ -93,11 +121,11 @@ export const googleService = {
     if (isMockMode()) {
       const place = MOCK_PLACES.find(p => p.place_id === placeId);
       if (place) {
-        const countryCode = place.description.endsWith(', Estonia')
+        const countryCode = (place as any).countryCode || (place.description.endsWith(', Estonia')
           ? 'EE'
           : place.description.endsWith(', Latvia')
             ? 'LV'
-            : 'LT';
+            : 'LT');
         return {
           name: place.description.split(',')[0],
           formatted_address: place.description,

@@ -138,6 +138,11 @@ Copy `.env.example` to `.env` and fill in values. The table below lists every va
 | `NODE_ENV` | `production` | `production` / `staging` |
 | `LOG_LEVEL` | `info` | Winston log level |
 | `BOOKING_PAYMENT_MODE` | `bypass` | `bypass` (skip Stripe) or `stripe` |
+| `PAYOUT_ELIGIBILITY_DELAY_MINUTES` | `30` | Completed bookings become payout eligible after this many minutes if there is no open dispute |
+| `AUTO_PROCESS_DRIVER_PAYOUTS` | `true` | Automatically transfer payout-eligible balances to ready driver Stripe accounts |
+| `AUTO_PROCESS_DRIVER_PAYOUTS_CRON` | `5 0 * * *` | Cron schedule for automatic driver payout transfers; default is 00:05 server time daily |
+| `TEMP_ADMIN_LOGIN_ENABLED` | `false` | Enables the temporary admin fallback login endpoint |
+| `TEMP_ADMIN_LOGIN_EMAIL / TEMP_ADMIN_LOGIN_PASSWORD` | - | Required only when temporary admin login is enabled; the email must belong to an existing admin user |
 | `EXPOSE_OTP_IN_RESPONSE` | `false` | Return OTP in signup response — **enable only for testing** |
 | `GOOGLE_MAPS_API_KEY` | — | Required for route computation in publish-ride |
 | `MAIL_HOST / MAIL_PORT / MAIL_USER / MAIL_PASS` | — | SMTP credentials |
@@ -146,6 +151,7 @@ Copy `.env.example` to `.env` and fill in values. The table below lists every va
 | `SMS_MOCK_MODE` | `false` | Log SMS instead of sending — **never true in production** |
 | `STRIPE_SECRET_KEY` | — | Stripe secret key |
 | `STRIPE_WEBHOOK_SECRET` | — | Stripe webhook signing secret |
+| `PLATFORM_FEE_PERCENT` | `20` | Rider service fee percentage charged on top of the driver fare; keep in sync with webapp `NEXT_PUBLIC_PLATFORM_FEE_PERCENT` |
 | `AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION / AWS_S3_BUCKET_NAME` | — | S3 for vehicle documents and avatars |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | — | Firebase service account (one of several accepted formats) |
 | `VERIFF_API_KEY / VERIFF_SHARED_SECRET / VERIFF_CALLBACK_URL` | — | Driving licence KYC |

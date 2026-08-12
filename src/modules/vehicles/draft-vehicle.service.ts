@@ -6,8 +6,14 @@ import {
     LicenseInput,
     VehicleDetailsInput,
 } from './vehicle.types.js';
-import { DocumentType } from '@prisma/client';
+import { DocumentType, VehicleVerificationStatus } from '@prisma/client';
 import { isPrivateDocumentType } from './vehicle-documents.util.js';
+import { hasDlDocumentOnFile } from '../dl-verification/dl-review.service.js';
+import {
+    REQUIRED_DOCUMENT_TYPES,
+    isPrimaryImageDocumentType,
+    requiresFullDocumentSet,
+} from './vehicle.constants.js';
 
 // ============================================================
 //  DRAFT RESPONSE HELPER (strip step/userId, add next)
@@ -177,11 +183,32 @@ export const saveVehicle = async (userId: string) => {
         throw new Error('MAX_VEHICLE_LIMIT_REACHED');
     }
 
+    // Countries that mandate the full document set (front photo, rear photo, registry)
+    // must supply all of it before the vehicle reaches the admin review queue.
+    if (requiresFullDocumentSet(draft.licenseCountry)) {
+        const supplied = new Set((draft.documents || []).map((d) => d.documentType));
+        const missing = REQUIRED_DOCUMENT_TYPES.filter((type) => !supplied.has(type));
+        if (missing.length > 0) {
+            throw new Error(`VEHICLE_DOCUMENTS_REQUIRED:${missing.join(',')}`);
+        }
+
+        // The driving licence belongs to the person, not the car: it is checked
+        // against the user, not this draft, so a second vehicle does not ask for it
+        // again. An already-verified driver (Veriff or manual) needs no image.
+        if (!user.dlVerified && !(await hasDlDocumentOnFile(userId))) {
+            throw new Error('DL_DOCUMENT_REQUIRED');
+        }
+    }
+
     // Supporting identity/insurance documents must never become rider-visible photos.
-    const vehicleImage = draft.documents?.find(
-        (d) => d.documentType === 'VEHICLE_IMAGE',
+    const vehicleImage = draft.documents?.find((d) =>
+        isPrimaryImageDocumentType(d.documentType),
     );
     const mainImageUrl = vehicleImage?.imageUrl || null;
+
+    // A vehicle starts PENDING and waits for an admin decision, unless the dev bypass
+    // flag auto-approves it.
+    const autoApproved = shouldAutoVerifyVehicle();
 
     // ---- Create in DB (vehicle + documents in a transaction) ---- //
     const vehicle = await prisma.vehicle.create({
@@ -196,14 +223,18 @@ export const saveVehicle = async (userId: string) => {
             color: draft.color || null,
             year: draft.year || null,
             imageUrl: mainImageUrl,
-            isVerified: shouldAutoVerifyVehicle(),
+            isVerified: autoApproved,
+            verificationStatus: autoApproved
+                ? VehicleVerificationStatus.APPROVED
+                : VehicleVerificationStatus.PENDING,
+            reviewedAt: autoApproved ? new Date() : null,
             documents: {
-                // VEHICLE_IMAGE is the rider-visible car photo — it lives on vehicle.imageUrl
-                // above, not as a document row. Only real documents are persisted here:
-                // private KYC docs persist imageKey (no public URL, exposed as previewKey);
-                // any public doc persists imageUrl.
+                // The primary car photo (VEHICLE_IMAGE_FRONT, or legacy VEHICLE_IMAGE)
+                // lives on vehicle.imageUrl above, not as a document row. Everything else
+                // is persisted here — including the rear photo: private KYC docs persist
+                // imageKey (no public URL, exposed as previewKey), public docs persist imageUrl.
                 create: (draft.documents || [])
-                    .filter((doc) => doc.documentType !== 'VEHICLE_IMAGE')
+                    .filter((doc) => !isPrimaryImageDocumentType(doc.documentType))
                     .map((doc) => {
                         // Guard: a private-type document must never persist a public URL.
                         // Attach-time normalization already enforces this, but defend against

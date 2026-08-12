@@ -99,9 +99,6 @@ export const validateDriverPrice = (
     if (selectedPrice < calculation.minAllowedPricePerSeat) {
         return { valid: false, reason: `Price below minimum (${calculation.minAllowedPricePerSeat} ${calculation.currency})` };
     }
-    if (selectedPrice > calculation.maxAllowedPricePerSeat) {
-        return { valid: false, reason: `Price above maximum (${calculation.maxAllowedPricePerSeat} ${calculation.currency})` };
-    }
     return { valid: true };
 };
 

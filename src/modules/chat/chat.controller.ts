@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import * as ChatService from './chat.service.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
-import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
+import { sendSuccess, sendError, HttpStatus, logError } from '../../utils/index.js';
 import type { ImagePayload, LocationPayload } from './chat.types.js';
 
 /* ================= LIST CONVERSATIONS ================= */
@@ -26,13 +26,14 @@ export const getConversations = async (req: AuthRequest, res: Response) => {
 export const getMessages = async (req: AuthRequest, res: Response) => {
     try {
         const conversationId = req.params.conversationId as string;
-        const { cursor, limit } = req.query as { cursor?: string; limit?: number };
+        const { cursor, limit, bookingId } = req.query as { cursor?: string; limit?: number; bookingId?: string };
 
         const result = await ChatService.getMessages(
             req.user.id,
             conversationId,
             cursor,
             limit,
+            bookingId,
         );
 
         return sendSuccess(res, {
@@ -40,6 +41,13 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
             data: result,
         });
     } catch (error: any) {
+        logError('Failed to fetch chat messages', error, {
+            requestId: res.locals.requestId,
+            userId: req.user.id,
+            conversationId: req.params.conversationId,
+            bookingId: req.query.bookingId,
+        });
+
         if (error.message === 'CONVERSATION_NOT_FOUND') {
             return sendError(res, {
                 status: HttpStatus.NOT_FOUND,
@@ -74,8 +82,9 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
                 message = 'You cannot send a message to yourself';
                 break;
             case 'NO_CONFIRMED_BOOKING':
+            case 'CHAT_NOT_ACTIVE':
                 status = HttpStatus.FORBIDDEN;
-                message = 'Chat is only available after a booking is confirmed between rider and driver';
+                message = 'Chat is available only while the ride is active';
                 break;
             case 'TEXT_REQUIRED':
                 status = HttpStatus.BAD_REQUEST;
@@ -108,6 +117,7 @@ export const sendImage = async (req: AuthRequest, res: Response) => {
         // Send message with IMAGE type
         const message = await ChatService.sendMessage(req.user.id, {
             receiverId: req.body.receiverId,
+            bookingId: req.body.bookingId,
             clientMsgId: req.body.clientMsgId,
             text: req.body.text || undefined,
             type: 'IMAGE',
@@ -129,8 +139,9 @@ export const sendImage = async (req: AuthRequest, res: Response) => {
                 message = 'You cannot send a message to yourself';
                 break;
             case 'NO_CONFIRMED_BOOKING':
+            case 'CHAT_NOT_ACTIVE':
                 status = HttpStatus.FORBIDDEN;
-                message = 'Chat is only available after a booking is confirmed between rider and driver';
+                message = 'Chat is available only while the ride is active';
                 break;
         }
 
@@ -141,7 +152,7 @@ export const sendImage = async (req: AuthRequest, res: Response) => {
 /* ================= SEND LOCATION ================= */
 export const sendLocation = async (req: AuthRequest, res: Response) => {
     try {
-        const { receiverId, clientMsgId, latitude, longitude, address, placeId, text } = req.body;
+        const { receiverId, clientMsgId, bookingId, latitude, longitude, address, placeId, text } = req.body;
 
         // Build location payload
         const locationPayload: LocationPayload = {
@@ -154,6 +165,7 @@ export const sendLocation = async (req: AuthRequest, res: Response) => {
         // Send message with LOCATION type
         const message = await ChatService.sendMessage(req.user.id, {
             receiverId,
+            bookingId,
             clientMsgId,
             text: text || undefined,
             type: 'LOCATION',
@@ -175,12 +187,73 @@ export const sendLocation = async (req: AuthRequest, res: Response) => {
                 message = 'You cannot send a message to yourself';
                 break;
             case 'NO_CONFIRMED_BOOKING':
+            case 'CHAT_NOT_ACTIVE':
                 status = HttpStatus.FORBIDDEN;
-                message = 'Chat is only available after a booking is confirmed between rider and driver';
+                message = 'Chat is available only while the ride is active';
                 break;
             case 'LOCATION_REQUIRED':
                 status = HttpStatus.BAD_REQUEST;
                 message = 'Valid latitude and longitude are required';
+                break;
+        }
+
+        return sendError(res, { status, message });
+    }
+};
+
+/* ================= OPEN CONVERSATION ================= */
+export const openConversation = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await ChatService.openConversation(req.user.id, req.body.receiverId);
+
+        return sendSuccess(res, {
+            message: 'Conversation opened successfully',
+            data: result,
+        });
+    } catch (error: any) {
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to open conversation';
+
+        switch (error.message) {
+            case 'CANNOT_MESSAGE_SELF':
+                status = HttpStatus.BAD_REQUEST;
+                message = 'You cannot open a conversation with yourself';
+                break;
+            case 'CHAT_NOT_ACTIVE':
+                status = HttpStatus.FORBIDDEN;
+                message = 'Chat is available only while the ride is active';
+                break;
+        }
+
+        return sendError(res, { status, message });
+    }
+};
+
+/* ================= OPEN CONVERSATION FOR BOOKING ================= */
+export const openBookingConversation = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await ChatService.openBookingConversation(req.user.id, req.body.bookingId);
+
+        return sendSuccess(res, {
+            message: 'Conversation opened successfully',
+            data: result,
+        });
+    } catch (error: any) {
+        let status = HttpStatus.INTERNAL_ERROR;
+        let message = 'Failed to open conversation';
+
+        switch (error.message) {
+            case 'BOOKING_NOT_FOUND':
+                status = HttpStatus.NOT_FOUND;
+                message = 'Booking not found';
+                break;
+            case 'FORBIDDEN_BOOKING_PARTICIPANT':
+                status = HttpStatus.FORBIDDEN;
+                message = 'You cannot open chat for this booking';
+                break;
+            case 'CHAT_NOT_ACTIVE':
+                status = HttpStatus.FORBIDDEN;
+                message = 'Chat is available only while the ride is active';
                 break;
         }
 

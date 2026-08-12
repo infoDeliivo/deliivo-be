@@ -6,12 +6,29 @@ const mockRedis = {
     on: jest.fn(),
 };
 
+// A driver who satisfies every publish requirement. Tests that exercise a specific gate
+// override the relevant field.
+const eligibleDriver = {
+    dlVerified: true,
+    tosAcceptedAt: new Date(),
+    gender: 'FEMALE',
+    stripeOnboardingComplete: true,
+};
+
+const approvedVehicle = { id: 'vehicle-1', verificationStatus: 'APPROVED' };
+
 const mockPrisma = {
     vehicle: {
-        findFirst: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(approvedVehicle),
     },
     user: {
-        findUnique: jest.fn().mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' }),
+        findUnique: jest.fn().mockResolvedValue(eligibleDriver),
+    },
+    dlVerification: {
+        findFirst: jest.fn().mockResolvedValue(null),
+    },
+    ride: {
+        findMany: jest.fn().mockResolvedValue([]),
     },
     $transaction: jest.fn(),
 };
@@ -56,7 +73,10 @@ import polyline from '@mapbox/polyline';
 describe('publishRide', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'FEMALE' });
+        mockPrisma.user.findUnique.mockResolvedValue(eligibleDriver);
+        mockPrisma.vehicle.findFirst.mockResolvedValue(approvedVehicle);
+        mockPrisma.dlVerification.findFirst.mockResolvedValue(null);
+        mockPrisma.ride.findMany.mockResolvedValue([]);
         mockGoogleService.placeDetails.mockResolvedValue({
             address_components: [{ short_name: 'EE', types: ['country'] }],
         });
@@ -77,6 +97,31 @@ describe('publishRide', () => {
         expect(mockRedis.del).not.toHaveBeenCalled();
     });
 
+    it('allows a European destination for an outbound ride from the Baltics', async () => {
+        mockRedis.get.mockResolvedValue(JSON.stringify({
+            userId: 'driver-1',
+            step: 1,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originPlaceId: 'place-tallinn',
+            originAddress: 'Tallinn, Estonia',
+            originLat: 59.437,
+            originLng: 24.7536,
+        }));
+        mockGoogleService.placeDetails.mockResolvedValue({
+            address_components: [{ short_name: 'DE', types: ['country'] }],
+        });
+
+        await expect(DraftRideService.updateDestination('driver-1', {
+            destinationPlaceId: 'place-hamburg',
+            destinationAddress: 'Hamburg, Germany',
+            destinationLat: 53.5511,
+            destinationLng: 9.9937,
+        })).resolves.toMatchObject({
+            destinationAddress: 'Hamburg, Germany',
+        });
+    });
+
     it('requires at least one pickup and one drop-off before publishing', async () => {
         mockRedis.get.mockResolvedValue(JSON.stringify({
             userId: 'driver-1',
@@ -87,7 +132,9 @@ describe('publishRide', () => {
             destinationPlaceId: 'place-tartu',
             routePolyline: 'encoded-route',
             routeIsPublishable: true,
-            departureDate: '2026-08-01T00:00:00.000Z',
+            // Relative to now: publishing rejects a departure less than three hours away, so a
+            // fixed date turns these tests red the moment it slips into the past.
+            departureDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
             departureTime: '10:00',
             totalSeats: 3,
             basePricePerSeat: 12,
@@ -167,7 +214,7 @@ describe('publishRide', () => {
             destinationLat: 11,
             destinationLng: 21,
             routePolyline,
-            departureDate: new Date('2026-04-01T00:00:00.000Z').toISOString(),
+            departureDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
             departureTime: '09:30',
             totalSeats: 3,
             basePricePerSeat: 40,
@@ -185,14 +232,14 @@ describe('publishRide', () => {
         };
 
         mockRedis.get.mockResolvedValue(JSON.stringify(draft));
-        mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
+        mockPrisma.vehicle.findFirst.mockResolvedValue(approvedVehicle);
 
         const rideCreate = jest.fn().mockResolvedValue({ id: 'ride-1', departureTime: '09:30', routeDurationSeconds: 3600 });
         const rideWaypointCreateMany = jest.fn().mockResolvedValue(undefined);
         const rideFindUnique = jest.fn().mockResolvedValue({
             id: 'ride-1',
             status: RideStatus.PUBLISHED,
-            departureDate: new Date('2026-04-01T00:00:00.000Z'),
+            departureDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
             departureTime: '09:30',
             originAddress: 'Origin',
             destinationAddress: 'Destination',
@@ -247,7 +294,7 @@ describe('publishRide', () => {
             destinationLat: 11,
             destinationLng: 21,
             routePolyline: polyline.encode([[10, 20], [11, 21]]),
-            departureDate: new Date('2026-04-01T00:00:00.000Z').toISOString(),
+            departureDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
             departureTime: '09:30',
             totalSeats: 3,
             basePricePerSeat: 40,
@@ -255,10 +302,48 @@ describe('publishRide', () => {
         };
 
         mockRedis.get.mockResolvedValue(JSON.stringify(draft));
-        mockPrisma.user.findUnique.mockResolvedValue({ dlVerified: true, tosAcceptedAt: new Date(), gender: 'MALE' });
-        mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
+        mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, gender: 'MALE' });
+        mockPrisma.vehicle.findFirst.mockResolvedValue(approvedVehicle);
 
         await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('FEMALE_ONLY_NOT_ALLOWED');
+    });
+
+    it('rejects publishing when the driver already has an overlapping ride', async () => {
+        const departureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        departureDate.setUTCHours(0, 0, 0, 0);
+        const draft = {
+            userId: 'driver-1',
+            step: 13,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originPlaceId: 'origin-place',
+            originAddress: 'Origin',
+            originLat: 10,
+            originLng: 20,
+            destinationPlaceId: 'destination-place',
+            destinationAddress: 'Destination',
+            destinationLat: 11,
+            destinationLng: 21,
+            routePolyline: polyline.encode([[10, 20], [11, 21]]),
+            routeDurationSeconds: 7200,
+            departureDate: departureDate.toISOString(),
+            departureTime: '09:30',
+            totalSeats: 3,
+            basePricePerSeat: 40,
+            pickups: [{ placeId: 'pickup-a', address: 'Pickup A', lat: 10, lng: 20 }],
+            dropoffs: [{ placeId: 'dropoff-a', address: 'Drop-off A', lat: 11, lng: 21 }],
+        };
+
+        mockRedis.get.mockResolvedValue(JSON.stringify(draft));
+        mockPrisma.ride.findMany.mockResolvedValue([{
+            id: 'existing-ride',
+            departureDate,
+            departureTime: '09:30',
+            routeDurationSeconds: 3600,
+        }]);
+
+        await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('DRIVER_RIDE_TIME_CONFLICT');
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('marks ferry routes as not publishable and blocks final publish', async () => {
@@ -311,7 +396,7 @@ describe('publishRide', () => {
             routeDurationSeconds: 1200,
             routeIsPublishable: false,
             routeBlockedReason: 'NON_ROAD_ROUTE_NOT_ALLOWED',
-            departureDate: new Date('2026-04-01T00:00:00.000Z').toISOString(),
+            departureDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
             departureTime: '09:30',
             totalSeats: 3,
             basePricePerSeat: 40,
@@ -336,7 +421,7 @@ describe('publishRide', () => {
             .mockResolvedValueOnce(JSON.stringify(draft))
             .mockResolvedValueOnce(cachedRoutes)
             .mockResolvedValueOnce(JSON.stringify(blockedDraft));
-        mockPrisma.vehicle.findFirst.mockResolvedValue({ id: 'vehicle-1' });
+        mockPrisma.vehicle.findFirst.mockResolvedValue(approvedVehicle);
 
         const originalFetch = global.fetch;
         global.fetch = fetchMock as any;
@@ -350,6 +435,40 @@ describe('publishRide', () => {
 
             await DraftRideService.selectRoute('driver-1', 0);
             await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('NON_ROAD_ROUTE_NOT_ALLOWED');
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('queries stopover suggestion points across the full route', async () => {
+        const routePoints = Array.from({ length: 21 }, (_, index) => [index * 0.1, 20] as [number, number]);
+        mockRedis.get.mockResolvedValue(JSON.stringify({
+            userId: 'driver-1',
+            step: 7,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            originLat: 0,
+            originLng: 20,
+            routePolyline: polyline.encode(routePoints),
+            routeDistanceMeters: 222000,
+        }));
+
+        const fetchMock = jest.fn().mockResolvedValue({
+            json: async () => ({ results: [] }),
+        });
+        const originalFetch = global.fetch;
+        global.fetch = fetchMock as any;
+
+        try {
+            await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            expect(fetchMock).toHaveBeenCalledTimes(8);
+            const queriedLatitudes = fetchMock.mock.calls.map(([url]) => {
+                const location = new URL(url as string).searchParams.get('location') || '';
+                return Number(location.split(',')[0]);
+            });
+            expect(Math.min(...queriedLatitudes)).toBeLessThan(0.3);
+            expect(Math.max(...queriedLatitudes)).toBeGreaterThan(1.8);
         } finally {
             global.fetch = originalFetch;
         }

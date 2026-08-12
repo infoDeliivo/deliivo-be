@@ -10,6 +10,7 @@ import { bullRedis } from './queue/redisConnection.js';
 import { deadlineWorker } from './queue/deadline.queue.js';
 import { maintenanceWorker } from './queue/maintenance.queue.js';
 import { pushWorker } from './jobs/index.js';
+import { assertVeriffWebhookConfigured } from './modules/dl-verification/dl-verification.service.js';
 
 const PORT = process.env.PORT || 3000;
 
@@ -17,6 +18,7 @@ export let server: http.Server;
 
 const startServer = async () => {
   try {
+    assertVeriffWebhookConfigured();
     await verifyMailer();
     await verifyDatabaseConnection();
 

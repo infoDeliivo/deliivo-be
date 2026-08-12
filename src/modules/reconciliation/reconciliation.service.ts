@@ -2,6 +2,7 @@ import { prisma } from '../../config/index.js';
 import { getStripeClient } from '../payments/stripe.service.js';
 import { PAYMENT_STATUSES } from '../payments/payment.service.js';
 import { logInfo, logError } from '../../utils/logger.js';
+import { BookingStatus } from '@prisma/client';
 
 // ============================================================
 //  CONSTANTS
@@ -96,13 +97,15 @@ export const runDailyReconciliation = async (): Promise<{ staleEscrow: number; l
     let staleEscrow = 0;
     let ledgerIssues = 0;
 
-    // 1. Find payments stuck in HELD_IN_ESCROW for > 72h (should be PAYOUT_ELIGIBLE after 48h)
-    const staleThreshold = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    // 1. Find payments stuck in HELD_IN_ESCROW well past the payout eligibility delay.
+    const payoutEligibilityDelayMinutes = Number(process.env.PAYOUT_ELIGIBILITY_DELAY_MINUTES || '30');
+    const staleThreshold = new Date(Date.now() - Math.max(payoutEligibilityDelayMinutes, 30) * 60 * 1000);
     const stalePayments = await prisma.payment.findMany({
         where: {
             status: PAYMENT_STATUSES.HELD_IN_ESCROW,
-            updatedAt: { lt: staleThreshold },
             booking: {
+                status: BookingStatus.COMPLETED,
+                completedAt: { lt: staleThreshold },
                 disputes: {
                     none: {
                         status: { in: ['OPEN', 'EVIDENCE_COLLECTED', 'NEEDS_MANUAL_REVIEW', 'WAITING_FOR_USER_RESPONSE', 'ESCALATED'] },
@@ -120,7 +123,7 @@ export const runDailyReconciliation = async (): Promise<{ staleEscrow: number; l
                 bookingId: payment.bookingId,
                 issueType: ISSUE_TYPES.STALE_ESCROW,
                 severity: SEVERITY.HIGH,
-                description: `Payment stuck in HELD_IN_ESCROW since ${payment.updatedAt.toISOString()}. Should have moved to PAYOUT_ELIGIBLE after 48h.`,
+                description: `Completed booking payment is still HELD_IN_ESCROW past the ${payoutEligibilityDelayMinutes} minute payout eligibility delay.`,
                 internalState: PAYMENT_STATUSES.HELD_IN_ESCROW,
             },
         });

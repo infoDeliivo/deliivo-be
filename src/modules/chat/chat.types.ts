@@ -4,6 +4,7 @@ export interface SendMessageInput {
     receiverId: string;
     text?: string;
     clientMsgId: string;
+    bookingId?: string;
     type?: 'TEXT' | 'IMAGE' | 'FILE' | 'LOCATION' | 'SYSTEM';
     payloadJson?: Record<string, unknown>;
 }
@@ -33,7 +34,7 @@ export interface ConversationListItem {
     id: string;
     peer: {
         id: string;
-        name: string | null;
+        firstName: string | null;
         avatarUrl: string | null;
     };
     lastMessage: {

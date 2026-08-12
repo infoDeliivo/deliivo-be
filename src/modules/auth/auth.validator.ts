@@ -79,3 +79,8 @@ export const acceptTosSchema = z.object({
 export const googleAuthSchema = z.object({
   idToken: z.string().min(100, 'Google ID token is required'),
 });
+
+export const temporaryAdminLoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(12),
+});

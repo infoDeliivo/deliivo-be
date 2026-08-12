@@ -42,8 +42,7 @@
                     "type": "string",
                     "enum": [
                       "image/jpeg",
-                      "image/png",
-                      "image/webp"
+                      "image/png"
                     ]
                   },
                   "fileExtension": {
@@ -51,8 +50,7 @@
                     "enum": [
                       "jpg",
                       "jpeg",
-                      "png",
-                      "webp"
+                      "png"
                     ]
                   },
                   "vehicleId": {

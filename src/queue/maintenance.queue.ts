@@ -58,13 +58,25 @@ scheduleMaintenanceJob(
     }
 );
 
-// Payout eligibility checker (48h dispute window, runs every 4 hours)
+// Payout eligibility checker. Completed bookings default to eligibility after 30 minutes.
 scheduleMaintenanceJob(
     'payout-eligibility',
     {},
     {
-        repeat: { pattern: '0 */4 * * *' }, // every 4 hours
+        repeat: { pattern: '*/15 * * * *' }, // every 15 minutes
         jobId: 'payout-eligibility',
+        removeOnComplete: true,
+        removeOnFail: 50,
+    }
+);
+
+// Automatic driver payout transfer. Runs once daily at 00:05 server time.
+scheduleMaintenanceJob(
+    'auto-driver-payouts',
+    {},
+    {
+        repeat: { pattern: process.env.AUTO_PROCESS_DRIVER_PAYOUTS_CRON || '5 0 * * *' },
+        jobId: 'auto-driver-payouts',
         removeOnComplete: true,
         removeOnFail: 50,
     }
@@ -88,6 +100,17 @@ scheduleMaintenanceJob(
     {
         repeat: { pattern: '* * * * *' },
         jobId: 'payment-outbox',
+        removeOnComplete: true,
+        removeOnFail: 100,
+    }
+);
+
+scheduleMaintenanceJob(
+    'veriff-decision-recovery',
+    {},
+    {
+        repeat: { pattern: '*/15 * * * *' },
+        jobId: 'veriff-decision-recovery',
         removeOnComplete: true,
         removeOnFail: 100,
     }
@@ -594,9 +617,24 @@ export const maintenanceWorker = new Worker(
             return;
         }
 
+        if (job.name === 'auto-driver-payouts') {
+            const { checkAndMarkEligible, processEligibleDriverPayouts } = await import('../modules/payout/payout.service.js');
+            await checkAndMarkEligible();
+            if (process.env.AUTO_PROCESS_DRIVER_PAYOUTS !== 'false') {
+                await processEligibleDriverPayouts();
+            }
+            return;
+        }
+
         if (job.name === 'payment-outbox') {
             const { processOutboxEvents } = await import('../modules/payments/payment-outbox.worker.js');
             await processOutboxEvents(25);
+            return;
+        }
+
+        if (job.name === 'veriff-decision-recovery') {
+            const { recoverPendingVeriffDecisions } = await import('../modules/dl-verification/dl-verification.service.js');
+            await recoverPendingVeriffDecisions();
             return;
         }
 

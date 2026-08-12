@@ -9,6 +9,7 @@ import {
   notifyRideSchema,
   recentSearchesQuerySchema,
   enhancedSearchRideQuerySchema,
+  availableRidesQuerySchema,
 } from './search-ride.validator.js';
 
 const router = Router();
@@ -19,6 +20,14 @@ router.get(
   optionalProtect,
   validate({ query: enhancedSearchRideQuerySchema }),
   controller.searchRidesAdvanced,
+);
+
+// Available rides for the unfiltered search-page list
+router.get(
+  '/available',
+  optionalProtect,
+  validate({ query: availableRidesQuerySchema }),
+  controller.getAvailableRides,
 );
 
 // Search rides

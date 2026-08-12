@@ -42,7 +42,49 @@ function sanitizeSlug(input: string) {
 }
 
 function normalizeLocale(input?: string) {
-    return (input || 'en').trim().toLowerCase();
+    const normalized = (input || 'en').trim().toLowerCase().replace('_', '-');
+    const primary = normalized.split('-')[0];
+    const aliases: Record<string, string> = {
+        en: 'en',
+        eng: 'en',
+        english: 'en',
+        et: 'et',
+        ee: 'et',
+        est: 'et',
+        eesti: 'et',
+        estonian: 'et',
+        ru: 'ru',
+        rus: 'ru',
+        russian: 'ru',
+    };
+
+    return aliases[normalized] || aliases[primary] || 'en';
+}
+
+function localeLookupValues(locale: string) {
+    const normalizedLocale = normalizeLocale(locale);
+    const aliasesByLocale: Record<string, string[]> = {
+        en: ['en', 'eng', 'english'],
+        et: ['et', 'ee', 'est', 'eesti', 'estonian'],
+        ru: ['ru', 'rus', 'russian'],
+    };
+
+    return Array.from(new Set([normalizedLocale, ...(aliasesByLocale[normalizedLocale] || [])]));
+}
+
+function preferCanonicalLocaleRows<T extends { slug: string; locale: string }>(rows: T[], locale?: string) {
+    if (!locale) return rows;
+    const normalizedLocale = normalizeLocale(locale);
+    const bySlug = new Map<string, T>();
+
+    rows.forEach((row) => {
+        const existing = bySlug.get(row.slug);
+        if (!existing || (normalizeLocale(existing.locale) !== existing.locale && row.locale === normalizedLocale)) {
+            bySlug.set(row.slug, row);
+        }
+    });
+
+    return Array.from(bySlug.values());
 }
 
 function toContentPost(row: {
@@ -66,6 +108,7 @@ function toContentPost(row: {
         ...row,
         category: row.category as ContentPostCategory,
         status: row.status as ContentPostStatus,
+        locale: normalizeLocale(row.locale),
         publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
@@ -131,16 +174,19 @@ async function ensureContentTables() {
 
 export async function listPublishedPosts(locale?: string) {
     const normalizedLocale = locale ? normalizeLocale(locale) : undefined;
-    const loadPosts = async (targetLocale?: string) => prisma.contentPost.findMany({
-        where: {
-            status: 'PUBLISHED',
-            ...(targetLocale ? { locale: targetLocale } : {}),
-        },
-        orderBy: [
-            { publishedAt: 'desc' },
-            { updatedAt: 'desc' },
-        ],
-    });
+    const loadPosts = async (targetLocale?: string) => {
+        const localeValues = targetLocale ? localeLookupValues(targetLocale) : [];
+        return prisma.contentPost.findMany({
+            where: {
+                status: 'PUBLISHED',
+                ...(targetLocale ? { locale: { in: localeValues } } : {}),
+            },
+            orderBy: [
+                { publishedAt: 'desc' },
+                { updatedAt: 'desc' },
+            ],
+        });
+    };
     const resolvePosts = async () => {
         if (!normalizedLocale) {
             return loadPosts();
@@ -156,12 +202,12 @@ export async function listPublishedPosts(locale?: string) {
 
     try {
         const posts = await resolvePosts();
-        return posts.map(toContentPost);
+        return preferCanonicalLocaleRows(posts, normalizedLocale).map(toContentPost);
     } catch (error) {
         if (isMissingContentTableError(error)) {
             await ensureContentTables();
             const posts = await resolvePosts();
-            return posts.map(toContentPost);
+            return preferCanonicalLocaleRows(posts, normalizedLocale).map(toContentPost);
         }
         throw error;
     }
@@ -169,13 +215,34 @@ export async function listPublishedPosts(locale?: string) {
 
 export async function getPublishedPostBySlug(slug: string, locale?: string) {
     const normalizedLocale = locale ? normalizeLocale(locale) : undefined;
-    const loadPost = async (targetLocale?: string) => prisma.contentPost.findFirst({
-        where: {
-            slug,
-            status: 'PUBLISHED',
-            ...(targetLocale ? { locale: targetLocale } : {}),
-        },
-    });
+    const loadPost = async (targetLocale?: string) => {
+        if (!targetLocale) {
+            return prisma.contentPost.findFirst({
+                where: {
+                    slug,
+                    status: 'PUBLISHED',
+                },
+            });
+        }
+
+        const exactPost = await prisma.contentPost.findFirst({
+            where: {
+                slug,
+                status: 'PUBLISHED',
+                locale: normalizeLocale(targetLocale),
+            },
+        });
+        if (exactPost) return exactPost;
+
+        const localeValues = targetLocale ? localeLookupValues(targetLocale) : [];
+        return prisma.contentPost.findFirst({
+            where: {
+                slug,
+                status: 'PUBLISHED',
+                locale: { in: localeValues.filter((value) => value !== normalizeLocale(targetLocale)) },
+            },
+        });
+    };
     const resolvePost = async () => {
         if (!normalizedLocale) {
             return loadPost();
@@ -310,7 +377,7 @@ export async function upsertPost(
         if (!existing) throw new Error('POST_NOT_FOUND');
 
         const duplicate = await prisma.contentPost.findFirst({
-            where: { slug, locale, id: { not: input.id } },
+            where: { slug, locale: { in: localeLookupValues(locale) }, id: { not: input.id } },
             select: { id: true },
         });
         if (duplicate) throw new Error('SLUG_EXISTS');
@@ -340,7 +407,10 @@ export async function upsertPost(
         return payload;
     }
 
-    const duplicate = await prisma.contentPost.findUnique({ where: { slug_locale: { slug, locale } } });
+    const duplicate = await prisma.contentPost.findFirst({
+        where: { slug, locale: { in: localeLookupValues(locale) } },
+        select: { id: true },
+    });
     if (duplicate) throw new Error('SLUG_EXISTS');
 
     const status: ContentPostStatus = (input.status || 'DRAFT') as ContentPostStatus;

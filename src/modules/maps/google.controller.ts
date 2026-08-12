@@ -6,7 +6,7 @@ export const googleController = {
   /* ================= ROUTES ================= */
   async autocomplete(req: Request, res: Response) {
     try {
-      const { input, lat, lng, radius, types, strictBounds } = req.query as any;
+      const { input, lat, lng, radius, types, strictBounds, scope } = req.query as any;
       const location = lat && lng ? { lat: parseFloat(lat), lng: parseFloat(lng) } : undefined;
 
       const predictions = await googleService.autocomplete(
@@ -15,6 +15,7 @@ export const googleController = {
         radius ? parseInt(radius) : undefined,
         types || undefined,
         strictBounds === undefined ? undefined : strictBounds === 'true',
+        scope || 'baltic',
       );
 
       // Return only name, description, and placeId

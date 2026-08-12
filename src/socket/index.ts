@@ -62,18 +62,42 @@ export const emitToRide = (rideId: string, event: string, data: unknown) => {
  * Uses the Redis-backed user -> socket mapping so it works across Socket.IO
  * Redis adapter processes.
  */
-export const emitToUsers = async (userIds: string[], event: string, data: unknown) => {
-    if (!ioInstance) return;
+export const emitToUsers = async (userIds: string[], event: string, data: unknown): Promise<number> => {
+    if (!ioInstance) return 0;
 
     const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
-    await Promise.all(
+    const deliveredCounts = await Promise.all(
         uniqueUserIds.map(async (userId) => {
-            const socketIds = await getUserSocketIds(userId);
-            socketIds.forEach((socketId) => {
-                ioInstance?.to(socketId).emit(event, data);
-            });
+            const room = `user:${userId}`;
+            try {
+                const sockets = await ioInstance?.in(room).fetchSockets();
+                ioInstance?.to(room).emit(event, data);
+                if (sockets && sockets.length > 0) return sockets.length;
+            } catch (error) {
+                logger.warn('User room emit failed, falling back to socket id lookup', {
+                    userId,
+                    event,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+
+            try {
+                const socketIds = await getUserSocketIds(userId);
+                socketIds.forEach((socketId) => {
+                    ioInstance?.to(socketId).emit(event, data);
+                });
+                return socketIds.length;
+            } catch (error) {
+                logger.warn('Socket id emit lookup failed', {
+                    userId,
+                    event,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return 0;
+            }
         })
     );
+    return deliveredCounts.reduce((sum, count) => sum + count, 0);
 };
 
 // ============ SOCKET.IO INITIALIZATION ============
@@ -133,12 +157,29 @@ export const initSocket = async (server: http.Server) => {
         const userId = (socket as any).userId as string;
         logger.info(`🔌 User ${userId} connected (socket: ${socket.id})`);
 
-        // Register user-socket mapping
-        await addUserSocket(userId, socket.id);
+        socket.join(`user:${userId}`);
+
+        // Register user-socket mapping for diagnostics and backwards-compatible direct emits.
+        try {
+            await addUserSocket(userId, socket.id);
+        } catch (error) {
+            logger.warn('Failed to register user socket mapping', {
+                userId,
+                socketId: socket.id,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
 
         // Log current active connections for this user
-        const allUserSockets = await getUserSocketIds(userId);
-        logger.info(`👤 User ${userId} now has ${allUserSockets.length} active connection(s)`);
+        try {
+            const allUserSockets = await getUserSocketIds(userId);
+            logger.info(`👤 User ${userId} now has ${allUserSockets.length} active connection(s)`);
+        } catch (error) {
+            logger.warn('Failed to read user socket count', {
+                userId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
 
         // Set presence in Redis
         await PresenceService.setOnline(userId, socket.id);

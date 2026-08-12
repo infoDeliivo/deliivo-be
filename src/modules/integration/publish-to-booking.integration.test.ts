@@ -548,7 +548,9 @@ const buildCompleteDraft = (overrides: Record<string, any> = {}) => ({
     routePolyline: 'encoded-polyline-data',
     routeDistanceMeters: 85000,
     routeDurationSeconds: 5400,
-    departureDate: new Date('2026-07-01T00:00:00.000Z').toISOString(),
+    // Relative to now: publishing rejects a departure less than three hours away, so a fixed
+    // date turns the whole suite red the moment it slips into the past.
+    departureDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     departureTime: '09:00',
     totalSeats: 3,
     basePricePerSeat: 30,
@@ -1084,11 +1086,19 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('CAPACITY_AND_PRICING_REQUIRED');
         });
 
-        it('rejects publish when driver has no ToS', async () => {
+        // Publishing no longer gates on the terms — the booking flow does, and that is where
+        // the rider's consent actually matters (see the ToS case in the booking suite).
+        // Asserted on the error code rather than on success: this suite's place fixtures are
+        // outside the Baltics, so publish fails here for reasons of its own.
+        it('does not block publishing on ToS acceptance', async () => {
             users[0].tosAcceptedAt = null;
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft());
 
-            await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('TOS_NOT_ACCEPTED');
+            const error = await DraftRideService.publishRide('driver-1').catch(
+                (thrown: Error) => thrown,
+            );
+
+            expect((error as Error)?.message).not.toBe('TOS_NOT_ACCEPTED');
         });
 
         it('rejects publish when driver DL not verified', async () => {
