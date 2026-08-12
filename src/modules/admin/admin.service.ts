@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { BookingStatus, Prisma, RideStatus, UserRole, VehicleVerificationStatus } from '@prisma/client';
+import { BookingStatus, DocumentType, Prisma, RideStatus, UserRole, VehicleVerificationStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
@@ -8,6 +8,10 @@ import { PAYMENT_STATUSES, markBookingPaymentRefunded } from '../payments/paymen
 import redis from '../../cache/redis.js';
 import { getContentSummary } from '../content/content.service.js';
 import { DISPUTE_STATUSES, OPEN_DISPUTE_STATUSES } from '../dispute/dispute.constants.js';
+import { manualSessionId } from '../dl-verification/dl-review.service.js';
+import { recoverPendingVeriffDecisionsForUser } from '../dl-verification/dl-verification.service.js';
+import { sendMail } from '../mail/mail.service.js';
+import { REQUIRED_DOCUMENT_TYPES, requiresFullDocumentSet } from '../vehicles/vehicle.constants.js';
 
 const emergencyAlertSelect = {
     id: true,
@@ -44,6 +48,49 @@ const emergencyAlertSelect = {
         },
     },
 } satisfies Prisma.EmergencyAlertSelect;
+
+const adminUserName = (user: { firstName?: string | null; lastName?: string | null; email?: string | null }) =>
+    [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'there';
+
+const htmlEscape = (value: string) =>
+    value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+const plainTextToHtml = (text: string) =>
+    htmlEscape(text)
+        .split(/\n{2,}/)
+        .map((paragraph) => `<p style="margin:0 0 12px;">${paragraph.replace(/\n/g, '<br />')}</p>`)
+        .join('\n');
+
+const notifyAdminVerificationChange = async (
+    user: { id: string; firstName?: string | null; lastName?: string | null; email?: string | null },
+    input: { type: string; title: string; body: string; subject: string; data?: Record<string, unknown> },
+) => {
+    await createNotification({
+        userId: user.id,
+        type: input.type,
+        title: input.title,
+        body: input.body,
+        data: input.data,
+    });
+
+    if (!user.email) return;
+
+    const text = `${input.title}\n\nHello ${adminUserName(user)},\n\n${input.body}\n\nDeliivo`;
+    const html = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #111827;">
+          <h2 style="margin: 0 0 12px;">${input.title}</h2>
+          <p style="margin: 0 0 12px;">Hello ${adminUserName(user)},</p>
+          <p style="margin: 0 0 12px;">${input.body}</p>
+          <p style="margin: 16px 0 0;">Deliivo</p>
+        </div>
+    `;
+    await sendMail({ to: user.email, subject: input.subject, html, text });
+};
 
 /* ================= LIST USERS ================= */
 export const listUsers = async (query: {
@@ -279,8 +326,8 @@ export const getUserDetails = async (userId: string) => {
                 select: adminVehicleSelect,
             },
             dlVerifications: {
-                orderBy: { createdAt: 'desc' },
-                take: 5,
+                orderBy: { updatedAt: 'desc' },
+                take: 20,
                 select: {
                     id: true,
                     status: true,
@@ -329,6 +376,8 @@ export const getUserDetails = async (userId: string) => {
         driverEarnings,
         payoutEligible,
         paidOut,
+        approvedVeriffChecks,
+        approvedManualChecks,
         openDisputes,
         reportsMade,
         reportsReceived,
@@ -382,6 +431,24 @@ export const getUserDetails = async (userId: string) => {
             _sum: { amountTotal: true },
             _count: { _all: true },
         }),
+        prisma.dlVerification.count({
+            where: {
+                userId,
+                status: 'APPROVED',
+                documentImageKey: null,
+                veriffSessionId: { not: { startsWith: 'manual:' } },
+            },
+        }),
+        prisma.dlVerification.count({
+            where: {
+                userId,
+                status: 'APPROVED',
+                OR: [
+                    { veriffSessionId: { startsWith: 'manual:' } },
+                    { documentImageKey: { not: null } },
+                ],
+            },
+        }),
         prisma.dispute.count({
             where: {
                 resolvedAt: null,
@@ -399,9 +466,20 @@ export const getUserDetails = async (userId: string) => {
     ]);
 
     const { vehicles, dlVerifications, paymentMethods, ...profile } = user;
+    const verificationFlags = {
+        completeOnboardingVerified: profile.onboardingStatus === 'COMPLETED',
+        veriffVerified: approvedVeriffChecks > 0,
+        manualLicenseApproved: approvedManualChecks > 0,
+        licenseVerified: Boolean(profile.dlVerified),
+        vehicleVerified: vehicles.some((vehicle) => vehicle.verificationStatus === VehicleVerificationStatus.APPROVED),
+        canRequireVeriff: approvedVeriffChecks === 0,
+    };
 
     return {
-        user: profile,
+        user: {
+            ...profile,
+            verificationFlags,
+        },
         vehicles: vehicles.map(mapAdminVehicle),
         dlVerifications: dlVerifications.map((record) => {
             const { documentImageKey, ...rest } = record;
@@ -441,6 +519,249 @@ export const getUserDetails = async (userId: string) => {
         },
         publishedRides,
         bookedRides,
+    };
+};
+
+export const requireVeriffForUser = async (userId: string, adminId: string | null) => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, dlVerified: true, firstName: true, lastName: true, email: true },
+    });
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    const manualApprovedRow = await prisma.dlVerification.findUnique({
+        where: { veriffSessionId: manualSessionId(userId) },
+        select: { id: true, status: true },
+    });
+
+    const existingVeriffApproval = await prisma.dlVerification.findFirst({
+        where: {
+            userId,
+            status: 'APPROVED',
+            documentImageKey: null,
+            veriffSessionId: { not: { startsWith: 'manual:' } },
+        },
+        select: { id: true },
+    });
+    if (existingVeriffApproval) {
+        throw new Error('ALREADY_VERIFF_VERIFIED');
+    }
+
+    await prisma.$transaction(async (tx) => {
+        if (manualApprovedRow?.status === 'APPROVED') {
+            await tx.dlVerification.update({
+                where: { veriffSessionId: manualSessionId(userId) },
+                data: {
+                    status: 'SUPERSEDED',
+                    decisionPayload: {
+                        source: 'ADMIN',
+                        action: 'REQUIRE_VERIFF',
+                        at: new Date().toISOString(),
+                        adminId,
+                    } as Prisma.InputJsonValue,
+                },
+            });
+        }
+
+        await tx.user.update({
+            where: { id: userId },
+            data: { dlVerified: false },
+        });
+    });
+
+    await notifyAdminVerificationChange(user, {
+        type: 'verification.veriff.required',
+        title: 'Veriff verification required',
+        body: 'The Deliivo team has asked you to complete Veriff verification before your licence can remain approved.',
+        subject: 'Deliivo: Veriff verification required',
+        data: { userId, action: 'REQUIRE_VERIFF' },
+    });
+
+    return {
+        id: userId,
+        dlVerified: false,
+        requiresVeriff: true,
+    };
+};
+
+export const syncUserVeriffStatus = async (userId: string) => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true },
+    });
+
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    return recoverPendingVeriffDecisionsForUser(userId);
+};
+
+type VerificationEmailDraft = {
+    to: string;
+    subject: string;
+    text: string;
+    missingItems: string[];
+    isDriverCandidate: boolean;
+};
+
+const REQUIRED_DOCUMENT_LABELS: Record<string, string> = {
+    [DocumentType.VEHICLE_IMAGE_FRONT]: 'vehicle front photo',
+    [DocumentType.VEHICLE_IMAGE_BACK]: 'vehicle rear photo',
+    [DocumentType.VEHICLE_DOCUMENT]: 'vehicle registration document',
+    [DocumentType.INSURANCE_DOCUMENT]: 'insurance document',
+};
+
+const hasApprovedRealVeriff = (records: Array<{ status: string; veriffSessionId: string; documentImageKey: string | null }>) =>
+    records.some((record) =>
+        record.status === 'APPROVED'
+        && !record.veriffSessionId.startsWith('manual:')
+        && record.documentImageKey === null
+    );
+
+const vehicleHasDocumentType = (
+    vehicle: { imageUrl: string | null; documents: Array<{ documentType: DocumentType }> },
+    documentType: DocumentType,
+) => {
+    if (documentType === DocumentType.VEHICLE_IMAGE_FRONT) {
+        return Boolean(vehicle.imageUrl) || vehicle.documents.some((doc) => doc.documentType === DocumentType.VEHICLE_IMAGE_FRONT || doc.documentType === DocumentType.VEHICLE_IMAGE);
+    }
+    return vehicle.documents.some((doc) => doc.documentType === documentType);
+};
+
+export const buildDriverVerificationEmailDraft = async (userId: string): Promise<VerificationEmailDraft> => {
+    await recoverPendingVeriffDecisionsForUser(userId);
+
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            onboardingStatus: true,
+            stripeAccountId: true,
+            stripeOnboardingComplete: true,
+            dlVerifications: {
+                select: {
+                    id: true,
+                    status: true,
+                    veriffSessionId: true,
+                    documentImageKey: true,
+                },
+                orderBy: { updatedAt: 'desc' },
+                take: 20,
+            },
+            vehicles: {
+                where: { deletedAt: null },
+                select: {
+                    id: true,
+                    licenseCountry: true,
+                    licenseNumber: true,
+                    brand: true,
+                    model_name: true,
+                    model_num: true,
+                    imageUrl: true,
+                    documents: {
+                        select: {
+                            documentType: true,
+                        },
+                    },
+                },
+            },
+        },
+    });
+
+    if (!user) throw new Error('USER_NOT_FOUND');
+    if (!user.email) throw new Error('USER_EMAIL_MISSING');
+
+    const hasAnyDocument =
+        user.dlVerifications.some((record) => Boolean(record.documentImageKey))
+        || user.vehicles.some((vehicle) => vehicle.documents.length > 0 || Boolean(vehicle.imageUrl));
+    const hasStartedVeriff = user.dlVerifications.some((record) => !record.veriffSessionId.startsWith('manual:'));
+    const isDriverCandidate = hasStartedVeriff || hasAnyDocument || user.vehicles.length > 0;
+
+    if (!isDriverCandidate) throw new Error('USER_NOT_DRIVER_CANDIDATE');
+
+    const missingItems: string[] = [];
+
+    if (user.onboardingStatus !== 'COMPLETED') {
+        missingItems.push('Complete your profile onboarding.');
+    }
+
+    if (!hasApprovedRealVeriff(user.dlVerifications)) {
+        missingItems.push('Complete Veriff driving licence verification.');
+    }
+
+    if (!user.stripeAccountId || !user.stripeOnboardingComplete) {
+        missingItems.push('Complete payout setup so Deliivo can pay your driver earnings.');
+    }
+
+    if (user.vehicles.length === 0) {
+        missingItems.push('Add your vehicle and upload the required vehicle verification documents.');
+    }
+
+    for (const vehicle of user.vehicles) {
+        if (!requiresFullDocumentSet(vehicle.licenseCountry)) continue;
+        const missingDocumentLabels = REQUIRED_DOCUMENT_TYPES
+            .filter((type) => !vehicleHasDocumentType(vehicle, type))
+            .map((type) => REQUIRED_DOCUMENT_LABELS[type] ?? type.replace(/_/g, ' ').toLowerCase());
+
+        if (missingDocumentLabels.length > 0) {
+            const vehicleName = [vehicle.brand, vehicle.model_name || vehicle.model_num, vehicle.licenseNumber]
+                .filter(Boolean)
+                .join(' ')
+                || 'your vehicle';
+            missingItems.push(`Upload ${missingDocumentLabels.join(', ')} for ${vehicleName}.`);
+        }
+    }
+
+    const displayName = adminUserName(user);
+    const subject = 'Complete your Deliivo driver verification';
+    const itemLines = missingItems.length > 0
+        ? missingItems.map((item, index) => `${index + 1}. ${item}`).join('\n')
+        : '1. Your driver verification items look complete. Please review your Deliivo profile for any latest prompts.';
+    const text = `Hello ${displayName},
+
+We noticed your Deliivo driver setup is not complete yet. Please complete the following items so our team can finish reviewing your account:
+
+${itemLines}
+
+Once these items are completed, the Deliivo team can continue the verification review.
+
+Thank you,
+Deliivo`;
+
+    return {
+        to: user.email,
+        subject,
+        text,
+        missingItems,
+        isDriverCandidate,
+    };
+};
+
+export const sendDriverVerificationEmail = async (
+    userId: string,
+    input: { subject: string; text: string },
+    adminId: string | null,
+) => {
+    const draft = await buildDriverVerificationEmailDraft(userId);
+
+    await sendMail({
+        to: draft.to,
+        subject: input.subject,
+        text: input.text,
+        html: `
+            <div style="font-family: Arial, sans-serif; padding: 20px; color: #111827; line-height: 1.5;">
+              ${plainTextToHtml(input.text)}
+            </div>
+        `,
+    });
+
+    return {
+        to: draft.to,
+        subject: input.subject,
+        missingItems: draft.missingItems,
+        sentBy: adminId,
     };
 };
 
@@ -670,7 +991,7 @@ export const listVehicles = async (query: {
 export const verifyVehicle = async (vehicleId: string, reviewedById?: string) => {
     const vehicle = await prisma.vehicle.findUnique({
         where: { id: vehicleId },
-        select: { id: true, userId: true },
+        select: { id: true, userId: true, brand: true, model_name: true, model_num: true, user: { select: { id: true, firstName: true, lastName: true, email: true } } },
     });
     if (!vehicle) throw new Error('VEHICLE_NOT_FOUND');
 
@@ -687,11 +1008,11 @@ export const verifyVehicle = async (vehicleId: string, reviewedById?: string) =>
         select: { id: true, isVerified: true, verificationStatus: true, reviewedAt: true },
     });
 
-    await createNotification({
-        userId: vehicle.userId,
+    await notifyAdminVerificationChange(vehicle.user, {
         type: 'vehicle.approved',
         title: 'Vehicle approved',
-        body: 'Your vehicle has been approved. You can now publish rides.',
+        body: `Your vehicle${[vehicle.brand, vehicle.model_name || vehicle.model_num].filter(Boolean).length ? ` (${[vehicle.brand, vehicle.model_name || vehicle.model_num].filter(Boolean).join(' ')})` : ''} has been approved. You can now publish rides.`,
+        subject: 'Deliivo: vehicle approved',
         data: { vehicleId },
     });
 
@@ -706,7 +1027,7 @@ export const rejectVehicle = async (
 ) => {
     const vehicle = await prisma.vehicle.findUnique({
         where: { id: vehicleId },
-        select: { id: true, userId: true },
+        select: { id: true, userId: true, brand: true, model_name: true, model_num: true, user: { select: { id: true, firstName: true, lastName: true, email: true } } },
     });
     if (!vehicle) throw new Error('VEHICLE_NOT_FOUND');
 
@@ -729,11 +1050,11 @@ export const rejectVehicle = async (
     });
 
     // The reason travels with the notification so the driver knows what to re-upload.
-    await createNotification({
-        userId: vehicle.userId,
+    await notifyAdminVerificationChange(vehicle.user, {
         type: 'vehicle.rejected',
-        title: 'Vehicle rejected',
-        body: reason,
+        title: 'Vehicle review updated',
+        body: `Your vehicle review needs attention. Reason: ${reason}`,
+        subject: 'Deliivo: vehicle review update',
         data: { vehicleId, reason },
     });
 

@@ -28,6 +28,10 @@ const registryDocument = {
     documentType: 'VEHICLE_DOCUMENT',
     imageKey: 'uploads/vehicle-documents/user-1/registry.jpg',
 };
+const insuranceDocument = {
+    documentType: 'INSURANCE_DOCUMENT',
+    imageKey: 'uploads/vehicle-documents/user-1/insurance.jpg',
+};
 const frontPhoto = {
     documentType: 'VEHICLE_IMAGE_FRONT',
     imageUrl: 'https://cdn.example.com/front.jpg',
@@ -74,9 +78,10 @@ describe('saveVehicle', () => {
         });
 
         it.each([
-            ['front photo', [backPhoto, registryDocument], 'VEHICLE_IMAGE_FRONT'],
-            ['rear photo', [frontPhoto, registryDocument], 'VEHICLE_IMAGE_BACK'],
-            ['registry document', [frontPhoto, backPhoto], 'VEHICLE_DOCUMENT'],
+            ['front photo', [backPhoto, registryDocument, insuranceDocument], 'VEHICLE_IMAGE_FRONT'],
+            ['rear photo', [frontPhoto, registryDocument, insuranceDocument], 'VEHICLE_IMAGE_BACK'],
+            ['registry document', [frontPhoto, backPhoto, insuranceDocument], 'VEHICLE_DOCUMENT'],
+            ['insurance document', [frontPhoto, backPhoto, registryDocument], 'INSURANCE_DOCUMENT'],
         ])('names the missing %s', async (_label, documents, expectedMissing) => {
             mockRedis.get.mockResolvedValue(draftWith('EE', documents));
 
@@ -85,9 +90,9 @@ describe('saveVehicle', () => {
             );
         });
 
-        it('saves an Estonian vehicle once all three documents are supplied', async () => {
+        it('saves an Estonian vehicle once all required vehicle documents are supplied', async () => {
             mockRedis.get.mockResolvedValue(
-                draftWith('EE', [frontPhoto, backPhoto, registryDocument]),
+                draftWith('EE', [frontPhoto, backPhoto, registryDocument, insuranceDocument]),
             );
 
             await DraftVehicleService.saveVehicle('user-1');
@@ -115,7 +120,7 @@ describe('saveVehicle', () => {
     describe('document persistence', () => {
         beforeEach(() => {
             mockRedis.get.mockResolvedValue(
-                draftWith('EE', [frontPhoto, backPhoto, registryDocument]),
+                draftWith('EE', [frontPhoto, backPhoto, registryDocument, insuranceDocument]),
             );
         });
 
@@ -129,7 +134,7 @@ describe('saveVehicle', () => {
             await DraftVehicleService.saveVehicle('user-1');
 
             const created = createArgs().data.documents.create;
-            expect(created).toHaveLength(2);
+            expect(created).toHaveLength(3);
             expect(created).toEqual(
                 expect.arrayContaining([
                     expect.objectContaining({
@@ -141,6 +146,11 @@ describe('saveVehicle', () => {
                         documentType: 'VEHICLE_DOCUMENT',
                         image: null,
                         imageKey: registryDocument.imageKey,
+                    }),
+                    expect.objectContaining({
+                        documentType: 'INSURANCE_DOCUMENT',
+                        image: null,
+                        imageKey: insuranceDocument.imageKey,
                     }),
                 ]),
             );
@@ -163,7 +173,7 @@ describe('saveVehicle', () => {
     describe('review state', () => {
         beforeEach(() => {
             mockRedis.get.mockResolvedValue(
-                draftWith('EE', [frontPhoto, backPhoto, registryDocument]),
+                draftWith('EE', [frontPhoto, backPhoto, registryDocument, insuranceDocument]),
             );
         });
 
@@ -191,7 +201,7 @@ describe('saveVehicle', () => {
     });
 
     describe('driving licence gate', () => {
-        const fullSet = [frontPhoto, backPhoto, registryDocument];
+        const fullSet = [frontPhoto, backPhoto, registryDocument, insuranceDocument];
 
         it('rejects a document-required country when the driver has no licence on file', async () => {
             mockRedis.get.mockResolvedValue(draftWith('EE', fullSet));

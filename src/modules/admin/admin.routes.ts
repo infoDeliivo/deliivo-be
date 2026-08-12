@@ -5,13 +5,15 @@ import * as adminController from './admin.controller.js';
 import { pricingConfigCreateSchema, pricingConfigIdSchema, pricingConfigUpdateSchema } from '../pricing/pricing.validator.js';
 import {
     adminForceCompleteBookingSchema,
+    adminVerificationEmailSchema,
     adminOpenBookingDisputeSchema,
     bookingIdParamSchema,
     rejectVehicleSchema,
+    userIdParamSchema,
     vehicleIdParamSchema,
 } from './admin.validator.js';
 import * as dlReviewController from '../dl-verification/dl-review.controller.js';
-import { declineDlSchema, dlUserIdParamSchema } from '../dl-verification/dl-verification.validator.js';
+import { declineDlSchema, dlUserIdParamSchema, resubmitDlSchema } from '../dl-verification/dl-verification.validator.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { AuthRequest } from '../../types/auth.js';
 
@@ -29,6 +31,26 @@ router.get('/sos', adminController.listEmergencyAlerts as any);
 router.post('/sos/:id/status', adminController.updateEmergencyAlertStatus as any);
 router.post('/users/:id/ban', adminController.banUser as any);
 router.post('/users/:id/unban', adminController.unbanUser as any);
+router.post(
+    '/users/:id/require-veriff',
+    validate({ params: userIdParamSchema }),
+    asyncHandler<AuthRequest>(adminController.requireVeriffForUser),
+);
+router.post(
+    '/users/:id/sync-veriff',
+    validate({ params: userIdParamSchema }),
+    asyncHandler<AuthRequest>(adminController.syncUserVeriffStatus),
+);
+router.get(
+    '/users/:id/verification-email/draft',
+    validate({ params: userIdParamSchema }),
+    asyncHandler<AuthRequest>(adminController.getDriverVerificationEmailDraft),
+);
+router.post(
+    '/users/:id/verification-email/send',
+    validate({ params: userIdParamSchema, body: adminVerificationEmailSchema }),
+    asyncHandler<AuthRequest>(adminController.sendDriverVerificationEmail),
+);
 router.get('/stats', adminController.getStats as any);
 router.get('/stats/trends', adminController.getMonitoringTrends as any);
 router.get('/ops/summary', adminController.getOperationsSummary as any);
@@ -57,6 +79,11 @@ router.post(
     '/dl-verifications/:userId/decline',
     validate({ params: dlUserIdParamSchema, body: declineDlSchema }),
     asyncHandler<AuthRequest>(dlReviewController.decline),
+);
+router.post(
+    '/dl-verifications/:userId/resubmit',
+    validate({ params: dlUserIdParamSchema, body: resubmitDlSchema }),
+    asyncHandler<AuthRequest>(dlReviewController.requestResubmission),
 );
 
 router.post('/bookings/:id/refund', adminController.adminRefundBooking as any);

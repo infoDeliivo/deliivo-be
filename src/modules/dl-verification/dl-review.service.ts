@@ -1,6 +1,8 @@
 import { prisma } from '../../config/index.js';
-import { logWarn } from '../../utils/logger.js';
+import { logError, logWarn } from '../../utils/logger.js';
 import type { DlVerificationStatus, Prisma } from '@prisma/client';
+import { createNotification } from '../notification/notification.service.js';
+import { sendMail } from '../mail/mail.service.js';
 
 /**
  * Manual driving-licence review.
@@ -29,6 +31,43 @@ const payload = (
   at: new Date().toISOString(),
   ...extra,
 });
+
+const verificationUserName = (user: { firstName?: string | null; lastName?: string | null; email?: string | null }) =>
+  [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'there';
+
+const notifyVerificationDecision = async (
+  user: { id: string; firstName?: string | null; lastName?: string | null; email?: string | null },
+  input: { type: string; title: string; body: string; subject: string; data?: Record<string, unknown> },
+) => {
+  try {
+    await createNotification({
+      userId: user.id,
+      type: input.type,
+      title: input.title,
+      body: input.body,
+      data: input.data,
+    });
+
+    if (!user.email) return;
+
+    const text = `${input.title}\n\nHello ${verificationUserName(user)},\n\n${input.body}\n\nDeliivo`;
+    const html = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; color: #111827;">
+        <h2 style="margin: 0 0 12px;">${input.title}</h2>
+        <p style="margin: 0 0 12px;">Hello ${verificationUserName(user)},</p>
+        <p style="margin: 0 0 12px;">${input.body}</p>
+        <p style="margin: 16px 0 0;">Deliivo</p>
+      </div>
+    `;
+    await sendMail({ to: user.email, subject: input.subject, html, text });
+  } catch (error) {
+    logError('Failed to notify manual DL verification decision', error, {
+      userId: user.id,
+      type: input.type,
+      hasEmail: Boolean(user.email),
+    });
+  }
+};
 
 /**
  * True when the user has a licence image on file — in any state. Used by the vehicle
@@ -204,7 +243,7 @@ export const approveDlDocument = async (userId: string, adminId: string | null) 
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { firstName: true, lastName: true, dob: true, gender: true },
+    select: { id: true, firstName: true, lastName: true, email: true, dob: true, gender: true },
   });
 
   if (!user) throw new Error('USER_NOT_FOUND');
@@ -230,6 +269,13 @@ export const approveDlDocument = async (userId: string, adminId: string | null) 
   ]);
 
   logWarn('DL_MANUAL_APPROVED', { adminId, targetUserId: userId });
+  await notifyVerificationDecision(user, {
+    type: 'verification.licence.approved',
+    title: 'Driving licence approved',
+    body: 'Your driving licence has been approved by the Deliivo team.',
+    subject: 'Deliivo: driving licence approved',
+    data: { userId, status: 'APPROVED', source: 'MANUAL_REVIEW' },
+  });
 
   return { record, dlVerified: true };
 };
@@ -245,6 +291,11 @@ export const declineDlDocument = async (
   adminId: string | null,
 ) => {
   await loadPendingRow(userId);
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, firstName: true, lastName: true, email: true },
+  });
+  if (!user) throw new Error('USER_NOT_FOUND');
 
   const [record] = await prisma.$transaction([
     prisma.dlVerification.update({
@@ -264,6 +315,58 @@ export const declineDlDocument = async (
   ]);
 
   logWarn('DL_MANUAL_DECLINED', { adminId, targetUserId: userId });
+  await notifyVerificationDecision(user, {
+    type: 'verification.licence.declined',
+    title: 'Driving licence declined',
+    body: `Your driving licence review was declined. Reason: ${reason}`,
+    subject: 'Deliivo: driving licence declined',
+    data: { userId, status: 'DECLINED', reason, source: 'MANUAL_REVIEW' },
+  });
+
+  return { record, dlVerified: false };
+};
+
+/**
+ * Admin requests a re-submission. This keeps the manual-review path open but makes the
+ * current document explicitly non-approved until the driver uploads a new one.
+ */
+export const requestDlResubmission = async (
+  userId: string,
+  reason: string,
+  adminId: string | null,
+) => {
+  await loadPendingRow(userId);
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, firstName: true, lastName: true, email: true },
+  });
+  if (!user) throw new Error('USER_NOT_FOUND');
+
+  const [record] = await prisma.$transaction([
+    prisma.dlVerification.update({
+      where: { veriffSessionId: manualSessionId(userId) },
+      data: {
+        status: 'RESUBMISSION_REQUESTED',
+        declineReason: reason,
+        reviewedById: adminId,
+        reviewedAt: new Date(),
+        nameMatch: false,
+        dobMatch: false,
+        genderMatch: false,
+        decisionPayload: payload('RESUBMISSION_REQUESTED', { adminId, reason }),
+      },
+    }),
+    prisma.user.update({ where: { id: userId }, data: { dlVerified: false } }),
+  ]);
+
+  logWarn('DL_MANUAL_RESUBMISSION_REQUESTED', { adminId, targetUserId: userId });
+  await notifyVerificationDecision(user, {
+    type: 'verification.licence.resubmission_requested',
+    title: 'Driving licence re-submission requested',
+    body: `Please upload your driving licence again. Reason: ${reason}`,
+    subject: 'Deliivo: please re-submit your driving licence',
+    data: { userId, status: 'RESUBMISSION_REQUESTED', reason, source: 'MANUAL_REVIEW' },
+  });
 
   return { record, dlVerified: false };
 };

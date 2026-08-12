@@ -41,11 +41,17 @@ import {
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
-import { protect, errorHandler, rateLimiter, otpLimiter, requestTimeout, searchLimiter, bookingLimiter, requestContext } from './middlewares/index.js';
+import { protect, errorHandler, rateLimiter, otpLimiters, requestTimeout, searchLimiter, bookingLimiter, requestContext } from './middlewares/index.js';
 import './queue/deadline.queue.js'; // start BullMQ deadline worker
 import './queue/maintenance.queue.js'; // start nightly maintenance worker
 
 const app = express();
+
+// Behind a reverse proxy (e.g. Railway) req.ip is the proxy unless we trust the
+// forwarding hops. Required for the per-IP / per-subnet OTP limiters to see the
+// real client. Defaults to 1 hop; set TRUST_PROXY_HOPS to match the deployment.
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS);
+app.set('trust proxy', Number.isInteger(trustProxyHops) && trustProxyHops >= 0 ? trustProxyHops : 1);
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
@@ -158,9 +164,13 @@ app.use('/api/v1/auth', (req, res, next) => {
 
 app.use(docsRouter);
 
-app.use('/api/v1/auth/otp/request', otpLimiter);
-app.use('/api/v1/auth/otp/resend', otpLimiter);
-app.use('/api/v1/auth/otp/verify', otpLimiter);
+// Layered OTP abuse protection (per-identifier + per-IP + per-subnet). Also covers
+// signup/login, which trigger an OTP send but were previously only under the global limiter.
+app.use('/api/v1/auth/otp/request', ...otpLimiters);
+app.use('/api/v1/auth/otp/resend', ...otpLimiters);
+app.use('/api/v1/auth/otp/verify', ...otpLimiters);
+app.use('/api/v1/auth/signup', ...otpLimiters);
+app.use('/api/v1/auth/login', ...otpLimiters);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', protect, userRouter);
 app.use('/api/v1/publish-ride', protect, publishRideRouter);

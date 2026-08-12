@@ -7,9 +7,19 @@ import { manualSessionId } from './dl-review.service.js';
 import type { DlVerificationStatus, Prisma } from '@prisma/client';
 
 const VERIFF_BASE_URL = process.env.VERIFF_BASE_URL || 'https://stationapi.veriff.com/v1';
-const VERIFF_API_KEY = process.env.VERIFF_API_KEY || '';
-const VERIFF_SHARED_SECRET = process.env.VERIFF_SHARED_SECRET || '';
 const VERIFF_CALLBACK_URL = process.env.VERIFF_CALLBACK_URL || '';
+const VERIFF_DECISION_RECOVERY_LIMIT = Number(process.env.VERIFF_DECISION_RECOVERY_LIMIT || '50');
+const VERIFF_DECISION_RECOVERY_MIN_AGE_MINUTES = Number(process.env.VERIFF_DECISION_RECOVERY_MIN_AGE_MINUTES || '5');
+
+const TERMINAL_DECISION_STATUSES = new Set([
+  'approved',
+  'declined',
+  'resubmission_requested',
+  'expired',
+]);
+
+const getVeriffApiKey = () => process.env.VERIFF_API_KEY || '';
+const getVeriffSharedSecret = () => process.env.VERIFF_SHARED_SECRET || '';
 
 // Veriff only accepts HTTPS return URLs (API error 1302). Drop anything else
 // instead of letting the session-create call fail with a 400.
@@ -50,10 +60,69 @@ interface CreateVeriffSessionOptions {
 // creates it.
 const hasApprovedVerification = async (userId: string): Promise<boolean> => {
   const existing = await prisma.dlVerification.findFirst({
-    where: { userId, status: 'APPROVED' },
+    where: {
+      userId,
+      status: 'APPROVED',
+      documentImageKey: null,
+      veriffSessionId: { not: { startsWith: 'manual:' } },
+    },
     select: { id: true },
   });
   return existing !== null;
+};
+
+const findPendingVeriffSession = async (userId: string) =>
+  prisma.dlVerification.findFirst({
+    where: {
+      userId,
+      status: 'PENDING',
+      documentImageKey: null,
+      veriffSessionId: { not: { startsWith: 'manual:' } },
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      id: true,
+      veriffSessionId: true,
+      veriffSessionUrl: true,
+    },
+  });
+
+const reconcilePendingVeriffSessionsForUser = async (userId: string) => {
+  try {
+    return await recoverPendingVeriffDecisionsForUser(userId);
+  } catch (error) {
+    logWarn('Veriff pending-session reconciliation failed before creating a session', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+};
+
+const normalizeLegacyApprovedMismatchRows = async (userId: string) => {
+  const rows = await prisma.dlVerification.findMany({
+    where: {
+      userId,
+      status: 'IDENTITY_MISMATCH',
+      documentImageKey: null,
+      veriffSessionId: { not: { startsWith: 'manual:' } },
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: 20,
+    select: {
+      veriffSessionId: true,
+      decisionPayload: true,
+    },
+  });
+
+  let updated = 0;
+  for (const row of rows) {
+    const status = extractDecisionStatus(row.decisionPayload);
+    if (status !== 'approved') continue;
+    const result = await handleWebhookDecision(row.decisionPayload);
+    if (result.success) updated++;
+  }
+  return updated;
 };
 
 // ─── Create a Veriff session for DL verification ───────────────────
@@ -79,8 +148,22 @@ export const createVeriffSession = async (
     tag,
   } = options;
 
+  await reconcilePendingVeriffSessionsForUser(userId);
+
   if (await hasApprovedVerification(userId)) {
     return { success: false, reason: 'ALREADY_VERIFIED' };
+  }
+
+  const pendingSession = await findPendingVeriffSession(userId);
+  if (pendingSession) {
+    return {
+      success: true,
+      data: {
+        verificationId: pendingSession.id,
+        sessionId: pendingSession.veriffSessionId,
+        sessionUrl: pendingSession.veriffSessionUrl,
+      },
+    };
   }
 
   const callbackUrl = resolveCallbackUrl(callback);
@@ -161,13 +244,13 @@ export const createVeriffSession = async (
   try {
     const payloadString = JSON.stringify(payload);
     const signature = crypto
-      .createHmac('sha256', VERIFF_SHARED_SECRET)
+      .createHmac('sha256', getVeriffSharedSecret())
       .update(payloadString)
       .digest('hex');
 
     const response = await axios.post(`${VERIFF_BASE_URL}/sessions`, payloadString, {
       headers: {
-        'X-AUTH-CLIENT': VERIFF_API_KEY,
+        'X-AUTH-CLIENT': getVeriffApiKey(),
         'X-HMAC-SIGNATURE': signature,
         'Content-Type': 'application/json',
       },
@@ -314,7 +397,7 @@ const HEX_SHA256 = /^[0-9a-f]{64}$/i;
  * would then be enough to self-approve a driving licence.
  */
 export const assertVeriffWebhookConfigured = (): void => {
-  if (VERIFF_SHARED_SECRET) return;
+  if (getVeriffSharedSecret()) return;
   const message =
     'VERIFF_SHARED_SECRET is not set; the Veriff decision webhook cannot be authenticated.';
   if (process.env.NODE_ENV === 'production') {
@@ -331,7 +414,8 @@ export const validateWebhookSignature = (
   signature: string,
 ): boolean => {
   // Fail closed rather than validating everything against an empty-key HMAC.
-  if (!VERIFF_SHARED_SECRET) {
+  const sharedSecret = getVeriffSharedSecret();
+  if (!sharedSecret) {
     logError('Veriff webhook rejected: VERIFF_SHARED_SECRET is not configured');
     return false;
   }
@@ -343,7 +427,7 @@ export const validateWebhookSignature = (
   }
 
   const expected = crypto
-    .createHmac('sha256', VERIFF_SHARED_SECRET)
+    .createHmac('sha256', sharedSecret)
     .update(payload)
     .digest();
   const provided = Buffer.from(signature, 'hex');
@@ -354,6 +438,9 @@ export const validateWebhookSignature = (
 
   return crypto.timingSafeEqual(provided, expected);
 };
+
+const buildSessionSignature = (sessionId: string): string =>
+  crypto.createHmac('sha256', getVeriffSharedSecret()).update(sessionId).digest('hex');
 
 /**
  * Veriff person fields may arrive as a plain string or as `{ value }`.
@@ -379,6 +466,83 @@ interface VeriffWebhookVerification {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
+
+const extractDecisionStatus = (body: unknown): string | null => {
+  if (!isRecord(body) || !isRecord(body.verification)) return null;
+  return typeof body.verification.status === 'string' ? body.verification.status : null;
+};
+
+const buildVeriffRequestHeaders = (sessionId: string) => ({
+  'X-AUTH-CLIENT': getVeriffApiKey(),
+  'X-HMAC-SIGNATURE': buildSessionSignature(sessionId),
+  'Content-Type': 'application/json',
+});
+
+const fetchSignedVeriffText = async (path: string, sessionId: string) => {
+  const response = await axios.get(`${VERIFF_BASE_URL}${path}`, {
+    headers: buildVeriffRequestHeaders(sessionId),
+    responseType: 'text',
+    transformResponse: [(data) => data],
+  });
+
+  const rawBody = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+  const responseSignature = response.headers['x-hmac-signature'];
+
+  if (typeof responseSignature !== 'string' || !validateWebhookSignature(rawBody, responseSignature)) {
+    throw new Error('INVALID_VERIFF_RESPONSE_SIGNATURE');
+  }
+
+  try {
+    return JSON.parse(rawBody) as unknown;
+  } catch {
+    throw new Error('INVALID_VERIFF_RESPONSE_JSON');
+  }
+};
+
+const buildFallbackDecisionPayload = async (sessionId: string, userId: string): Promise<unknown | null> => {
+  const attemptsBody = await fetchSignedVeriffText(`/sessions/${sessionId}/attempts`, sessionId);
+  if (!isRecord(attemptsBody) || !Array.isArray(attemptsBody.verifications)) return null;
+
+  const attempts = attemptsBody.verifications
+    .filter(isRecord)
+    .filter((attempt) => typeof attempt.status === 'string')
+    .sort((left, right) => {
+      const leftTime = typeof left.createdTime === 'string' ? Date.parse(left.createdTime) : 0;
+      const rightTime = typeof right.createdTime === 'string' ? Date.parse(right.createdTime) : 0;
+      return rightTime - leftTime;
+    });
+
+  const latestAttempt = attempts.find((attempt) =>
+    TERMINAL_DECISION_STATUSES.has(String(attempt.status))
+  );
+
+  if (!latestAttempt) return null;
+
+  const status = String(latestAttempt.status);
+  let person: Record<string, unknown> | undefined;
+
+  if (status === 'approved') {
+    const personBody = await fetchSignedVeriffText(`/sessions/${sessionId}/person`, sessionId);
+    if (!isRecord(personBody) || !isRecord(personBody.person)) return null;
+    person = {
+      firstName: personBody.person.firstName,
+      lastName: personBody.person.lastName,
+      dateOfBirth: personBody.person.dateOfBirth,
+      gender: personBody.person.gender,
+    };
+  }
+
+  return {
+    verification: {
+      id: sessionId,
+      status,
+      code: typeof latestAttempt.code === 'number' ? latestAttempt.code : null,
+      reasonCode: typeof latestAttempt.reasonCode === 'string' ? latestAttempt.reasonCode : undefined,
+      vendorData: userId,
+      ...(person ? { person } : {}),
+    },
+  };
+};
 
 // ─── Handle webhook decision from Veriff ───────────────────────────
 export const handleWebhookDecision = async (body: unknown) => {
@@ -478,14 +642,12 @@ export const handleWebhookDecision = async (body: unknown) => {
           { name: verifiedName, dob: verifiedDob, gender: verifiedGender },
         )
       : null;
-  const approvedAndMatched = mappedStatus === 'APPROVED' && match?.overall === true;
+  const approvedByVeriff = mappedStatus === 'APPROVED';
+  const approvedAndMatched = approvedByVeriff && match?.overall === true;
 
-  // Hard block: an approved decision whose identity does not match is flagged
-  // IDENTITY_MISMATCH and does NOT verify the user.
-  const finalStatus: DlVerificationStatus =
-    mappedStatus === 'APPROVED' && !approvedAndMatched
-      ? 'IDENTITY_MISMATCH'
-      : (mappedStatus as DlVerificationStatus);
+  // Veriff approval means the licence document passed. Identity comparison remains
+  // stored as admin-visible risk flags instead of blocking DL verification.
+  const finalStatus = mappedStatus as DlVerificationStatus;
 
   // Update verification record
   await prisma.dlVerification.update({
@@ -507,26 +669,30 @@ export const handleWebhookDecision = async (body: unknown) => {
     },
   });
 
-  // Only mark the user DL-verified when approved AND the identity matches.
-  if (approvedAndMatched) {
+  // Mark the user DL-verified when Veriff approves the licence. Name/DOB/gender
+  // mismatches remain visible on the record for admin review.
+  if (approvedByVeriff) {
     await prisma.$transaction([
       prisma.user.update({
         where: { id: userId },
         data: { dlVerified: true },
       }),
-      // Close any open manual submission. Veriff is the authority, so leaving the
-      // upload PENDING would keep it in the admin queue where a decline would
-      // revoke the verification just granted. Scoped to PENDING so a manual row an
-      // admin already decided stays as the historical record it is. updateMany
-      // rather than update: most drivers have no manual row, and this must be a
-      // no-op rather than a throw when nothing matches.
+      // Close stale pending attempts for this user. Veriff is the authority; once one
+      // session approves, older pending Veriff/manual rows are historical noise and
+      // must not continue to surface as the current admin state.
       prisma.dlVerification.updateMany({
-        where: { veriffSessionId: manualSessionId(userId), status: 'PENDING' },
+        where: {
+          userId,
+          status: 'PENDING',
+          veriffSessionId: { not: sessionId },
+        },
         data: { status: 'SUPERSEDED' },
       }),
     ]);
-  } else if (mappedStatus === 'APPROVED') {
-    logWarn('Veriff webhook: DL approved but identity mismatch — verification withheld', {
+  }
+
+  if (approvedByVeriff && !approvedAndMatched) {
+    logWarn('Veriff webhook: DL approved with identity mismatch', {
       sessionId,
       userId,
       nameMatch: match?.nameMatch,
@@ -540,6 +706,8 @@ export const handleWebhookDecision = async (body: unknown) => {
 
 // ─── Get DL verification status for a user ─────────────────────────
 export const getVerificationStatus = async (userId: string) => {
+  await reconcilePendingVeriffSessionsForUser(userId);
+
   // Ordered by updatedAt, not createdAt: the manual row is an upsert whose createdAt
   // never moves off the first submission, so a re-upload or a fresh decline would
   // otherwise lose to an older-but-newer-created Veriff row and the driver would
@@ -575,4 +743,101 @@ export const getVerificationStatus = async (userId: string) => {
       updatedAt: latest.updatedAt,
     },
   };
+};
+
+type VeriffDecisionRecoveryOptions = {
+  userId?: string;
+  includeFresh?: boolean;
+  limit?: number;
+};
+
+export const recoverPendingVeriffDecisions = async (options: VeriffDecisionRecoveryOptions = {}) => {
+  if (!getVeriffApiKey() || !getVeriffSharedSecret()) {
+    logWarn('Veriff decision recovery skipped: API credentials are not fully configured');
+    return { scanned: 0, updated: 0, skipped: 0 };
+  }
+
+  const cutoff = new Date(Date.now() - VERIFF_DECISION_RECOVERY_MIN_AGE_MINUTES * 60 * 1000);
+  const candidates = await prisma.dlVerification.findMany({
+    where: {
+      ...(options.userId ? { userId: options.userId } : {}),
+      status: 'PENDING',
+      documentImageKey: null,
+      veriffSessionId: { not: { startsWith: 'manual:' } },
+      ...(options.includeFresh ? {} : { updatedAt: { lte: cutoff } }),
+    },
+    orderBy: { updatedAt: 'asc' },
+    take: options.limit ?? VERIFF_DECISION_RECOVERY_LIMIT,
+    select: {
+      id: true,
+      userId: true,
+      veriffSessionId: true,
+      updatedAt: true,
+    },
+  });
+
+  let updated = 0;
+  let skipped = 0;
+
+  for (const record of candidates) {
+    if (record.veriffSessionId.startsWith('manual:')) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      let parsed = await fetchSignedVeriffText(
+        `/sessions/${record.veriffSessionId}/decision`,
+        record.veriffSessionId,
+      );
+      const decisionStatus = extractDecisionStatus(parsed);
+      if (!decisionStatus) {
+        const fallback = await buildFallbackDecisionPayload(record.veriffSessionId, record.userId);
+        if (!fallback) {
+          skipped++;
+          continue;
+        }
+        parsed = fallback;
+      } else if (!TERMINAL_DECISION_STATUSES.has(decisionStatus)) {
+        skipped++;
+        continue;
+      }
+
+      const result = await handleWebhookDecision(parsed);
+      if (result.success) {
+        updated++;
+      } else {
+        skipped++;
+      }
+    } catch (error: any) {
+      const statusCode = error?.response?.status;
+      if (statusCode === 404) {
+        logWarn('Veriff decision recovery: session not found', {
+          sessionId: record.veriffSessionId,
+          userId: record.userId,
+        });
+      } else {
+        logError('Veriff decision recovery failed', error, {
+          sessionId: record.veriffSessionId,
+          userId: record.userId,
+          statusCode,
+        });
+      }
+      skipped++;
+    }
+  }
+
+  logDebug('Veriff decision recovery complete', {
+    scanned: candidates.length,
+    updated,
+    skipped,
+  });
+
+  return { scanned: candidates.length, updated, skipped };
+};
+
+export const recoverPendingVeriffDecisionsForUser = async (userId: string) => {
+  const recovered = await recoverPendingVeriffDecisions({ userId, includeFresh: true, limit: 20 });
+  const normalized = await normalizeLegacyApprovedMismatchRows(userId);
+  return { ...recovered, normalized };
 };

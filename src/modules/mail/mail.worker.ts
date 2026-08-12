@@ -3,8 +3,11 @@ import transporter, { verifyMailer } from '../../config/mailer.js';
 import { bullRedis } from '../../queue/redisConnection.js';
 import { SendMailPayload } from './mail.types.js';
 import { logInfo, logError, logDebug } from '../../utils/logger.js';
+import { loadMailWorkerConfig } from './mail.config.js';
 
 logInfo('Mail worker booting');
+
+const mailConfig = loadMailWorkerConfig();
 
 (async () => {
   await verifyMailer();
@@ -32,6 +35,8 @@ const worker = new Worker(
   },
   {
     connection: bullRedis,
+    concurrency: mailConfig.concurrency,
+    ...(mailConfig.limiter ? { limiter: mailConfig.limiter } : {}),
   },
 );
 

@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 const mockPrisma = {
     dlVerification: {
         findUnique: jest.fn(),
@@ -21,9 +23,21 @@ jest.mock('../../config/index.js', () => ({
     prisma: mockPrisma,
 }));
 
+jest.mock('axios', () => ({
+    __esModule: true,
+    default: {
+        get: jest.fn(),
+        post: jest.fn(),
+    },
+}));
+
+import axios from 'axios';
+
 import {
+    createVeriffSession,
     getVerificationStatus,
     handleWebhookDecision,
+    recoverPendingVeriffDecisions,
     registerVeriffSession,
 } from './dl-verification.service';
 
@@ -34,6 +48,7 @@ const buildBody = (status: string, person: Person) => ({
 });
 
 const profile = { firstName: 'Jon', lastName: 'Smith', dob: new Date('1990-05-15T00:00:00Z'), gender: 'MALE' };
+const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 describe('handleWebhookDecision — identity matching (name + DOB + gender)', () => {
     beforeEach(() => {
@@ -66,15 +81,19 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
         );
     });
 
-    // Without this, a manual submission left open after Veriff approves stays in the
-    // admin queue, where declining it would revoke the verification just granted.
-    it('closes an open manual submission when it verifies the driver', async () => {
+    // Without this, older pending Veriff/manual rows can keep showing as the user's
+    // current state in admin after a later session approves.
+    it('supersedes stale pending submissions when it verifies the driver', async () => {
         await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jón', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
         );
 
         expect(mockPrisma.dlVerification.updateMany).toHaveBeenCalledWith({
-            where: { veriffSessionId: 'manual:user-1', status: 'PENDING' },
+            where: {
+                userId: 'user-1',
+                status: 'PENDING',
+                veriffSessionId: { not: 'veriff-session-1' },
+            },
             data: { status: 'SUPERSEDED' },
         });
     });
@@ -88,56 +107,57 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
         expect(mockPrisma.dlVerification.updateMany.mock.calls[0][0].where.status).toBe('PENDING');
     });
 
-    it('supersedes nothing when the identity does not match', async () => {
+    it('still verifies and supersedes stale rows when Veriff approves with an identity mismatch', async () => {
         await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1991-05-15', gender: 'M' }),
         );
 
-        expect(mockPrisma.dlVerification.updateMany).not.toHaveBeenCalled();
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
+        expect(mockPrisma.dlVerification.updateMany).toHaveBeenCalled();
     });
 
-    it('blocks with IDENTITY_MISMATCH when the DOB differs', async () => {
+    it('approves but flags DOB mismatch when the DOB differs', async () => {
         const res = await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1991-05-15', gender: 'M' }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
         expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
-            expect.objectContaining({ data: expect.objectContaining({ status: 'IDENTITY_MISMATCH', dobMatch: false }) }),
+            expect.objectContaining({ data: expect.objectContaining({ status: 'APPROVED', dobMatch: false }) }),
         );
     });
 
-    it('blocks with IDENTITY_MISMATCH when the gender differs', async () => {
+    it('approves but flags gender mismatch when the gender differs', async () => {
         const res = await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'F' }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
         expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
             expect.objectContaining({ data: expect.objectContaining({ genderMatch: false }) }),
         );
     });
 
-    it('blocks with IDENTITY_MISMATCH when the name differs', async () => {
+    it('approves but flags name mismatch when the name differs', async () => {
         mockPrisma.user.findUnique.mockResolvedValue({ firstName: 'Jane', lastName: 'Doe', dob: profile.dob, gender: 'FEMALE' });
         const res = await handleWebhookDecision(
             buildBody('approved', { firstName: 'John', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
     });
 
-    it('blocks with IDENTITY_MISMATCH when the profile has no last name', async () => {
+    it('approves but flags name mismatch when the profile has no last name', async () => {
         mockPrisma.user.findUnique.mockResolvedValue({ firstName: 'Jon', lastName: null, dob: profile.dob, gender: 'MALE' });
         const res = await handleWebhookDecision(
             buildBody('approved', { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
         expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
             expect.objectContaining({ data: expect.objectContaining({ nameMatch: false }) }),
         );
@@ -157,19 +177,19 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
         );
     });
 
-    // KYC-grade matching: a field the document does not assert is a mismatch, not a
-    // field to be skipped. An approved decision with nothing to compare verifies nobody.
-    it('withholds verification when DOB/gender are absent from the payload', async () => {
+    // Missing fields remain mismatch flags, but Veriff approval still verifies the
+    // licence document.
+    it('approves but flags mismatches when DOB/gender are absent from the payload', async () => {
         const res = await handleWebhookDecision(buildBody('approved', { firstName: 'Jon', lastName: 'Smith' }));
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
         expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
             expect.objectContaining({ data: expect.objectContaining({ dobMatch: false, genderMatch: false }) }),
         );
     });
 
-    it('withholds verification when the document carries an extra middle name', async () => {
+    it('approves but flags mismatch when the document carries an extra middle name', async () => {
         const res = await handleWebhookDecision(
             buildBody('approved', {
                 firstName: 'Jon Michael',
@@ -179,8 +199,8 @@ describe('handleWebhookDecision — identity matching (name + DOB + gender)', ()
             }),
         );
 
-        expect(res).toEqual({ success: true, status: 'IDENTITY_MISMATCH' });
-        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+        expect(res).toEqual({ success: true, status: 'APPROVED' });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
     });
 
     it('does not verify or match-check a declined decision', async () => {
@@ -368,6 +388,41 @@ describe('registerVeriffSession', () => {
     });
 });
 
+describe('createVeriffSession', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        delete process.env.VERIFF_API_KEY;
+        delete process.env.VERIFF_SHARED_SECRET;
+        mockPrisma.dlVerification.findMany.mockResolvedValue([]);
+        mockPrisma.dlVerification.findFirst
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({
+                id: 'rec-pending',
+                veriffSessionId: 'veriff-pending',
+                veriffSessionUrl: 'https://alchemy.veriff.com/v/pending',
+            });
+    });
+
+    it('reuses an existing pending Veriff session instead of creating a duplicate', async () => {
+        const res = await createVeriffSession({
+            userId: 'user-1',
+            firstName: 'Jon',
+            lastName: 'Smith',
+        });
+
+        expect(res).toEqual({
+            success: true,
+            data: {
+                verificationId: 'rec-pending',
+                sessionId: 'veriff-pending',
+                sessionUrl: 'https://alchemy.veriff.com/v/pending',
+            },
+        });
+        expect(mockedAxios.post).not.toHaveBeenCalled();
+        expect(mockPrisma.dlVerification.create).not.toHaveBeenCalled();
+    });
+});
+
 describe('getVerificationStatus', () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -430,5 +485,128 @@ describe('getVerificationStatus', () => {
             declineReason: 'Photo is blurred',
             hasDocument: true,
         });
+    });
+});
+
+describe('recoverPendingVeriffDecisions', () => {
+    const signSession = (sessionId: string) =>
+        crypto.createHmac('sha256', process.env.VERIFF_SHARED_SECRET || '').update(sessionId).digest('hex');
+    const signPayload = (payload: string) =>
+        crypto.createHmac('sha256', process.env.VERIFF_SHARED_SECRET || '').update(payload).digest('hex');
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        process.env.VERIFF_SHARED_SECRET = 'veriff-shared-secret';
+        process.env.VERIFF_API_KEY = 'veriff-api-key';
+        mockPrisma.dlVerification.findMany.mockResolvedValue([
+            { id: 'rec-1', userId: 'user-1', veriffSessionId: 'veriff-session-1', updatedAt: new Date('2026-08-10T10:00:00Z') },
+            { id: 'rec-2', userId: 'user-2', veriffSessionId: 'manual:user-2', updatedAt: new Date('2026-08-10T10:00:00Z') },
+        ]);
+        mockPrisma.dlVerification.findUnique.mockResolvedValue({ id: 'rec-1', userId: 'user-1' });
+        mockPrisma.user.findUnique.mockResolvedValue(profile);
+        mockPrisma.dlVerification.update.mockResolvedValue(undefined);
+        mockPrisma.user.update.mockResolvedValue(undefined);
+    });
+
+    it('fetches decision data for pending Veriff sessions and applies terminal outcomes', async () => {
+        const payload = JSON.stringify({
+            verification: {
+                id: 'veriff-session-1',
+                status: 'approved',
+                code: 9001,
+                person: { firstName: 'Jon', lastName: 'Smith', dateOfBirth: '1990-05-15', gender: 'M' },
+            },
+        });
+        mockedAxios.get.mockResolvedValue({
+            data: payload,
+            headers: { 'x-hmac-signature': signPayload(payload) },
+        } as any);
+
+        const result = await recoverPendingVeriffDecisions();
+
+        expect(result).toEqual({ scanned: 2, updated: 1, skipped: 1 });
+        expect(mockedAxios.get).toHaveBeenCalledWith(
+            expect.stringContaining('/sessions/veriff-session-1/decision'),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    'X-AUTH-CLIENT': 'veriff-api-key',
+                    'X-HMAC-SIGNATURE': signSession('veriff-session-1'),
+                }),
+            }),
+        );
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
+    });
+
+    it('skips non-terminal decisions instead of forcing a decline', async () => {
+        const payload = JSON.stringify({
+            verification: {
+                id: 'veriff-session-1',
+                status: 'review',
+                code: 7001,
+            },
+        });
+        mockedAxios.get.mockResolvedValue({
+            data: payload,
+            headers: { 'x-hmac-signature': signPayload(payload) },
+        } as any);
+
+        const result = await recoverPendingVeriffDecisions();
+
+        expect(result).toEqual({ scanned: 2, updated: 0, skipped: 2 });
+        expect(mockPrisma.dlVerification.update).not.toHaveBeenCalled();
+        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('falls back to attempts + person when the decision endpoint returns verification null', async () => {
+        const nullDecision = JSON.stringify({ status: 'success', verification: null });
+        const attemptsPayload = JSON.stringify({
+            status: 'success',
+            verifications: [
+                {
+                    id: 'attempt-1',
+                    status: 'approved',
+                    createdTime: '2026-08-10T14:50:52.421453Z',
+                },
+            ],
+        });
+        const personPayload = JSON.stringify({
+            status: 'success',
+            person: {
+                id: 'person-1',
+                firstName: 'Jon',
+                lastName: 'Smith',
+                dateOfBirth: '1990-05-15',
+                gender: 'M',
+            },
+        });
+
+        mockedAxios.get
+            .mockResolvedValueOnce({
+                data: nullDecision,
+                headers: { 'x-hmac-signature': signPayload(nullDecision) },
+            } as any)
+            .mockResolvedValueOnce({
+                data: attemptsPayload,
+                headers: { 'x-hmac-signature': signPayload(attemptsPayload) },
+            } as any)
+            .mockResolvedValueOnce({
+                data: personPayload,
+                headers: { 'x-hmac-signature': signPayload(personPayload) },
+            } as any);
+
+        const result = await recoverPendingVeriffDecisions();
+
+        expect(result).toEqual({ scanned: 2, updated: 1, skipped: 1 });
+        expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    status: 'APPROVED',
+                    verifiedName: 'Jon Smith',
+                    verifiedDob: '1990-05-15',
+                    verifiedGender: 'M',
+                }),
+            }),
+        );
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({ where: { id: 'user-1' }, data: { dlVerified: true } });
     });
 });

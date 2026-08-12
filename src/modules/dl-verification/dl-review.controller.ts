@@ -7,8 +7,9 @@ import {
   listDlReviewQueue,
   approveDlDocument,
   declineDlDocument,
+  requestDlResubmission,
 } from './dl-review.service.js';
-import type { SubmitDlDocumentInput, DeclineDlInput } from './dl-verification.validator.js';
+import type { SubmitDlDocumentInput, DeclineDlInput, ResubmitDlInput } from './dl-verification.validator.js';
 import type { DlVerificationStatus } from '@prisma/client';
 
 const STATUS_BY_CODE: Record<string, HttpStatus> = {
@@ -96,5 +97,19 @@ export const decline = async (req: AuthRequest, res: Response) => {
     return sendSuccess(res, { message: 'Driving licence declined', data: result });
   } catch (error: unknown) {
     return fail(res, error, 'Failed to decline the driving licence');
+  }
+};
+
+export const requestResubmission = async (req: AuthRequest, res: Response) => {
+  try {
+    const { reason } = req.body as ResubmitDlInput;
+    const result = await requestDlResubmission(
+      req.params.userId as string,
+      reason,
+      req.user?.id ?? null,
+    );
+    return sendSuccess(res, { message: 'Driving licence resubmission requested', data: result });
+  } catch (error: unknown) {
+    return fail(res, error, 'Failed to request driving licence resubmission');
   }
 };

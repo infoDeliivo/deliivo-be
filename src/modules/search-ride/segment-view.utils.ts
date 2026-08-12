@@ -3,6 +3,7 @@ export type SegmentPointRef = 'origin' | 'destination' | `waypoint:${string}`;
 export interface SegmentPoint {
     ref: SegmentPointRef;
     waypointId: string | null;
+    waypointType: string | null;
     placeId: string;
     address: string;
     lat: number;
@@ -79,6 +80,7 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
         {
             ref: 'origin',
             waypointId: null,
+            waypointType: null,
             placeId: ride.originPlaceId,
             address: ride.originAddress,
             lat: ride.originLat,
@@ -89,6 +91,7 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
         ...segmentWaypoints.map((waypoint, index) => ({
             ref: `waypoint:${waypoint.id}` as const,
             waypointId: waypoint.id,
+            waypointType: waypoint.waypointType,
             placeId: waypoint.placeId,
             address: waypoint.address,
             lat: waypoint.lat,
@@ -100,6 +103,7 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
         {
             ref: 'destination',
             waypointId: null,
+            waypointType: null,
             placeId: ride.destinationPlaceId,
             address: ride.destinationAddress,
             lat: ride.destinationLat,
@@ -121,6 +125,22 @@ const findPointByRef = (
     return points.find((point) => point.ref === ref) ?? null;
 };
 
+const normalizeFarePoint = (
+    points: SegmentPoint[],
+    point: SegmentPoint,
+    role: 'pickup' | 'dropoff'
+): SegmentPoint => {
+    if (role === 'pickup' && point.waypointType === 'PICKUP') {
+        return points.find((candidate) => candidate.ref === 'origin') ?? point;
+    }
+
+    if (role === 'dropoff' && point.waypointType === 'DROPOFF') {
+        return points.find((candidate) => candidate.ref === 'destination') ?? point;
+    }
+
+    return point;
+};
+
 export const resolveSegmentView = (
     ride: SegmentRide,
     points: SegmentPoint[],
@@ -138,7 +158,9 @@ export const resolveSegmentView = (
         return null;
     }
 
-    const segmentFare = drop.cumulativePrice - pickup.cumulativePrice;
+    const farePickup = normalizeFarePoint(points, pickup, 'pickup');
+    const fareDrop = normalizeFarePoint(points, drop, 'dropoff');
+    const segmentFare = fareDrop.cumulativePrice - farePickup.cumulativePrice;
 
     if (segmentFare < 0) {
         return null;
@@ -160,8 +182,8 @@ export const resolveSegmentView = (
             dropoffWaypointId: drop.waypointId,
         },
         segment: {
-            pickupCumulativePrice: pickup.cumulativePrice,
-            dropCumulativePrice: drop.cumulativePrice,
+            pickupCumulativePrice: farePickup.cumulativePrice,
+            dropCumulativePrice: fareDrop.cumulativePrice,
             segmentFare,
         },
     };

@@ -4,6 +4,10 @@ export const vehicleIdParamSchema = z.object({
     id: z.string().uuid('A valid vehicle id is required'),
 });
 
+export const userIdParamSchema = z.object({
+    id: z.string().uuid('A valid user id is required'),
+});
+
 export const rejectVehicleSchema = z.object({
     // The reason is shown to the driver verbatim in the rejection notification, so it
     // must actually say something.
@@ -41,3 +45,18 @@ export const adminOpenBookingDisputeSchema = z.object({
 
 export type AdminForceCompleteBookingInput = z.infer<typeof adminForceCompleteBookingSchema>;
 export type AdminOpenBookingDisputeInput = z.infer<typeof adminOpenBookingDisputeSchema>;
+
+export const adminVerificationEmailSchema = z.object({
+    subject: z
+        .string()
+        .trim()
+        .min(3, 'Email subject is required')
+        .max(160, 'Email subject must be 160 characters or fewer'),
+    text: z
+        .string()
+        .trim()
+        .min(20, 'Email text is required')
+        .max(5000, 'Email text must be 5000 characters or fewer'),
+});
+
+export type AdminVerificationEmailInput = z.infer<typeof adminVerificationEmailSchema>;
