@@ -1,4 +1,5 @@
 import redis from '../../cache/redis.js';
+import twilio from 'twilio';
 import { OTP_EXPIRY_MINUTES, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_SEC } from './otp.constants.js';
 
 const otpKey = (identifier: string, purpose: string, method: string) =>
@@ -9,6 +10,16 @@ export const createOtp = async (
   purpose: 'signup' | 'login' | 'reset_password',
   method: string,
 ) => {
+  const useTwilioVerify = process.env.OTP_ENGINE === 'twilio_verify' && method === 'phone';
+  if (useTwilioVerify) {
+    const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    await client.verify.v2.services(process.env.TWILIO_VERIFY_SERVICE_SID as string).verifications.create({
+      to: identifier,
+      channel: 'sms',
+    });
+    return { success: true, code: 'TWILIO_VERIFY', reason: null };
+  }
+
   const key = otpKey(identifier, purpose, method);
 
   const ttl = await redis.ttl(key);
@@ -32,6 +43,24 @@ export const verifyOtp = async (
   code: string,
   method: string,
 ) => {
+  const useTwilioVerify = process.env.OTP_ENGINE === 'twilio_verify' && method === 'phone';
+  if (useTwilioVerify) {
+    try {
+      const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+      const check = await client.verify.v2.services(process.env.TWILIO_VERIFY_SERVICE_SID as string).verificationChecks.create({
+        to: identifier,
+        code,
+      });
+      if (check.status === 'approved') return { success: true };
+      return { success: false, reason: 'invalid_otp' };
+    } catch (err: any) {
+      if (err.status === 404) return { success: false, reason: 'expired' };
+      if (err.status === 429) return { success: false, reason: 'too_many_attempts' };
+      return { success: false, reason: 'invalid_otp' };
+    }
+  }
+
+
   const key = otpKey(identifier, purpose, method);
   const data = await redis.get(key);
 
@@ -59,6 +88,13 @@ export const resendOtp = async (
   purpose: 'signup' | 'login' | 'reset_password',
   method: string,
 ) => {
+  const useTwilioVerify = process.env.OTP_ENGINE === 'twilio_verify' && method === 'phone';
+  if (useTwilioVerify) {
+    const otp = await createOtp(identifier, purpose, method);
+    return { success: true, otp: otp.code, reused: false };
+  }
+
+
   const key = otpKey(identifier, purpose, method);
   const ttl = await redis.ttl(key);
 

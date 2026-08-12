@@ -39,7 +39,7 @@ export const otpRequestSchema = z
 
 export const otpVerifySchema = z
   .object({
-    code: z.string().length(4),
+    code: z.string().min(4).max(6),
     method: z.enum(['email', 'phone']),
     identifier: z.string(),
     purpose: otpPurposeSchema,

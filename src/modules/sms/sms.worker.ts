@@ -1,14 +1,15 @@
 import { Worker } from 'bullmq';
-import twilio from 'twilio';
 import dotenv from 'dotenv';
 import { bullRedis } from '../../queue/redisConnection.js';
 import { SendSmsPayload } from './sms.types.js';
 import logger from '../../utils/logger.js';
 import {
   isValidE164PhoneNumber,
+  loadQueueLimiterConfig,
   loadSmsWorkerConfig,
   maskPhoneNumber,
 } from './sms.config.js';
+import { getSmsProvider } from './providers/index.js';
 
 dotenv.config({ quiet: true });
 
@@ -21,12 +22,8 @@ bullRedis
   );
 
 const smsConfig = loadSmsWorkerConfig();
-
-// Initialize Twilio client
-const client =
-  !smsConfig.isMockMode && smsConfig.accountSid && smsConfig.authToken
-    ? twilio(smsConfig.accountSid, smsConfig.authToken)
-    : null;
+const smsProvider = smsConfig.isMockMode ? null : getSmsProvider();
+const smsLimiter = loadQueueLimiterConfig('SMS_LIMITER_MAX', 'SMS_LIMITER_DURATION');
 
 const worker = new Worker(
   'sms-queue',
@@ -59,45 +56,25 @@ const worker = new Worker(
       return { success: true, messageId: 'mock-mode' };
     }
 
-    // Check if Twilio is configured
-    if (!client) {
-      throw new Error('Twilio not configured. Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN');
+    if (!smsProvider) {
+      throw new Error('SMS provider not initialized');
     }
 
-    if (!smsConfig.messagingServiceSid && !smsConfig.phoneNumber) {
-      throw new Error(
-        'Twilio sender not configured. Set TWILIO_PHONE_NUMBER or TWILIO_MESSAGING_SERVICE_SID',
-      );
-    }
-
-    const payloadBase = {
-      body: normalizedBody,
-      to: normalizedTo,
-      ...(smsConfig.statusCallbackUrl ? { statusCallback: smsConfig.statusCallbackUrl } : {}),
-    };
-
-    const message =
-      smsConfig.messagingServiceSid
-        ? await client.messages.create({
-            ...payloadBase,
-            messagingServiceSid: smsConfig.messagingServiceSid,
-          })
-        : await client.messages.create({
-            ...payloadBase,
-            from: smsConfig.phoneNumber as string,
-          });
+    const result = await smsProvider.send(normalizedTo, normalizedBody);
 
     logger.info('[SMS] Message sent', {
       jobId: job.id,
-      messageSid: message.sid,
+      provider: smsProvider.name,
+      messageSid: result.id,
       to: maskPhoneNumber(normalizedTo),
-      status: message.status,
+      status: result.status,
     });
-    return { success: true, messageId: message.sid };
+    return { success: true, messageId: result.id };
   },
   {
     connection: bullRedis,
     concurrency: smsConfig.workerConcurrency,
+    ...(smsLimiter ? { limiter: smsLimiter } : {}),
   },
 );
 
