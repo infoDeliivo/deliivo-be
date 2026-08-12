@@ -74,10 +74,11 @@
     "nodemailer": "^7.0.11",
     "opossum": "^9.0.0",
     "prisma": "^7.3.0",
+    "resend": "^6.19.0",
     "socket.io": "^4.8.1",
     "stripe": "^21.0.1",
     "swagger-ui-express": "^5.0.1",
-    "twilio": "^5.12.1",
+    "twilio": "^5.13.1",
     "uuid": "^8.3.2",
     "winston": "^3.19.0",
     "zod": "^4.1.12"

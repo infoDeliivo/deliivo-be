@@ -121,12 +121,14 @@ export const signup = async (req: Request, res: Response) => {
         html: signupOtpTemplate(code),
       });
     } else if (method === 'phone') {
-      const smsResult = await sendSms(identifier, signupOtpSmsTemplate(code));
-      if (!smsResult.success) {
-        return sendError(res, {
-          message: smsResult.error || 'Failed to queue OTP SMS',
-          status: HttpStatus.INTERNAL_ERROR,
-        });
+      if (code !== 'TWILIO_VERIFY') {
+        const smsResult = await sendSms(identifier, signupOtpSmsTemplate(code));
+        if (!smsResult.success) {
+          return sendError(res, {
+            message: smsResult.error || 'Failed to queue OTP SMS',
+            status: HttpStatus.INTERNAL_ERROR,
+          });
+        }
       }
     }
 
@@ -135,7 +137,7 @@ export const signup = async (req: Request, res: Response) => {
       message: 'Signup successful, verify OTP',
       data: {
         next: 'verify_otp',
-        ...(shouldExposeOtp && { code }),
+        ...(shouldExposeOtp && code !== 'TWILIO_VERIFY' && { code }),
       },
     });
   } catch (err: any) {
@@ -181,12 +183,14 @@ export const requestOtp = async (req: Request, res: Response) => {
         html: template.mailTemplate,
       });
     } else if (method === 'phone') {
-      const smsResult = await sendSms(identifier, template.smsTemplate);
-      if (!smsResult.success) {
-        return sendError(res, {
-          message: smsResult.error || 'Failed to queue OTP SMS',
-          status: HttpStatus.INTERNAL_ERROR,
-        });
+      if (code !== 'TWILIO_VERIFY') {
+        const smsResult = await sendSms(identifier, template.smsTemplate);
+        if (!smsResult.success) {
+          return sendError(res, {
+            message: smsResult.error || 'Failed to queue OTP SMS',
+            status: HttpStatus.INTERNAL_ERROR,
+          });
+        }
       }
     }
 
@@ -194,7 +198,7 @@ export const requestOtp = async (req: Request, res: Response) => {
       message: 'OTP sent successfully',
       data: {
         next: 'verify_otp',
-        ...(shouldExposeOtp && { code }),
+        ...(shouldExposeOtp && code !== 'TWILIO_VERIFY' && { code }),
       },
     });
   } catch (err) {
@@ -302,12 +306,14 @@ export const login = async (req: Request, res: Response) => {
         html: loginOtpTemplate(code),
       });
     } else if (method === 'phone') {
-      const smsResult = await sendSms(identifier, loginOtpSmsTemplate(code));
-      if (!smsResult.success) {
-        return sendError(res, {
-          message: smsResult.error || 'Failed to queue OTP SMS',
-          status: HttpStatus.INTERNAL_ERROR,
-        });
+      if (code !== 'TWILIO_VERIFY') {
+        const smsResult = await sendSms(identifier, loginOtpSmsTemplate(code));
+        if (!smsResult.success) {
+          return sendError(res, {
+            message: smsResult.error || 'Failed to queue OTP SMS',
+            status: HttpStatus.INTERNAL_ERROR,
+          });
+        }
       }
     }
 
@@ -315,7 +321,7 @@ export const login = async (req: Request, res: Response) => {
       message: 'OTP sent for login',
       data: {
         next: 'verify_otp',
-        ...(shouldExposeOtp && { code }),
+        ...(shouldExposeOtp && code !== 'TWILIO_VERIFY' && { code }),
       },
     });
   } catch (err) {
@@ -375,12 +381,14 @@ export const resendOtpCont = async (req: Request, res: Response) => {
         html: template.mailTemplate,
       });
     } else if (method === 'phone') {
-      const smsResult = await sendSms(identifier, template.smsTemplate);
-      if (!smsResult.success) {
-        return sendError(res, {
-          message: smsResult.error || 'Failed to queue OTP SMS',
-          status: HttpStatus.INTERNAL_ERROR,
-        });
+      if (result.otp !== 'TWILIO_VERIFY') {
+        const smsResult = await sendSms(identifier, template.smsTemplate);
+        if (!smsResult.success) {
+          return sendError(res, {
+            message: smsResult.error || 'Failed to queue OTP SMS',
+            status: HttpStatus.INTERNAL_ERROR,
+          });
+        }
       }
     }
 
@@ -388,7 +396,7 @@ export const resendOtpCont = async (req: Request, res: Response) => {
       message: result.reused ? 'OTP resent' : 'New OTP generated',
       status: HttpStatus.OK,
       data: {
-        ...(shouldExposeOtp && { code: result.otp }),
+        ...(shouldExposeOtp && result.otp !== 'TWILIO_VERIFY' && { code: result.otp }),
       },
     });
   } catch {
