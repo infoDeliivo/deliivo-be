@@ -38,4 +38,4 @@ COPY --from=base /app/scripts ./scripts/
 EXPOSE 3000
 
 ENTRYPOINT ["sh", "/app/scripts/docker-entrypoint.sh"]
-CMD ["npm", "start"]
+CMD ["npm", "run", "start:all"]
