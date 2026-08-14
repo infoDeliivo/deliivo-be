@@ -28,8 +28,7 @@ import { cacheKeys, deleteCache } from '../../services/cache.service.js';
 
 type OtpPurpose = 'signup' | 'login' | 'reset_password';
 
-const shouldExposeOtp =
-  process.env.NODE_ENV !== 'production' || process.env.EXPOSE_OTP_IN_RESPONSE === 'true';
+const shouldExposeOtp = false;
 
 const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
   if (purpose === 'signup') {
@@ -165,7 +164,6 @@ export const signup = async (req: Request, res: Response) => {
       message: 'Signup successful, verify OTP',
       data: {
         next: 'verify_otp',
-        ...(shouldExposeOtp && code !== 'TWILIO_VERIFY' && { code }),
       },
     });
   } catch (err: any) {
@@ -226,7 +224,6 @@ export const requestOtp = async (req: Request, res: Response) => {
       message: 'OTP sent successfully',
       data: {
         next: 'verify_otp',
-        ...(shouldExposeOtp && code !== 'TWILIO_VERIFY' && { code }),
       },
     });
   } catch (err) {
@@ -349,7 +346,6 @@ export const login = async (req: Request, res: Response) => {
       message: 'OTP sent for login',
       data: {
         next: 'verify_otp',
-        ...(shouldExposeOtp && code !== 'TWILIO_VERIFY' && { code }),
       },
     });
   } catch (err) {
@@ -423,9 +419,7 @@ export const resendOtpCont = async (req: Request, res: Response) => {
     return sendSuccess(res, {
       message: result.reused ? 'OTP resent' : 'New OTP generated',
       status: HttpStatus.OK,
-      data: {
-        ...(shouldExposeOtp && result.otp !== 'TWILIO_VERIFY' && { code: result.otp }),
-      },
+      data: {},
     });
   } catch {
     return sendError(res, { message: 'Server error' });
