@@ -10,7 +10,8 @@ export const createOtp = async (
   purpose: 'signup' | 'login' | 'reset_password',
   method: string,
 ) => {
-  const useTwilioVerify = process.env.OTP_ENGINE === 'twilio_verify' && method === 'phone';
+  const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE_REAL_OTP === 'true';
+  const useTwilioVerify = !isOtpDebugMode && process.env.OTP_ENGINE === 'twilio_verify' && method === 'phone';
   if (useTwilioVerify) {
     const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
     await client.verify.v2.services(process.env.TWILIO_VERIFY_SERVICE_SID as string).verifications.create({
@@ -43,7 +44,8 @@ export const verifyOtp = async (
   code: string,
   method: string,
 ) => {
-  const useTwilioVerify = process.env.OTP_ENGINE === 'twilio_verify' && method === 'phone';
+  const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE_REAL_OTP === 'true';
+  const useTwilioVerify = !isOtpDebugMode && process.env.OTP_ENGINE === 'twilio_verify' && method === 'phone';
   if (useTwilioVerify) {
     try {
       const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
@@ -88,7 +90,8 @@ export const resendOtp = async (
   purpose: 'signup' | 'login' | 'reset_password',
   method: string,
 ) => {
-  const useTwilioVerify = process.env.OTP_ENGINE === 'twilio_verify' && method === 'phone';
+  const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE_REAL_OTP === 'true';
+  const useTwilioVerify = !isOtpDebugMode && process.env.OTP_ENGINE === 'twilio_verify' && method === 'phone';
   if (useTwilioVerify) {
     const otp = await createOtp(identifier, purpose, method);
     return { success: true, otp: otp.code, reused: false };
@@ -101,7 +104,7 @@ export const resendOtp = async (
   // No OTP exists → create fresh
   if (ttl <= 0) {
     const otp = await createOtp(identifier, purpose, method);
-    return { success: true, otp, reused: false };
+    return { success: true, otp: otp.code, reused: false };
   }
 
   // Cooldown still active
@@ -113,7 +116,7 @@ export const resendOtp = async (
   const data = await redis.get(key);
   if (!data) {
     const otp = await createOtp(identifier, purpose, method);
-    return { success: true, otp, reused: false };
+    return { success: true, otp: otp.code, reused: false };
   }
 
   const parsed = JSON.parse(data);
