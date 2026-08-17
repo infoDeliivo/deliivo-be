@@ -51,13 +51,10 @@ export const getStripeClient = (): Stripe => {
 };
 
 /**
- * Stripe collects an industry + product description for every connected account, individuals
- * included — that is the "Professional details / Business information" step drivers otherwise see.
- * The platform knows the answer (drivers all sell the same thing), so we send it up front and the
- * driver is left with identity details and a bank account. MCC 4121 = Taxicabs and Limousines, the
- * closest code for ridesharing.
+ * Used when updating a v1 account's business profile after creation.
+ * MCC 4121 = Taxicabs and Limousines, the closest code for ridesharing.
  */
-const buildBusinessProfile = (): Stripe.AccountCreateParams.BusinessProfile => ({
+const buildBusinessProfile = (): Stripe.AccountUpdateParams.BusinessProfile => ({
     mcc: process.env.STRIPE_CONNECT_MCC || '4121',
     product_description:
         process.env.STRIPE_CONNECT_PRODUCT_DESCRIPTION ||
@@ -166,9 +163,14 @@ const cleanDob = (
 };
 
 /**
- * Accounts we create are controller-based (`requirement_collection: 'application'`) so onboarding
- * can render fully white-label inside our own UI. Accounts created before that switch are Express
- * (`'stripe'`) and are not convertible — Stripe still authenticates those users inside the frame.
+ * Creates a connected account using the Stripe v2 Core Accounts API.
+ *
+ * Driver accounts are created as Recipient Configuration accounts — they only need to
+ * receive transfers (payouts), not collect payments. The platform handles requirement
+ * collection (no Stripe-hosted dashboard required).
+ *
+ * Note: retrieve/update/delete for these accounts still uses the v1 REST endpoints
+ * (`stripe.accounts.*`) as Stripe has not yet exposed full v2 management methods.
  */
 const createConnectedAccount = async (
     userId: string,
@@ -176,29 +178,46 @@ const createConnectedAccount = async (
 ): Promise<string> => {
     const stripe = getStripeClient();
     const email = cleanEmail(prefill.email);
+    const firstName = cleanText(prefill.firstName);
+    const lastName = cleanText(prefill.lastName);
+    const phone = cleanPhone(prefill.phone);
+    const dob = cleanDob(prefill.dob);
+    const country = readConnectAccountCountry(prefill);
 
-    const account = await stripe.accounts.create({
-        country: readConnectAccountCountry(prefill),
-        controller: {
-            stripe_dashboard: { type: 'none' },
-            fees: { payer: 'application' },
-            losses: { payments: 'application' },
-            requirement_collection: 'application',
+    // Build individual identity, only including defined fields.
+    const individual: Record<string, unknown> = {};
+    if (firstName) individual['given_name'] = firstName;
+    if (lastName) individual['surname'] = lastName;
+    if (email) individual['email'] = email;
+    if (phone) individual['phone'] = phone;
+    if (dob) individual['date_of_birth'] = { day: dob.day, month: dob.month, year: dob.year };
+
+    const account = await stripe.v2.core.accounts.create({
+        display_name: [firstName, lastName].filter(Boolean).join(' ') || undefined,
+        contact_email: email,
+        dashboard: 'none',
+        defaults: country ? { responsibilities: { fees_collector: 'application', losses_collector: 'application' } } : undefined,
+        configuration: {
+            recipient: {
+                capabilities: {
+                    stripe_balance: {
+                        stripe_transfers: { requested: true },
+                    },
+                },
+            },
         },
-        business_type: 'individual',
-        business_profile: buildBusinessProfile(),
-        capabilities: {
-            transfers: { requested: true },
-        },
-        email,
-        individual: {
-            first_name: cleanText(prefill.firstName),
-            last_name: cleanText(prefill.lastName),
-            email,
-            phone: cleanPhone(prefill.phone),
-            dob: cleanDob(prefill.dob),
-        },
+        identity: {
+            country,
+            entity_type: 'individual',
+            ...(Object.keys(individual).length > 0 ? { individual } : {}),
+        } as any, // eslint-disable-line @typescript-eslint/no-explicit-any
         metadata: { userId },
+    });
+
+    // The v2 create endpoint has no business_profile field, so patch it immediately via the
+    // v1 update endpoint. Stripe requires business_profile.url before payouts are enabled.
+    await stripe.accounts.update(account.id, {
+        business_profile: buildBusinessProfile(),
     });
 
     return account.id;
