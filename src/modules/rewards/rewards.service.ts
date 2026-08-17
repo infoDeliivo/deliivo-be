@@ -275,7 +275,10 @@ export const upsertRewardCampaign = async (
   if (input.id) {
     return prisma.rewardCampaign.update({
       where: { id: input.id },
-      data,
+      data: {
+        ...data,
+        ...(input.metadataJson !== null ? { metadataJson: input.metadataJson } : {}),
+      },
     });
   }
 
