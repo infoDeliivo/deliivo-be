@@ -214,6 +214,12 @@ const createConnectedAccount = async (
         metadata: { userId },
     });
 
+    // The v2 create endpoint has no business_profile field, so patch it immediately via the
+    // v1 update endpoint. Stripe requires business_profile.url before payouts are enabled.
+    await stripe.accounts.update(account.id, {
+        business_profile: buildBusinessProfile(),
+    });
+
     return account.id;
 };
 
