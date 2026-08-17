@@ -113,6 +113,7 @@ export const signup = async (req: Request, res: Response) => {
       method: 'email' | 'phone';
       email?: string;
       phone?: string;
+      referralCode?: string;
     };
     const rawIdentifier = method === 'email' ? email : phone;
 
@@ -124,7 +125,7 @@ export const signup = async (req: Request, res: Response) => {
     }
     const identifier = normalizeAuthIdentifier(method, rawIdentifier);
 
-    const result = await signupService(method, identifier);
+    const result = await signupService(method, identifier, req.body.referralCode);
     if (result.success === false) {
       return sendError(res, {
         message: result.reason || 'Failed to create user',

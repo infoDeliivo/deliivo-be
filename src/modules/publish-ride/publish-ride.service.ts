@@ -7,6 +7,8 @@ import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode
 import { createNotification } from '../notification/notification.service.js';
 import { markBookingPaymentRefunded } from '../payments/payment.service.js';
 import { formatBookingReference } from '../../utils/booking-reference.js';
+import { combineDepartureDateTimeInRideTimezone } from '../../utils/ride-timezone.js';
+import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
 
 const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
 const UNSTARTED_RIDE_STATUSES = [RideStatus.PUBLISHED, RideStatus.SCHEDULED, RideStatus.READY_TO_START];
@@ -21,24 +23,6 @@ const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
     BookingStatus.DROP_PENDING,
     BookingStatus.IN_PROGRESS,
 ];
-
-const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date | null => {
-    const [hoursRaw, minutesRaw] = departureTime.split(':');
-    const hours = Number(hoursRaw);
-    const minutes = Number(minutesRaw);
-    if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
-        return null;
-    }
-    return new Date(Date.UTC(
-        departureDate.getUTCFullYear(),
-        departureDate.getUTCMonth(),
-        departureDate.getUTCDate(),
-        hours,
-        minutes,
-        0,
-        0,
-    ));
-};
 
 const reconcileDriverRideListStatuses = async (driverId: string) => {
     const now = new Date();
@@ -59,8 +43,13 @@ const reconcileDriverRideListStatuses = async (driverId: string) => {
     });
 
     await Promise.all(candidates.map(async (ride) => {
-        const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
-        if (!departureAt || now < departureAt) return;
+        let departureAt: Date;
+        try {
+            departureAt = combineDepartureDateTimeInRideTimezone(ride.departureDate, ride.departureTime);
+        } catch {
+            return;
+        }
+        if (now < departureAt) return;
 
         const autoCloseAt = new Date(departureAt.getTime() + OVERDUE_CANCEL_AFTER_MINUTES * 60 * 1000);
         const hasActiveBookings = ride.bookings.some((booking) => ACTIVE_BOOKING_STATUSES.includes(booking.status));
@@ -598,6 +587,7 @@ export const completeRide = async (driverId: string, rideId: string) => {
             },
         });
     });
+    await awardRideCompletionRewards(rideId);
 
     // Notify confirmed passengers to rate the driver
     const completedBookings = await prisma.rideBooking.findMany({
@@ -623,4 +613,6 @@ export const completeRide = async (driverId: string, rideId: string) => {
             })
         )
     );
+
+    await Promise.all(completedBookings.map((booking) => awardBookingCompletionRewards(booking.id)));
 };

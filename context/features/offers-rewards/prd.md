@@ -1,275 +1,250 @@
-# PRD: Offers, Rider Credits, And Driver Rewards
+# PRD: Referral Program, Ride Milestones, And Wallet Rewards
 
 ## Purpose
 
-Create targeted marketplace offers that improve route liquidity while preserving clear payment, payout, subsidy, and audit behavior. Offers must help Deliivo attract riders and drivers without confusing the price shown to users or underpaying drivers.
+Create a configurable rewards system that gives riders and drivers wallet credit or payout bonuses when they complete referral and ride milestones. The feature must improve retention and supply growth without breaking fare clarity, payout accuracy, or Stripe Connect accounting.
+
+## Product Goals
+
+- Reward riders for successful referrals and completed ride milestones.
+- Reward drivers for successful referrals and completed ride milestones.
+- Show all rewards in a visible wallet for both riders and drivers.
+- Let admins configure thresholds, amounts, expiry, budgets, and eligibility rules.
+- Use Stripe Connect for payout movement and platform balance funding, not for campaign logic.
 
 ## Users
 
-- Rider: earns credits or coupons and applies them to future bookings.
-- Driver: earns bonuses after completing qualifying rides or referral goals.
-- Admin: creates, monitors, pauses, approves, and reconciles offers, credits, bonuses, subsidies, and payout impact.
-- Support operator: explains offer eligibility and investigates reward or payout issues.
+- Rider: receives wallet credit for successful referrals and completed ride milestones.
+- Driver: receives wallet credit or payout bonus for successful referrals and completed ride milestones.
+- Admin: configures campaigns, rewards, budgets, eligibility rules, and manual overrides.
+- Support operator: reviews reward disputes, abuse cases, and payout funding issues.
 
-## Product Strategy
+## Core Concept
 
-Offers should be route-specific and time-boxed before they are platform-wide. The goal is to create useful supply and demand on priority routes, not to distribute discounts randomly.
+Deliivo runs reward campaigns that are triggered by completed actions, not signups.
 
-Priority launch route examples:
+Examples:
 
-- Tallinn to Tartu
-- Tartu to Tallinn
-- Tallinn to Narva
-- Tallinn to Parnu
-- Tallinn to Riga
-- Riga to Tallinn
-- Riga to Vilnius
-- Vilnius to Riga
+- Rider referral reward when the referred person completes their first booking and ride.
+- Driver referral reward when the referred driver publishes a ride and completes it.
+- Rider milestone reward when a rider completes 3 rides.
+- Driver milestone reward when a driver completes 3 rides.
 
-Launch offers should reward completed marketplace activity:
+The default values can start as `EUR 5`, but every number must be configurable from admin.
 
-- Rider first completed booking credit.
-- Rider referral credit after referred rider completes a first ride.
-- Rider return-trip credit after completing an outbound booking.
-- Driver first completed published ride bonus.
-- Driver route challenge bonus after completing N qualifying rides.
-- Driver referral bonus after referred driver completes N qualifying rides.
+## Reward Types
 
-Offers must not reward account creation alone. Rewards should unlock only after real completed rides, paid bookings, or verified driver activity.
+- Referral reward: credit granted after a referred user completes a qualifying action.
+- Ride milestone reward: credit granted after a user completes N rides.
+- Driver milestone bonus: payout bonus granted after a driver completes N rides.
+- Manual admin reward: reward granted by support or finance after review.
 
-## Definitions
+## Reward Storage And Wallets
 
-- Offer: admin-created campaign visible to riders, drivers, or both.
-- Rider credit: non-withdrawable Deliivo credit used against future booking checkout.
-- Coupon: a code or automatically assigned discount rule that grants rider credit or checkout discount.
-- Driver bonus: withdrawable driver reward added to driver payout after qualifying conditions are satisfied.
-- Subsidy: Deliivo-funded amount required when rider pays less than the driver fare owed.
-- Service fee waiver: rider credit that only reduces Deliivo service fee revenue.
-- Platform balance: Deliivo's available Stripe platform balance used for Stripe transfers to connected driver accounts.
+Each rider and driver should have a wallet view that shows:
+
+- available credit
+- pending rewards
+- earned rewards
+- used rewards
+- expired rewards
+- reversed rewards
+- reward source
+- campaign source
+- expiry date
+
+Wallet behavior:
+
+- Rider wallet credit is spendable on future bookings.
+- Driver wallet credit is normally a payout bonus or payout-ready balance, not a spendable in-app discount.
+- Wallet totals must separate pending from available amounts.
+- Wallet entries must remain auditable after edits to campaigns.
+
+## Configurable Rules
+
+Admins must be able to configure:
+
+- audience: rider, driver, or both
+- trigger type: referral, ride count, publish count, booking completion, ride completion
+- required count: for example 1, 3, 5
+- reward amount
+- currency
+- wallet type: credit or payout bonus
+- expiry duration
+- route scope
+- country scope
+- user role scope
+- max reward per user
+- max campaign budget
+- max redemptions
+- active / paused / expired state
+- fraud hold and manual review requirement
+
+## Referral Rules
+
+Rider referral:
+
+- reward is granted only when the referred user completes a valid booking and ride completion
+- reward is credited to the referrer wallet
+- reward should be blocked if the referred booking is refunded, cancelled, disputed, or marked fraudulent
+
+Driver referral:
+
+- reward is granted only when the referred driver publishes a ride and completes at least one ride
+- reward is credited to the referrer wallet or payout bonus pool
+- reward should be blocked if the referred ride is refunded, cancelled, disputed, or fraudulent
+
+## Milestone Rules
+
+Rider milestone:
+
+- reward when a rider completes N rides
+- default example: `EUR 5` after 3 completed rides
+
+Driver milestone:
+
+- reward when a driver completes N rides
+- default example: `EUR 5` after 3 completed rides
+
+The milestone count and amount must be configurable independently for riders and drivers.
+
+## User Experience
+
+### Rider
+
+- Rider can open a wallet screen and see reward balance.
+- Rider can see why a reward is pending, available, or expired.
+- Rider can see referral progress and ride milestone progress.
+- Rider can see which reward came from which campaign.
+
+### Driver
+
+- Driver can open a wallet screen and see reward balance and payout bonus balance.
+- Driver can see referral progress and milestone progress.
+- Driver can see which rewards are waiting for payout eligibility.
+- Driver can see payout history for bonuses.
+
+## Admin Portal Requirements
+
+Admin must be able to:
+
+- create and edit reward campaigns
+- set trigger type and thresholds
+- set reward amount and currency
+- set whether the reward becomes wallet credit or payout bonus
+- set the campaign budget
+- set per-user caps
+- pause and resume campaigns
+- expire campaigns manually
+- view campaign performance
+- inspect reward grants and eligibility events
+- manually grant or void rewards
+- override reward decisions after review
+- see wallet balances for any user
+- see payout eligibility and pending bonus items
+
+## Stripe Connect Requirements
+
+Stripe Connect must be used only for payout movement, not as the source of reward rules.
+
+### Driver bonuses
+
+- Driver bonus rewards become payout items after eligibility is confirmed.
+- The payout batch should include ride earnings plus driver bonuses.
+- If the platform Stripe balance is short, the payout stays pending or fails retryably.
+- Admin can top up the platform balance and retry the payout.
+
+### Rider wallet credit
+
+- Rider wallet credit is applied to future checkout.
+- If a credit reduces rider cash collected below driver receivable, Deliivo absorbs the difference.
+- Deliivo must track that difference as internal subsidy liability.
+- Stripe does not decide this automatically.
+
+### Platform funding
+
+- Deliivo can top up the Stripe platform balance when campaign payouts or subsidies need extra funds.
+- Failed transfers are not automatically retried by Stripe after a top-up.
+- Deliivo must retry them after funding is available.
 
 ## Functional Requirements
 
-### Rider Offers
+- Rewards must be created only after a qualifying completion event.
+- Rewards must be idempotent.
+- Rewards must support manual approval and manual rejection.
+- Wallet history must keep the campaign and source event attached.
+- Referral rewards must prevent self-referral and obvious abuse.
+- Reward expiration must be supported.
+- Refunds, cancellations, disputes, and chargebacks must block or reverse rewards where applicable.
+- Admin screens must show both earned and pending reward states.
+- Public pricing must not confuse reward logic with ride fare.
 
-- Riders can see active offers relevant to them.
-- Riders can see earned credits, expiry dates, and usage history.
-- Rider credits can be applied automatically at booking checkout when eligible.
-- Rider credits must reduce the rider amount charged but must not reduce driver fare.
-- Rider credits can be limited by route, date range, first-booking status, max redemption count, and user eligibility.
-- Rider credits can be configured to apply against:
-  - service fee only, or
-  - service fee plus Deliivo-funded fare subsidy.
-- Checkout must show:
-  - driver fare / seat fare,
-  - service fee,
-  - rider credit applied,
-  - total to pay,
-  - Deliivo subsidy amount where relevant in admin-facing records only.
-- Public ride cards and ride detail summary should show seat fare, not service-fee-inclusive total. Service fee and credit effects belong in the fare breakdown.
+## Non-Goals
 
-### Driver Offers
-
-- Drivers can see available driver bonuses and route challenges.
-- Drivers can see bonus progress, eligibility, expiry date, and payout status.
-- Driver bonus eligibility must be based on completed rides or completed referred-driver activity.
-- Driver bonuses must become payout eligible only after the qualifying ride or rule is complete and after normal payout/dispute delay rules.
-- Driver bonuses must be included in payout batches as separate payout items, not hidden inside ride fare.
-- Driver bonuses must have reason, campaign, rule, and admin audit metadata.
-
-### Referrals
-
-- Users can receive referral links or codes.
-- Referral rewards should unlock only after the referred user completes the required action.
-- Rider referral reward: non-withdrawable rider credit.
-- Driver referral reward: driver bonus, payable through Stripe Connect.
-- Anti-abuse checks must prevent self-referral, duplicate accounts, repeated device/payment abuse where detectable, and rewards on refunded/disputed bookings.
-
-### Admin Portal
-
-Admin must support:
-
-- Offer list with filters by status, audience, route, reward type, start/end date, and budget.
-- Create/edit offer form:
-  - name,
-  - internal description,
-  - public title/copy,
-  - audience: rider, driver, both,
-  - route scope: global or origin/destination pair,
-  - reward type: rider credit, coupon, driver bonus, referral reward, route challenge,
-  - reward amount and currency,
-  - funding mode: service-fee-only or subsidy-allowed,
-  - max reward per user,
-  - max campaign budget,
-  - max redemptions,
-  - start/end date,
-  - eligibility rule,
-  - completion rule,
-  - fraud/dispute hold rules,
-  - active/inactive toggle.
-- Offer detail view:
-  - total issued,
-  - total redeemed,
-  - earned but unpaid driver bonuses,
-  - rider credit liability,
-  - Deliivo subsidy liability,
-  - estimated Stripe platform balance needed,
-  - recent qualifying bookings/rides,
-  - admin audit log.
-- User detail integration:
-  - rider credit balance and history,
-  - driver bonus balance and payout status,
-  - offer eligibility and redemption history.
-- Booking and ride detail integration:
-  - applied credit,
-  - service fee waived,
-  - Deliivo subsidy amount,
-  - offer campaign source,
-  - driver bonus linkage.
-- Payout admin integration:
-  - bonus payout items,
-  - payout batches including ride fare and bonus totals,
-  - `PENDING_FUNDS` or failed transfer reason if Stripe platform balance is insufficient.
-- Controls:
-  - pause offer,
-  - expire offer,
-  - manually grant rider credit,
-  - manually grant driver bonus,
-  - void/reverse unredeemed credit,
-  - block user from offers,
-  - retry failed payout after funding.
-
-## Money Flow Requirements
-
-### Rider Credit With Service Fee Waiver Only
-
-Example:
-
-- Driver fare: EUR 16.
-- Service fee: EUR 3.
-- Rider credit used: EUR 3.
-- Rider charged: EUR 16.
-- Driver payable: EUR 16.
-- Deliivo service fee revenue: EUR 0.
-- Deliivo subsidy: EUR 0.
-
-### Rider Credit With Subsidy
-
-Example:
-
-- Driver fare: EUR 16.
-- Service fee: EUR 3.
-- Rider credit used: EUR 5.
-- Rider charged: EUR 14.
-- Driver payable: EUR 16.
-- Deliivo service fee waived: EUR 3.
-- Deliivo subsidy liability: EUR 2.
-
-The booking/payment records must preserve:
-
-- `driverFareAmount`
-- `serviceFeeAmount`
-- `riderCreditUsed`
-- `amountChargedToRider`
-- `serviceFeeWaivedAmount`
-- `deliivoSubsidyAmount`
-- `driverReceivableAmount`
-- offer/campaign identifiers
-
-### Driver Bonus
-
-Example:
-
-- Driver ride fare payable: EUR 16.
-- Driver bonus: EUR 5.
-- Driver payout batch transfer total: EUR 21.
-
-Driver bonus is a payout item funded by Deliivo's platform balance. It is not charged to riders and is not part of the public ride fare.
-
-## Payout Requirements
-
-- Payout processor must include eligible driver bonuses in payout batches.
-- Payout processor must calculate total transfer amount:
-  - eligible ride fare,
-  - plus eligible driver bonuses,
-  - minus any approved adjustments or reversals.
-- If Stripe platform balance is insufficient, payout must not be marked completed.
-- Failed or unfunded payouts must remain retryable.
-- Admin must see funding shortfall before retrying.
-
-## Non-Functional Requirements
-
-- All reward issuance, redemption, expiry, payout, and reversal records must be auditable.
-- Reward calculations must be idempotent.
-- Checkout must be deterministic and must not double-apply credits.
-- Driver fare must not be reduced by rider credit.
-- Expired, refunded, cancelled, disputed, or manually blocked rewards must not be paid.
-- Admin financial screens must not expose Stripe secrets or full card data.
-- Offer rules should be versioned or snapshotted so historical bookings remain explainable after offer edits.
+- Cash withdrawal from rider wallet credit.
+- Automatic public discounting without admin-configured campaigns.
+- Using Stripe alone as the business rule engine.
+- Rewarding signups without completion.
 
 ## Success Metrics
 
-- Route-specific published ride count.
-- Route-specific completed booking count.
-- Offer conversion rate.
-- Credit redemption rate.
-- Driver bonus completion rate.
-- Cost per completed booking.
-- Cost per completed driver ride.
-- Total rider credit liability.
-- Total driver bonus liability.
-- Total Deliivo subsidy liability.
-- Failed payout count due to insufficient funds.
-- Fraud/reversal rate.
+- referral conversion rate
+- rider repeat booking rate
+- driver repeat publishing rate
+- reward redemption rate
+- completed ride milestone rate
+- completed referral rate
+- payout bonus completion rate
+- wallet credit usage rate
+- campaign budget utilization
+- platform balance shortfall count
 
 ## Launch Phases
 
-### Phase 1: Admin-Managed Offers And Manual Rewards
+### Phase 1: Admin-configured manual rewards
 
-- Create offer model and admin pages.
-- Display offers to users.
-- Track eligibility manually or via simple queries.
-- Admin grants rider credits or driver bonuses after review.
-- Payout processor can include manually granted driver bonuses.
+- create campaigns in admin
+- grant rewards manually after review
+- show wallet screens
+- record all reward events in the ledger
 
-### Phase 2: Automatic Eligibility
+### Phase 2: Automatic referrals and milestones
 
-- Automatically evaluate first booking, first driver ride, route challenge, and referral rules.
-- Automatically issue rider credits and driver bonuses after qualifying completion.
-- Add anti-abuse and dispute hold checks.
+- detect qualifying referral completions automatically
+- detect ride count milestones automatically
+- issue wallet credits and driver bonuses automatically
 
-### Phase 3: Automatic Checkout Redemption
+### Phase 3: Checkout and payout automation
 
-- Apply eligible rider credit during price preview and booking checkout.
-- Store subsidy and service-fee-waiver amounts on booking/payment ledger records.
-- Show credit usage in rider booking and admin payment screens.
+- apply rider wallet credit during booking checkout
+- add driver bonuses to payout batches
+- show pending, available, used, expired, and reversed states
 
-### Phase 4: Budget And Funding Controls
+### Phase 4: Budget and fraud controls
 
-- Add campaign budgets and spend caps.
-- Add Stripe platform balance checks before payout batch execution.
-- Add `PENDING_FUNDS` payout status and admin retry flow.
+- add campaign spend caps
+- add stronger anti-abuse checks
+- add funding shortfall handling and payout retry flow
 
 ## Code References
 
-- `src/modules/ride-booking`
+- `src/modules/admin`
 - `src/modules/payments`
 - `src/modules/payout`
 - `src/modules/ledger`
+- `src/modules/ride-booking`
 - `src/modules/reconciliation`
-- `src/modules/admin`
-- `src/modules/pricing`
+- `src/modules/referrals`
 - `prisma/schema.prisma`
-- `deliivo-webapp/src/app/rides/[id]/page.tsx`
-- `deliivo-webapp/src/app/profile/earnings`
+- `deliivo-webapp/src/app/profile`
 - `deliivo-webapp/src/app/admin`
 
 ## Open Questions
 
-- What is the first launch campaign budget?
-- Should rider credits be global by default or route-specific by default?
-- Should subsidies beyond service fee require admin approval in phase 1?
-- What is the maximum rider credit per booking?
-- What is the maximum driver bonus per campaign and per driver?
-- Should bonuses be withheld for a longer period than normal ride fare?
-- Which Stripe top-up or balance-funding options are available for Deliivo's Stripe account region and status?
+- Should rider referral rewards be credited immediately after the referred ride completes, or after a short dispute window?
+- Should driver referral rewards be paid as wallet credit, payout bonus, or both?
+- Should rider milestone rewards stack with referral rewards on the same wallet?
+- Should one campaign be able to target both riders and drivers with different amounts?
+- Should the wallet support partial redemption of credit across multiple bookings?
+- What is the default expiry for unused wallet credit?
 

@@ -4,6 +4,7 @@ import { createHash, timingSafeEqual } from 'crypto';
 import { Role } from '../user/user.constants.js';
 import { logError } from '../../utils/logger.js';
 import { OAuth2Client } from 'google-auth-library';
+import { attachReferralCodeToUser, ensureUserReferralCode } from '../rewards/rewards.service.js';
 
 const googleClient = new OAuth2Client();
 
@@ -38,6 +39,7 @@ export const googleAuthService = async (idToken: string) => {
         onboardingStatus: 'PENDING',
       },
     });
+    await ensureUserReferralCode(user.id);
   } else {
     user = await prisma.user.update({
       where: { id: user.id },
@@ -49,6 +51,9 @@ export const googleAuthService = async (idToken: string) => {
         ...(!user.avatarUrl && payload.picture ? { avatarUrl: payload.picture } : {}),
       },
     });
+    if (!user.referralCode) {
+      await ensureUserReferralCode(user.id);
+    }
   }
 
   const tokens = await generateTokens({ id: user.id, role: user.role ?? Role.USER });
@@ -110,7 +115,7 @@ const identifierWhere = (method: string, identifier: string) => {
 /** 
  * Signup Service
  */
-export const signupService = async (method: string, identifier: string) => {
+export const signupService = async (method: string, identifier: string, referralCode?: string) => {
   const normalized = normalizeAuthIdentifier(method, identifier);
   const user = await prisma.user.findFirst({
     where: identifierWhere(method, normalized),
@@ -131,6 +136,11 @@ export const signupService = async (method: string, identifier: string) => {
       },
     });
 
+    await ensureUserReferralCode(newUser.id);
+    if (referralCode) {
+      await attachReferralCodeToUser(newUser.id, referralCode).catch(() => null);
+    }
+
     return {
       success: true,
       user: newUser,
@@ -139,6 +149,13 @@ export const signupService = async (method: string, identifier: string) => {
   }
 
   // User exists but not verified → reuse OTP flow
+  if (!user.referralCode) {
+    await ensureUserReferralCode(user.id);
+  }
+  if (referralCode && !user.referredByUserId) {
+    await attachReferralCodeToUser(user.id, referralCode).catch(() => null);
+  }
+
   return {
     success: true,
     user,

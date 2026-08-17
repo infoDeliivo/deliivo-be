@@ -12,6 +12,7 @@ import { manualSessionId } from '../dl-verification/dl-review.service.js';
 import { recoverPendingVeriffDecisionsForUser } from '../dl-verification/dl-verification.service.js';
 import { sendMail } from '../mail/mail.service.js';
 import { REQUIRED_DOCUMENT_TYPES, requiresFullDocumentSet } from '../vehicles/vehicle.constants.js';
+import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
 
 const emergencyAlertSelect = {
     id: true,
@@ -1245,6 +1246,11 @@ export const adminForceCompleteBooking = async (
             data: { rideId: booking.rideId, bookingId, reason, deepLink: `app://rides/${booking.rideId}` },
         }),
     ]);
+
+    await awardBookingCompletionRewards(bookingId);
+    if (rideCompleted) {
+        await awardRideCompletionRewards(booking.rideId);
+    }
 
     return {
         bookingId,

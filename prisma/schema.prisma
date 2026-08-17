@@ -103,6 +103,11 @@ model User {
   avatarUrl String?
   avatarKey String?
 
+  referralCode     String?  @unique
+  referredByUserId String?
+  referredBy       User?    @relation("UserReferrals", fields: [referredByUserId], references: [id])
+  referredUsers    User[]   @relation("UserReferrals")
+
   role             UserRole         @default(USER)
   isBanned         Boolean          @default(false)
 
@@ -155,6 +160,12 @@ model User {
 
   // Payment relations
   paymentMethods PaymentMethod[]
+  rewardCampaignsCreated RewardCampaign[] @relation("RewardCampaignCreatedBy")
+  rewardCampaignsUpdated RewardCampaign[] @relation("RewardCampaignUpdatedBy")
+  rewardReferralsSent RewardReferral[] @relation("RewardReferralReferrer")
+  rewardReferralsReceived RewardReferral[] @relation("RewardReferralReferred")
+  rewardWalletEntries RewardWalletEntry[]
+  rewardWalletEntriesCreated RewardWalletEntry[] @relation("RewardWalletEntryCreatedBy")
 
   @@index([id])
 }
@@ -719,6 +730,83 @@ model PaymentMethod {
 
   user User @relation(fields: [userId], references: [id])
   @@index([userId])
+}
+
+model RewardCampaign {
+  id             String   @id @default(uuid())
+  code           String   @unique
+  name           String
+  audience       String
+  triggerType    String
+  thresholdCount  Int      @default(1)
+  rewardAmount   Float
+  currency       String   @default("EUR")
+  active         Boolean  @default(true)
+  repeatable     Boolean  @default(false)
+  description    String?
+  terms          String?
+  metadataJson   Json?
+  startsAt       DateTime?
+  endsAt         DateTime?
+  createdById    String?
+  updatedById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  createdBy User? @relation("RewardCampaignCreatedBy", fields: [createdById], references: [id])
+  updatedBy User? @relation("RewardCampaignUpdatedBy", fields: [updatedById], references: [id])
+  entries   RewardWalletEntry[]
+
+  @@index([audience, triggerType, active])
+}
+
+model RewardReferral {
+  id                    String   @id @default(uuid())
+  referrerUserId        String
+  referredUserId        String   @unique
+  referralCode          String?
+  qualificationType     String?
+  qualificationSourceId String?
+  status                String   @default("PENDING")
+  firstQualifiedAt      DateTime?
+  rewardedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  referrer User @relation("RewardReferralReferrer", fields: [referrerUserId], references: [id])
+  referred User @relation("RewardReferralReferred", fields: [referredUserId], references: [id])
+  entries  RewardWalletEntry[]
+
+  @@index([referrerUserId, status])
+}
+
+model RewardWalletEntry {
+  id             String   @id @default(uuid())
+  userId         String
+  walletType     String
+  entryType      String
+  direction      String
+  amount         Float
+  currency       String   @default("EUR")
+  sourceType     String
+  sourceId       String
+  campaignId     String?
+  referralId     String?
+  description    String?
+  metadataJson   Json?
+  idempotencyKey String   @unique
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  user      User            @relation(fields: [userId], references: [id])
+  campaign  RewardCampaign? @relation(fields: [campaignId], references: [id])
+  referral  RewardReferral? @relation(fields: [referralId], references: [id])
+  createdBy User?           @relation("RewardWalletEntryCreatedBy", fields: [createdById], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([walletType, createdAt])
+  @@index([campaignId])
+  @@index([referralId])
 }
 
 model PricingConfig {

@@ -10,6 +10,7 @@ export const signupSchema = z
     method: z.enum(['email', 'phone']),
     email: z.string().email().optional(),
     phone: z.string().optional(),
+    referralCode: z.string().min(4).max(64).optional(),
   })
   .refine(
     (data) => {

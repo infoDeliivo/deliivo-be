@@ -20,6 +20,7 @@ import {
 } from './ride-operations.types.js';
 import { haversineDistance } from './geofence.utils.js';
 import { emitToRide, emitToUsers } from '../../socket/index.js';
+import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
 
 const isManualOverrideEnabled = () => process.env.ALLOW_RIDE_MANUAL_OVERRIDE === 'true';
 
@@ -835,6 +836,7 @@ export const riderConfirmDropoff = async (passengerId: string, bookingId: string
             completedAt: now,
         },
     });
+    await awardBookingCompletionRewards(bookingId);
 
     await recordEvent(booking.rideId, bookingId, 'DROPOFF_CONFIRMED_RIDER', 'RIDER', passengerId, input, {
         metadataJson: {
@@ -945,6 +947,7 @@ export const finishRide = async (driverId: string, rideId: string, input: RideEv
             actualEndTime: now,
         },
     });
+    await awardRideCompletionRewards(rideId);
 
     await recordEvent(rideId, null, 'RIDE_FINISHED', 'DRIVER', driverId, input);
 
@@ -1099,6 +1102,7 @@ export const devSimulateDropoff = async (driverId: string, bookingId: string, in
             completedAt: now,
         },
     });
+    await awardBookingCompletionRewards(bookingId);
 
     await recordEvent(booking.rideId, bookingId, 'DEV_DROPOFF_SIMULATED', 'DRIVER', driverId, input, {
         validationStatus: 'WARNING',

@@ -8,6 +8,7 @@ import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-polic
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
 import { releaseSegmentSeats } from '../ride-booking/segment-capacity.utils.js';
 import { emitToUsers } from '../../socket/index.js';
+import { awardBookingCompletionRewards } from '../rewards/rewards.service.js';
 
 const PICKUP_OTP_TTL_MS = 6 * 60 * 60 * 1000;
 const DROP_OTP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -544,6 +545,7 @@ export const verifyDropOtp = async (
             deepLink: `app://booking/${booking.id}`,
         },
     });
+    await awardBookingCompletionRewards(bookingId);
 
     return {
         bookingId: updated.id,
