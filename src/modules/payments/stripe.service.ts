@@ -190,7 +190,7 @@ const createConnectedAccount = async (
     if (lastName) individual['surname'] = lastName;
     if (email) individual['email'] = email;
     if (phone) individual['phone'] = phone;
-    if (dob) individual['dob'] = { day: dob.day, month: dob.month, year: dob.year };
+    if (dob) individual['date_of_birth'] = { day: dob.day, month: dob.month, year: dob.year };
 
     const account = await stripe.v2.core.accounts.create({
         display_name: [firstName, lastName].filter(Boolean).join(' ') || undefined,
