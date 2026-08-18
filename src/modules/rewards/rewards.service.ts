@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
@@ -42,6 +43,60 @@ const normalizeCurrency = (currency?: string | null) => {
 };
 
 const walletDirection = (amount: number) => (amount >= 0 ? 'CREDIT' : 'DEBIT');
+
+const stringifyForHash = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return `[${value.map(stringifyForHash).join(',')}]`;
+  if (typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => `${key}:${stringifyForHash(entryValue)}`)
+      .join('|')}}`;
+  }
+  return String(value);
+};
+
+const computeRewardEntryHash = (input: {
+  previousHash: string | null;
+  userId: string;
+  walletType: string;
+  entryType: string;
+  direction: string;
+  amount: number;
+  currency: string;
+  sourceType: string;
+  sourceId: string;
+  campaignId?: string | null;
+  referralId?: string | null;
+  description?: string | null;
+  metadataJson?: Prisma.InputJsonValue | null;
+  reversalOfEntryId?: string | null;
+  createdById?: string | null;
+  idempotencyKey: string;
+}) => {
+  const payload = [
+    input.previousHash || '',
+    input.userId,
+    input.walletType,
+    input.entryType,
+    input.direction,
+    input.amount.toFixed(2),
+    input.currency,
+    input.sourceType,
+    input.sourceId,
+    input.campaignId || '',
+    input.referralId || '',
+    input.description || '',
+    stringifyForHash(input.metadataJson ?? null),
+    input.reversalOfEntryId || '',
+    input.createdById || '',
+    input.idempotencyKey,
+  ].join('|');
+  return createHash('sha256').update(payload).digest('hex');
+};
 
 const firstActiveCampaign = async (triggerType: string, audience: string) => {
   const now = new Date();
@@ -134,6 +189,75 @@ const loadWalletEntries = async (userId: string) => {
   });
 };
 
+const loadLatestRewardEntry = async (userId: string, walletType: string) => {
+  return prisma.rewardWalletEntry.findFirst({
+    where: { userId, walletType },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { entryHash: true },
+  });
+};
+
+const verifyRewardLedgerChain = async (userId: string) => {
+  const entries = await prisma.rewardWalletEntry.findMany({
+    where: { userId },
+    orderBy: [{ walletType: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: {
+      userId: true,
+      walletType: true,
+      entryType: true,
+      direction: true,
+      amount: true,
+      currency: true,
+      sourceType: true,
+      sourceId: true,
+      campaignId: true,
+      referralId: true,
+      description: true,
+      metadataJson: true,
+      reversalOfEntryId: true,
+      createdById: true,
+      idempotencyKey: true,
+      previousHash: true,
+      entryHash: true,
+    },
+  });
+
+  const chainByWallet = new Map<string, string | null>();
+  for (const entry of entries) {
+    if (!entry.entryHash || !entry.previousHash) {
+      continue;
+    }
+    const walletKey = `${entry.userId}:${entry.walletType}`;
+    const expectedPrevious = chainByWallet.get(walletKey) ?? null;
+    const expectedHash = computeRewardEntryHash({
+      previousHash: expectedPrevious,
+      userId: entry.userId,
+      walletType: entry.walletType,
+      entryType: entry.entryType,
+      direction: entry.direction,
+      amount: entry.amount,
+      currency: entry.currency,
+      sourceType: entry.sourceType,
+      sourceId: entry.sourceId,
+      campaignId: entry.campaignId,
+      referralId: entry.referralId,
+      description: entry.description,
+      metadataJson: entry.metadataJson as Prisma.InputJsonValue | null,
+      reversalOfEntryId: entry.reversalOfEntryId,
+      createdById: entry.createdById,
+      idempotencyKey: entry.idempotencyKey,
+    });
+
+    if (entry.previousHash !== expectedPrevious || entry.entryHash !== expectedHash) {
+      return { ok: false as const, brokenEntryId: entry.id };
+    }
+
+    chainByWallet.set(walletKey, entry.entryHash ?? null);
+  }
+
+  return { ok: true as const, brokenEntryId: null };
+};
+
 const ensureReferralRecord = async (
   tx: Prisma.TransactionClient,
   referredUserId: string,
@@ -213,6 +337,7 @@ export const getRewardWallet = async (userId: string) => {
     referredByUserId: user.referredByUserId,
     totals: walletTotals(entries),
     campaigns,
+    ledgerIntegrity: await verifyRewardLedgerChain(user.id),
     history: entries.map((entry) => ({
       id: entry.id,
       walletType: entry.walletType,
@@ -223,6 +348,9 @@ export const getRewardWallet = async (userId: string) => {
       sourceType: entry.sourceType,
       sourceId: entry.sourceId,
       description: entry.description,
+      previousHash: entry.previousHash,
+      entryHash: entry.entryHash,
+      reversalOfEntryId: entry.reversalOfEntryId,
       campaign: entry.campaign
         ? {
             id: entry.campaign.id,
@@ -320,6 +448,7 @@ const grantWalletEntry = async (input: {
   description?: string | null;
   metadataJson?: Prisma.InputJsonValue | null;
   createdById?: string | null;
+  reversalOfEntryId?: string | null;
   idempotencyKey: string;
 }) => {
   const currency = normalizeCurrency(input.currency);
@@ -328,6 +457,27 @@ const grantWalletEntry = async (input: {
     where: { idempotencyKey: input.idempotencyKey },
   });
   if (entry) return { entry, created: false };
+
+  const latest = await loadLatestRewardEntry(input.userId, walletType);
+  const previousHash = latest?.entryHash ?? null;
+  const entryHash = computeRewardEntryHash({
+    previousHash,
+    userId: input.userId,
+    walletType,
+    entryType: input.entryType,
+    direction: walletDirection(input.amount),
+    amount: Math.abs(input.amount),
+    currency,
+    sourceType: input.sourceType,
+    sourceId: input.sourceId,
+    campaignId: input.campaignId ?? null,
+    referralId: input.referralId ?? null,
+    description: input.description ?? null,
+    metadataJson: input.metadataJson ?? null,
+    reversalOfEntryId: input.reversalOfEntryId ?? null,
+    createdById: input.createdById ?? null,
+    idempotencyKey: input.idempotencyKey,
+  });
 
   const created = await prisma.rewardWalletEntry.create({
     data: {
@@ -343,6 +493,9 @@ const grantWalletEntry = async (input: {
       referralId: input.referralId ?? null,
       description: input.description ?? null,
       createdById: input.createdById ?? null,
+      reversalOfEntryId: input.reversalOfEntryId ?? null,
+      previousHash,
+      entryHash,
       idempotencyKey: input.idempotencyKey,
       ...(input.metadataJson !== null ? { metadataJson: input.metadataJson } : {}),
     },
@@ -486,6 +639,35 @@ export const grantManualReward = async (
   }
 
   return { entry, created };
+};
+
+export const reverseRewardEntry = async (
+  input: { entryId: string; reason: string; metadataJson?: Prisma.InputJsonValue | null },
+  adminId: string | null,
+) => {
+  const original = await prisma.rewardWalletEntry.findUnique({
+    where: { id: input.entryId },
+  });
+  if (!original) throw new Error('ENTRY_NOT_FOUND');
+
+  return grantWalletEntry({
+    userId: original.userId,
+    walletType: original.walletType,
+    entryType: 'REVERSAL',
+    amount: original.direction === 'DEBIT' ? original.amount : -original.amount,
+    currency: original.currency,
+    sourceType: 'REVERSAL',
+    sourceId: original.id,
+    description: input.reason,
+    metadataJson: {
+      ...(input.metadataJson as Record<string, unknown> | null | undefined),
+      reversedEntryId: original.id,
+      reversedEntryType: original.entryType,
+    } as Prisma.InputJsonValue,
+    createdById: adminId,
+    reversalOfEntryId: original.id,
+    idempotencyKey: `reversal:${original.id}`,
+  });
 };
 
 export const awardBookingCompletionRewards = async (bookingId: string) => {

@@ -796,17 +796,23 @@ model RewardWalletEntry {
   metadataJson   Json?
   idempotencyKey String   @unique
   createdById    String?
+  previousHash   String?
+  entryHash      String?
+  reversalOfEntryId String?
   createdAt      DateTime @default(now())
 
   user      User            @relation(fields: [userId], references: [id])
   campaign  RewardCampaign? @relation(fields: [campaignId], references: [id])
   referral  RewardReferral? @relation(fields: [referralId], references: [id])
   createdBy User?           @relation("RewardWalletEntryCreatedBy", fields: [createdById], references: [id])
+  reversalOf RewardWalletEntry? @relation("RewardWalletReversal", fields: [reversalOfEntryId], references: [id])
+  reversals  RewardWalletEntry[] @relation("RewardWalletReversal")
 
   @@index([userId, createdAt])
   @@index([walletType, createdAt])
   @@index([campaignId])
   @@index([referralId])
+  @@index([reversalOfEntryId])
 }
 
 model PricingConfig {

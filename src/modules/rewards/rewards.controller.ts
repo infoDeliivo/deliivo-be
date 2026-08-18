@@ -83,3 +83,23 @@ export const grantManualReward = async (req: AuthRequest, res: Response) => {
     return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to grant reward' });
   }
 };
+
+export const reverseRewardEntry = async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await RewardsService.reverseRewardEntry(
+      {
+        entryId: req.params.entryId as string,
+        reason: req.body.reason,
+        metadataJson: req.body.metadataJson,
+      },
+      req.user?.id ?? null,
+    );
+    return sendSuccess(res, { message: 'Reward entry reversed', data: result });
+  } catch (error: any) {
+    if (error.message === 'ENTRY_NOT_FOUND') {
+      return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'Reward entry not found' });
+    }
+    logError('[REWARDS] reverse entry failed', error, { entryId: req.params.entryId });
+    return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to reverse reward entry' });
+  }
+};

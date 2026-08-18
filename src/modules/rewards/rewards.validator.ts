@@ -37,3 +37,8 @@ export const rewardGrantSchema = z.object({
   sourceId: z.string().min(1).max(128).optional(),
   metadataJson: z.record(z.string(), z.any()).nullable().optional(),
 }).strict();
+
+export const rewardReversalSchema = z.object({
+  reason: z.string().min(3).max(500),
+  metadataJson: z.record(z.string(), z.any()).nullable().optional(),
+}).strict();
