@@ -51,6 +51,17 @@ const firstActiveCampaign = async (triggerType: string, audience: string) => {
   });
 };
 
+const visibleCampaignWhere = () => {
+  const now = new Date();
+  return {
+    active: true,
+    AND: [
+      { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+      { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+    ],
+  };
+};
+
 const shouldGrantCampaignAtCount = (campaign: { thresholdCount: number; repeatable: boolean }, occurrenceCount: number) => {
   const threshold = Math.max(1, campaign.thresholdCount || 1);
   return campaign.repeatable ? occurrenceCount % threshold === 0 : occurrenceCount === threshold;
@@ -182,12 +193,16 @@ export const attachReferralCodeToUser = async (userId: string, referralCode: str
 };
 
 export const getRewardWallet = async (userId: string) => {
-  const [user, entries] = await Promise.all([
+  const [user, entries, campaigns] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, referralCode: true, referredByUserId: true },
     }),
     loadWalletEntries(userId),
+    prisma.rewardCampaign.findMany({
+      where: visibleCampaignWhere(),
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+    }),
   ]);
 
   if (!user) throw new Error('USER_NOT_FOUND');
@@ -197,6 +212,7 @@ export const getRewardWallet = async (userId: string) => {
     referralCode: user.referralCode ?? (await ensureUserReferralCode(user.id)),
     referredByUserId: user.referredByUserId,
     totals: walletTotals(entries),
+    campaigns,
     history: entries.map((entry) => ({
       id: entry.id,
       walletType: entry.walletType,
