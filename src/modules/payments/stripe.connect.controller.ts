@@ -375,6 +375,13 @@ export const connectDeleteBankAccount = async (req: AuthRequest, res: Response) 
     } catch (error) {
         logError('[STRIPE_CONNECT] bank account delete failed', error, { userId: req.user?.id });
         if (isNotEditable(error)) return notEditableResponse(res);
+        if (error instanceof Error && error.message === 'CONNECT_CANNOT_DELETE_ONLY_BANK_ACCOUNT') {
+            return sendError(res, {
+                status: HttpStatus.CONFLICT,
+                message: 'You cannot remove your only bank account. Add a new bank account first, then remove this one.',
+                error: { code: 'CONNECT_CANNOT_DELETE_ONLY_BANK_ACCOUNT' },
+            });
+        }
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
             message: 'Failed to remove bank account',

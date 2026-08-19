@@ -2,7 +2,7 @@
  * The platform answers Stripe's business questions on the driver's behalf. If these break, drivers
  * are asked to pick a business type and describe the product before they can add a bank account.
  */
-const mockAccountsCreate = jest.fn();
+const mockV2AccountsCreate = jest.fn();
 const mockAccountsRetrieve = jest.fn();
 const mockAccountsUpdate = jest.fn();
 const mockAccountsDel = jest.fn();
@@ -11,17 +11,27 @@ const mockAccountLinksCreate = jest.fn();
 const mockFilesCreate = jest.fn();
 
 const mockCreateExternalAccount = jest.fn();
+const mockUpdateExternalAccount = jest.fn();
 const mockDeleteExternalAccount = jest.fn();
 
 jest.mock('stripe', () => ({
     __esModule: true,
     default: jest.fn().mockImplementation(() => ({
+        // Account creation is the only call on the v2 Core Accounts API; everything else below
+        // still runs on v1, which accepts the v2 account id.
+        v2: {
+            core: {
+                accounts: {
+                    create: (...args: unknown[]) => mockV2AccountsCreate(...args),
+                },
+            },
+        },
         accounts: {
-            create: (...args: unknown[]) => mockAccountsCreate(...args),
             retrieve: (...args: unknown[]) => mockAccountsRetrieve(...args),
             update: (...args: unknown[]) => mockAccountsUpdate(...args),
             del: (...args: unknown[]) => mockAccountsDel(...args),
             createExternalAccount: (...args: unknown[]) => mockCreateExternalAccount(...args),
+            updateExternalAccount: (...args: unknown[]) => mockUpdateExternalAccount(...args),
             deleteExternalAccount: (...args: unknown[]) => mockDeleteExternalAccount(...args),
         },
         accountSessions: {
@@ -72,7 +82,7 @@ describe('connected account creation', () => {
         delete process.env.STRIPE_CONNECT_MCC;
         delete process.env.STRIPE_CONNECT_PRODUCT_DESCRIPTION;
 
-        mockAccountsCreate.mockResolvedValue({ id: 'acct_new' });
+        mockV2AccountsCreate.mockResolvedValue({ id: 'acct_new' });
         mockAccountsRetrieve.mockResolvedValue(controllerAccount);
         mockAccountsUpdate.mockResolvedValue(controllerAccount);
         mockAccountsDel.mockResolvedValue({ id: 'acct_1', deleted: true });
@@ -84,22 +94,40 @@ describe('connected account creation', () => {
         mockAccountLinksCreate.mockResolvedValue({ url: 'https://connect.stripe.com/setup/e/x' });
     });
 
+    it('creates a recipient-configuration account the platform collects requirements for', async () => {
+        await createConnectAccountSession('user-1', null, prefill);
+
+        const params = mockV2AccountsCreate.mock.calls[0][0];
+        expect(params.identity.entity_type).toBe('individual');
+        expect(params.identity.country).toBe('EE');
+        expect(params.dashboard).toBe('none');
+        expect(params.configuration.recipient.capabilities.stripe_balance.stripe_transfers).toEqual({
+            requested: true,
+        });
+        expect(params.defaults.responsibilities).toEqual({
+            fees_collector: 'application',
+            losses_collector: 'application',
+        });
+    });
+
+    /**
+     * v2 create has no `business_profile`, so it is patched straight after through v1 — Stripe
+     * wants the URL and product description before it will enable payouts.
+     */
     it('answers the business questions so onboarding only asks for identity and a bank account', async () => {
         await createConnectAccountSession('user-1', null, prefill);
 
-        const params = mockAccountsCreate.mock.calls[0][0];
-        expect(params.business_type).toBe('individual');
+        const [accountId, params] = mockAccountsUpdate.mock.calls[0];
+        expect(accountId).toBe('acct_new');
         expect(params.business_profile.mcc).toBe('4121');
         expect(typeof params.business_profile.product_description).toBe('string');
         expect(params.business_profile.product_description.length).toBeGreaterThan(0);
-        expect(params.controller.requirement_collection).toBe('application');
-        expect(params.country).toBe('EE');
     });
 
     it('uses the selected payout country when creating a connected account', async () => {
         await createConnectAccountSession('user-1', null, { ...prefill, country: 'DE' });
 
-        expect(mockAccountsCreate.mock.calls[0][0].country).toBe('DE');
+        expect(mockV2AccountsCreate.mock.calls[0][0].identity.country).toBe('DE');
     });
 
     it('rejects unsupported selected payout countries before calling Stripe', async () => {
@@ -107,19 +135,19 @@ describe('connected account creation', () => {
             createConnectAccountSession('user-1', null, { ...prefill, country: 'US' })
         ).rejects.toThrow('CONNECT_COUNTRY_UNSUPPORTED');
 
-        expect(mockAccountsCreate).not.toHaveBeenCalled();
+        expect(mockV2AccountsCreate).not.toHaveBeenCalled();
     });
 
     it('prefills the individual from the profile', async () => {
         await createConnectAccountSession('user-1', null, prefill);
 
-        const params = mockAccountsCreate.mock.calls[0][0];
-        expect(params.individual).toMatchObject({
-            first_name: 'John',
-            last_name: 'Smith',
+        const params = mockV2AccountsCreate.mock.calls[0][0];
+        expect(params.identity.individual).toMatchObject({
+            given_name: 'John',
+            surname: 'Smith',
             email: 'john@example.com',
             phone: '+441234567890',
-            dob: { day: 15, month: 5, year: 1990 },
+            date_of_birth: { day: 15, month: 5, year: 1990 },
         });
         expect(params.metadata).toEqual({ userId: 'user-1' });
     });
@@ -127,7 +155,9 @@ describe('connected account creation', () => {
     it('omits dob when the profile has none', async () => {
         await createConnectAccountSession('user-1', null, { ...prefill, dob: null });
 
-        expect(mockAccountsCreate.mock.calls[0][0].individual.dob).toBeUndefined();
+        expect(
+            mockV2AccountsCreate.mock.calls[0][0].identity.individual.date_of_birth
+        ).toBeUndefined();
     });
 
     /**
@@ -136,7 +166,7 @@ describe('connected account creation', () => {
      * accounts.create and the driver cannot reach payout setup at all.
      */
     describe('prefill sanitising', () => {
-        const individualOf = () => mockAccountsCreate.mock.calls[0][0].individual;
+        const individualOf = () => mockV2AccountsCreate.mock.calls[0][0].identity.individual;
 
         it('drops a dob below Stripe’s minimum age instead of failing the call', async () => {
             await createConnectAccountSession('user-1', null, {
@@ -144,9 +174,9 @@ describe('connected account creation', () => {
                 dob: new Date('2018-07-11T00:00:00.000Z'),
             });
 
-            expect(mockAccountsCreate).toHaveBeenCalledTimes(1);
-            expect(individualOf().dob).toBeUndefined();
-            expect(individualOf().first_name).toBe('John');
+            expect(mockV2AccountsCreate).toHaveBeenCalledTimes(1);
+            expect(individualOf().date_of_birth).toBeUndefined();
+            expect(individualOf().given_name).toBe('John');
         });
 
         it('drops a dob in the future', async () => {
@@ -154,7 +184,7 @@ describe('connected account creation', () => {
 
             await createConnectAccountSession('user-1', null, { ...prefill, dob: future });
 
-            expect(individualOf().dob).toBeUndefined();
+            expect(individualOf().date_of_birth).toBeUndefined();
         });
 
         it('keeps a dob exactly on the minimum age boundary', async () => {
@@ -163,7 +193,7 @@ describe('connected account creation', () => {
 
             await createConnectAccountSession('user-1', null, { ...prefill, dob: thirteenToday });
 
-            expect(individualOf().dob).toEqual({
+            expect(individualOf().date_of_birth).toEqual({
                 day: thirteenToday.getUTCDate(),
                 month: thirteenToday.getUTCMonth() + 1,
                 year: thirteenToday.getUTCFullYear(),
@@ -194,11 +224,11 @@ describe('connected account creation', () => {
                 dob: null,
             });
 
-            const params = mockAccountsCreate.mock.calls[0][0];
-            expect(params.individual.first_name).toBeUndefined();
-            expect(params.individual.last_name).toBe('Smith');
-            expect(params.individual.email).toBeUndefined();
-            expect(params.email).toBeUndefined();
+            const params = mockV2AccountsCreate.mock.calls[0][0];
+            expect(params.identity.individual.given_name).toBeUndefined();
+            expect(params.identity.individual.surname).toBe('Smith');
+            expect(params.identity.individual.email).toBeUndefined();
+            expect(params.contact_email).toBeUndefined();
         });
     });
 
@@ -208,7 +238,7 @@ describe('connected account creation', () => {
 
         await createConnectAccountSession('user-1', null, prefill);
 
-        expect(mockAccountsCreate.mock.calls[0][0].business_profile).toMatchObject({
+        expect(mockAccountsUpdate.mock.calls[0][1].business_profile).toMatchObject({
             mcc: '4789',
             product_description: 'Carpooling',
         });
@@ -217,7 +247,7 @@ describe('connected account creation', () => {
     it('reuses an existing account and never mutates it', async () => {
         const result = await createConnectAccountSession('user-1', 'acct_existing', prefill);
 
-        expect(mockAccountsCreate).not.toHaveBeenCalled();
+        expect(mockV2AccountsCreate).not.toHaveBeenCalled();
         expect(mockAccountsUpdate).not.toHaveBeenCalled();
         expect(mockAccountsRetrieve).toHaveBeenCalledWith('acct_existing');
         expect(result).toEqual({
@@ -257,7 +287,7 @@ describe('connected account creation', () => {
             prefill
         );
 
-        expect(mockAccountsCreate.mock.calls[0][0].business_type).toBe('individual');
+        expect(mockV2AccountsCreate.mock.calls[0][0].identity.entity_type).toBe('individual');
         expect(mockAccountLinksCreate).toHaveBeenCalledWith({
             account: 'acct_new',
             return_url: 'https://app.example.com/return',
@@ -319,7 +349,7 @@ describe('custom onboarding', () => {
         jest.clearAllMocks();
         process.env.STRIPE_SECRET_KEY = 'sk_test_dummy';
         process.env.STRIPE_CONNECT_COUNTRY = 'EE';
-        mockAccountsCreate.mockResolvedValue({ id: 'acct_new' });
+        mockV2AccountsCreate.mockResolvedValue({ id: 'acct_new' });
         mockAccountsRetrieve.mockResolvedValue(accountWithRequirements);
         mockAccountsUpdate.mockResolvedValue(accountWithRequirements);
         mockCreateExternalAccount.mockResolvedValue({ id: 'ba_1' });
@@ -330,13 +360,13 @@ describe('custom onboarding', () => {
             accountId: 'acct_existing',
             created: false,
         });
-        expect(mockAccountsCreate).not.toHaveBeenCalled();
+        expect(mockV2AccountsCreate).not.toHaveBeenCalled();
 
         expect(await ensureConnectedAccount('user-1', null)).toEqual({
             accountId: 'acct_new',
             created: true,
         });
-        expect(mockAccountsCreate).toHaveBeenCalledTimes(1);
+        expect(mockV2AccountsCreate).toHaveBeenCalledTimes(1);
     });
 
     it('reports what Stripe still needs so the UI knows which step to render', async () => {
@@ -501,10 +531,45 @@ describe('custom onboarding', () => {
         });
     });
 
-    it('removes a saved bank payout account', async () => {
-        await deleteConnectBankAccount('acct_1', 'ba_1');
+    describe('removing a bank payout account', () => {
+        const withBankAccounts = (
+            data: Array<Record<string, unknown>>
+        ) => mockAccountsRetrieve.mockResolvedValue({
+            ...accountWithRequirements,
+            external_accounts: { data },
+        });
 
-        expect(mockDeleteExternalAccount).toHaveBeenCalledWith('acct_1', 'ba_1');
+        it('promotes the remaining account to default before removing the current one', async () => {
+            withBankAccounts([
+                { object: 'bank_account', id: 'ba_1', default_for_currency: true },
+                { object: 'bank_account', id: 'ba_2', default_for_currency: false },
+            ]);
+
+            await deleteConnectBankAccount('acct_1', 'ba_1');
+
+            expect(mockUpdateExternalAccount).toHaveBeenCalledWith('acct_1', 'ba_2', {
+                default_for_currency: true,
+            });
+            expect(mockDeleteExternalAccount).toHaveBeenCalledWith('acct_1', 'ba_1');
+        });
+
+        /** Stripe refuses the delete itself; failing early gives the driver a message to act on. */
+        it('refuses to remove the only bank account', async () => {
+            withBankAccounts([{ object: 'bank_account', id: 'ba_1', default_for_currency: true }]);
+
+            await expect(deleteConnectBankAccount('acct_1', 'ba_1')).rejects.toThrow(
+                'CONNECT_CANNOT_DELETE_ONLY_BANK_ACCOUNT'
+            );
+            expect(mockDeleteExternalAccount).not.toHaveBeenCalled();
+        });
+
+        it('is a no-op when the bank account is already gone', async () => {
+            withBankAccounts([]);
+
+            await deleteConnectBankAccount('acct_1', 'ba_missing');
+
+            expect(mockDeleteExternalAccount).not.toHaveBeenCalled();
+        });
     });
 
     it('surfaces an attached bank account without exposing full account numbers', async () => {
