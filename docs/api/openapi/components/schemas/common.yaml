@@ -208,6 +208,21 @@
         ],
         "format": "uri"
       },
+      "preferredLocale": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "en",
+          "et",
+          "lv",
+          "lt",
+          "ru",
+          null
+        ],
+        "description": "Language the user selected on the website, captured at signup. Null when it was never learned."
+      },
       "onboardingStatus": {
         "type": "string"
       },

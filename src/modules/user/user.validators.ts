@@ -68,3 +68,11 @@ export const fullProfileUpdateSchema = z.object({
     pets: z.enum(['YES', 'NO', 'SOMETIMES']).optional(),
   }).optional(),
 });
+
+/**
+ * Language the user just picked in the switcher. Free-form because the site sends anything from
+ * `et` to `ru-RU`; the service decides whether it names a language we support.
+ */
+export const updateLocaleSchema = z.object({
+  locale: z.string().trim().min(1).max(20),
+});
