@@ -103,6 +103,13 @@ model User {
   avatarUrl String?
   avatarKey String?
 
+  // Language the user picked on the website, captured at signup. Null = never learned.
+  preferredLocale String? @db.VarChar(10)
+
+  // Country the user was last seen connecting from, ISO-3166 alpha-2, derived from the request IP.
+  // Null = never learned. Approximate by nature: a VPN or a roaming carrier moves it.
+  detectedCountry String? @db.VarChar(2)
+
   role             UserRole         @default(USER)
   isBanned         Boolean          @default(false)
 

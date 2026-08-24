@@ -31,6 +31,7 @@ export const getMeService = async (userId: string) => {
           privacyAcceptedAt: true,
           email: true,
           phone: true,
+          preferredLocale: true,
           avatarUrl: true,
           onboardingStatus: true,
         isVerified: true,
