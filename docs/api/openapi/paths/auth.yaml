@@ -61,6 +61,16 @@
                   },
                   "phone": {
                     "type": "string"
+                  },
+                  "referralCode": {
+                    "type": "string",
+                    "minLength": 4,
+                    "maxLength": 64
+                  },
+                  "locale": {
+                    "type": "string",
+                    "maxLength": 20,
+                    "description": "Language the website is being used in, e.g. `et`, `ru-RU`. Resolved to a supported language (en/et/ru) and stored as the user's preferredLocale; unsupported values are ignored. Falls back to the Accept-Language header when omitted."
                   }
                 }
               }

@@ -33,6 +33,9 @@ export const protect: RequestHandler = async (req: Request, res: Response, next:
     }
 
     authReq.user = decoded;
+
+    // The caller's language is learned by `learnRequestLocale`, mounted on /api/v1 in app.ts so
+    // that public routes are covered too. Nothing to do here.
     next();
   } catch (error) {
     return sendError(res, {
