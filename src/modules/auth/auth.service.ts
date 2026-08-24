@@ -5,13 +5,14 @@ import { Role } from '../user/user.constants.js';
 import { logError } from '../../utils/logger.js';
 import { OAuth2Client } from 'google-auth-library';
 import { attachReferralCodeToUser, ensureUserReferralCode } from '../rewards/rewards.service.js';
+import { SupportedLocale } from '../../utils/locale.js';
 
 const googleClient = new OAuth2Client();
 
 export const normalizeAuthIdentifier = (method: string, identifier: string) =>
   method === 'email' ? identifier.trim().toLowerCase() : identifier.trim();
 
-export const googleAuthService = async (idToken: string) => {
+export const googleAuthService = async (idToken: string, locale?: SupportedLocale | null) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) throw new Error('GOOGLE_AUTH_NOT_CONFIGURED');
 
@@ -37,6 +38,7 @@ export const googleAuthService = async (idToken: string) => {
         emailVerified: true,
         isVerified: true,
         onboardingStatus: 'PENDING',
+        preferredLocale: locale ?? null,
       },
     });
     await ensureUserReferralCode(user.id);
@@ -49,6 +51,7 @@ export const googleAuthService = async (idToken: string) => {
         ...(!user.firstName && payload.given_name ? { firstName: payload.given_name.trim() } : {}),
         ...(!user.lastName && payload.family_name ? { lastName: payload.family_name.trim() } : {}),
         ...(!user.avatarUrl && payload.picture ? { avatarUrl: payload.picture } : {}),
+        ...(locale && !user.preferredLocale ? { preferredLocale: locale } : {}),
       },
     });
     if (!user.referralCode) {
@@ -115,9 +118,14 @@ const identifierWhere = (method: string, identifier: string) => {
 /** 
  * Signup Service
  */
-export const signupService = async (method: string, identifier: string, referralCode?: string) => {
+export const signupService = async (
+  method: string,
+  identifier: string,
+  referralCode?: string,
+  locale?: SupportedLocale | null,
+) => {
   const normalized = normalizeAuthIdentifier(method, identifier);
-  const user = await prisma.user.findFirst({
+  let user = await prisma.user.findFirst({
     where: identifierWhere(method, normalized),
   });
 
@@ -133,6 +141,7 @@ export const signupService = async (method: string, identifier: string, referral
         [method]: normalized,
         onboardingStatus: 'PENDING',
         isVerified: false,
+        preferredLocale: locale ?? null,
       },
     });
 
@@ -151,6 +160,14 @@ export const signupService = async (method: string, identifier: string, referral
   // User exists but not verified → reuse OTP flow
   if (!user.referralCode) {
     await ensureUserReferralCode(user.id);
+  }
+  // Backfill only. A locale already on the row is the user's own choice and outranks whatever
+  // this request happens to be sending.
+  if (locale && !user.preferredLocale) {
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: { preferredLocale: locale },
+    });
   }
   if (referralCode && !user.referredByUserId) {
     await attachReferralCodeToUser(user.id, referralCode).catch(() => null);
@@ -261,7 +278,9 @@ export const refreshTokenService = async (refreshToken: string) => {
       role: (user as any).role ?? Role.USER,
     });
 
-    return { success: true, tokens };
+    // The caller is renewing a session they already hold. Returned so the controller can follow
+    // the language of the renewal — this route is public, so nothing else identifies them.
+    return { success: true, tokens, userId: user.id };
   } catch (error) {
     logError('refreshTokenService error', error);
     return {

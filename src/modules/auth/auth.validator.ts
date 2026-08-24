@@ -11,6 +11,9 @@ export const signupSchema = z
     email: z.string().email().optional(),
     phone: z.string().optional(),
     referralCode: z.string().min(4).max(64).optional(),
+    // Language the website is being used in. Free-form because browsers and the site send
+    // anything from `et` to `ru-RU`; resolveRequestLocale decides what is supported.
+    locale: z.string().max(20).optional(),
   })
   .refine(
     (data) => {
@@ -70,6 +73,9 @@ export const loginSchema = z
 
 export const refreshTokenSchema = z.object({
   refreshToken: z.string(),
+  // Optional: a client that knows the language it is running in can state it rather than relying
+  // on Accept-Language. Same precedence as signup — the stated value wins.
+  locale: z.string().max(20).optional(),
 });
 
 export const acceptTosSchema = z.object({
@@ -79,6 +85,7 @@ export const acceptTosSchema = z.object({
 
 export const googleAuthSchema = z.object({
   idToken: z.string().min(100, 'Google ID token is required'),
+  locale: z.string().max(20).optional(),
 });
 
 export const temporaryAdminLoginSchema = z.object({

@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import { createHash, randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/index.js';
@@ -202,6 +201,7 @@ const verifyRewardLedgerChain = async (userId: string) => {
     where: { userId },
     orderBy: [{ walletType: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     select: {
+      id: true,
       userId: true,
       walletType: true,
       entryType: true,

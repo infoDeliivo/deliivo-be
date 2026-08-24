@@ -25,6 +25,8 @@ import {
   resetOtpSmsTemplate,
 } from '../sms/index.js';
 import { cacheKeys, deleteCache } from '../../services/cache.service.js';
+import { resolveRequestLocale } from '../../utils/locale.js';
+import { syncPreferredLocale } from '../user/user-locale.service.js';
 
 type OtpPurpose = 'signup' | 'login' | 'reset_password';
 
@@ -56,7 +58,8 @@ const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
 
 export const googleAuth = async (req: Request, res: Response) => {
   try {
-    const result = await googleAuthService(req.body.idToken);
+    const locale = resolveRequestLocale(req.body.locale, req.header('accept-language'));
+    const result = await googleAuthService(req.body.idToken, locale);
     return sendSuccess(res, {
       message: 'Google authentication successful',
       data: {
@@ -114,6 +117,7 @@ export const signup = async (req: Request, res: Response) => {
       email?: string;
       phone?: string;
       referralCode?: string;
+      locale?: string;
     };
     const rawIdentifier = method === 'email' ? email : phone;
 
@@ -125,7 +129,9 @@ export const signup = async (req: Request, res: Response) => {
     }
     const identifier = normalizeAuthIdentifier(method, rawIdentifier);
 
-    const result = await signupService(method, identifier, req.body.referralCode);
+    const locale = resolveRequestLocale(req.body.locale, req.header('accept-language'));
+
+    const result = await signupService(method, identifier, req.body.referralCode, locale);
     if (result.success === false) {
       return sendError(res, {
         message: result.reason || 'Failed to create user',
@@ -373,6 +379,13 @@ export const refreshToken = async (req: Request, res: Response) => {
         message: tokens.reason || 'Invalid refresh token',
       });
     }
+
+    // A silent renewal is the one request an otherwise idle session makes, and this route is
+    // public, so `learnRequestLocale` cannot see who is calling. Follow the language here.
+    if ('userId' in tokens) {
+      await syncPreferredLocale(tokens.userId, req.headers['accept-language'], req.body.locale);
+    }
+
     return sendSuccess(res, { data: tokens.tokens });
   } catch (err) {
     logError('Refresh token error', err);

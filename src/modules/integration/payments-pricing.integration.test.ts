@@ -148,7 +148,7 @@ const pricingSnapshots: MockPricingSnapshot[] = [];
 const payoutBatches: MockPayoutBatch[] = [];
 const paymentMethods: MockPaymentMethod[] = [];
 const outboxEvents: MockOutboxEvent[] = [];
-const users: Array<{ id: string; email: string | null; name: string | null; stripeAccountId: string | null }> = [];
+const users: Array<{ id: string; email: string | null; name: string | null; stripeAccountId: string | null; stripeOnboardingComplete: boolean }> = [];
 
 // Seed data
 const DRIVER_ID = 'driver-001';
@@ -158,8 +158,9 @@ const BOOKING_ID = 'booking-001';
 
 beforeAll(() => {
     users.push(
-        { id: DRIVER_ID, email: 'driver@test.com', name: 'Test Driver', stripeAccountId: 'acct_driver123' },
-        { id: RIDER_ID, email: 'rider@test.com', name: 'Test Rider', stripeAccountId: null },
+        { id: DRIVER_ID, email: 'driver@test.com', name: 'Test Driver', stripeAccountId: 'acct_driver123', stripeOnboardingComplete: true },
+        { id: RIDER_ID, email: 'rider@test.com', name: 'Test Rider', stripeAccountId: null, stripeOnboardingComplete: false },
+        { id: 'driver-no-payments', email: 'empty@test.com', name: 'No Payments', stripeAccountId: 'acct_empty123', stripeOnboardingComplete: true },
     );
 
     // Seed pricing config (Baltic region)

@@ -18,7 +18,8 @@ const mockPrisma = {
 
 jest.mock('../../config/index.js', () => ({
     __esModule: true,
-    prisma: mockPrisma,
+    // withPrismaFallback: unlisted models/methods resolve empty instead of throwing.
+    prisma: require('../../test-utils/prisma-mock.js').withPrismaFallback(mockPrisma),
 }));
 
 jest.mock('../payments/stripe.service.js', () => ({
@@ -398,11 +399,11 @@ describe('createBooking segment pricing + payment intent', () => {
                 userId: 'driver-1',
                 type: 'booking.request.driver_decision',
                 title: 'New ride request',
-                body: 'Passenger wants B to C',
+                body: 'Rider wants B to C',
                 data: expect.objectContaining({
                     bookingId: 'booking-1',
                     rideId: 'ride-1',
-                    passengerName: 'Passenger',
+                    passengerName: 'Rider',
                     passengerAvatarUrl: '',
                     originAddress: 'B',
                     destinationAddress: 'C',

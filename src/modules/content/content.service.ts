@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/index.js';
+import { localeLookupValues, normalizeLocale } from '../../utils/locale.js';
 
 export type ContentPostCategory = 'Rider guide' | 'Driver guide' | 'Safety' | 'Product update';
 export type ContentPostStatus = 'DRAFT' | 'PUBLISHED';
@@ -39,37 +40,6 @@ function sanitizeSlug(input: string) {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 120);
-}
-
-function normalizeLocale(input?: string) {
-    const normalized = (input || 'en').trim().toLowerCase().replace('_', '-');
-    const primary = normalized.split('-')[0];
-    const aliases: Record<string, string> = {
-        en: 'en',
-        eng: 'en',
-        english: 'en',
-        et: 'et',
-        ee: 'et',
-        est: 'et',
-        eesti: 'et',
-        estonian: 'et',
-        ru: 'ru',
-        rus: 'ru',
-        russian: 'ru',
-    };
-
-    return aliases[normalized] || aliases[primary] || 'en';
-}
-
-function localeLookupValues(locale: string) {
-    const normalizedLocale = normalizeLocale(locale);
-    const aliasesByLocale: Record<string, string[]> = {
-        en: ['en', 'eng', 'english'],
-        et: ['et', 'ee', 'est', 'eesti', 'estonian'],
-        ru: ['ru', 'rus', 'russian'],
-    };
-
-    return Array.from(new Set([normalizedLocale, ...(aliasesByLocale[normalizedLocale] || [])]));
 }
 
 function preferCanonicalLocaleRows<T extends { slug: string; locale: string }>(rows: T[], locale?: string) {

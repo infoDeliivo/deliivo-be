@@ -20,7 +20,7 @@ export const createSetupIntent = async (userId: string) => {
     const stripe = getStripeClient();
 
     // Get or create Stripe customer
-    let customerRecord = await prisma.paymentMethod.findFirst({
+    const customerRecord = await prisma.paymentMethod.findFirst({
         where: { userId },
         select: { stripeCustomerId: true },
     });

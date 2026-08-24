@@ -131,7 +131,8 @@ jest.mock('../payments/stripe.service.js', () => ({
 // ============================================================
 
 jest.mock('../../config/index.js', () => ({
-    prisma: {
+    // withPrismaFallback: unlisted models/methods resolve empty instead of throwing.
+    prisma: require('../../test-utils/prisma-mock.js').withPrismaFallback({
         payment: {
             findMany: jest.fn(({ where }: any) => {
                 let result = [...payments];
@@ -230,6 +231,19 @@ jest.mock('../../config/index.js', () => ({
                 return Promise.resolve(result);
             }),
         },
+        // syncOfflineActions resolves the actor from the ride/booking before recording an event.
+        ride: {
+            findUnique: jest.fn(({ where }: any) =>
+                Promise.resolve(where.id === RIDE_ID ? { id: RIDE_ID, driverId: DRIVER_ID } : null)),
+        },
+        rideBooking: {
+            findUnique: jest.fn(({ where }: any) =>
+                Promise.resolve(
+                    where.id === BOOKING_ID
+                        ? { id: BOOKING_ID, passengerId: RIDER_ID, rideId: RIDE_ID }
+                        : null,
+                )),
+        },
         rideEvent: {
             findUnique: jest.fn(({ where }: any) => {
                 const event = rideEvents.find(e => e.actionId === where.actionId);
@@ -255,7 +269,7 @@ jest.mock('../../config/index.js', () => ({
                 return Promise.resolve(event);
             }),
         },
-    },
+    }),
 }));
 
 // ============================================================
@@ -263,8 +277,13 @@ jest.mock('../../config/index.js', () => ({
 // ============================================================
 
 jest.mock('../../utils/logger.js', () => ({
+    __esModule: true,
     logInfo: jest.fn(),
     logError: jest.fn(),
+    logDebug: jest.fn(),
+    logHttp: jest.fn(),
+    // The mailer logs at import time via the default export, so it has to exist.
+    default: { info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn(), http: jest.fn() },
 }));
 
 // ============================================================

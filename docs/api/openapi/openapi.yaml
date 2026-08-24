@@ -115,6 +115,9 @@
     "/api/v1/users/me": {
       "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me"
     },
+    "/api/v1/users/me/locale": {
+      "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1locale"
+    },
     "/api/v1/users/me/profile": {
       "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1profile"
     },

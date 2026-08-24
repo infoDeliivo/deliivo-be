@@ -1832,7 +1832,7 @@ export const getDriverResponseMetrics = async (driverId: string) => {
         },
     });
 
-    let totalRequests = bookings.length;
+    const totalRequests = bookings.length;
     let accepted = 0;
     let rejected = 0;
     let expired = 0;
