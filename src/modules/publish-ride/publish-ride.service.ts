@@ -8,6 +8,7 @@ import { createNotification } from '../notification/notification.service.js';
 import { markBookingPaymentRefunded } from '../payments/payment.service.js';
 import { formatBookingReference } from '../../utils/booking-reference.js';
 import { combineDepartureDateTimeInRideTimezone } from '../../utils/ride-timezone.js';
+import { isRideStartTooEarly } from '../../utils/ride-start-window.js';
 import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
 
 const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
@@ -526,14 +527,14 @@ export const startRide = async (driverId: string, rideId: string) => {
 
     if (process.env.ALLOW_RIDE_SIMULATION !== 'true') {
         const [hours, minutes] = ride.departureTime.split(':').map(Number);
-        const departureAt = Date.UTC(
+        const departureAt = new Date(Date.UTC(
             ride.departureDate.getUTCFullYear(),
             ride.departureDate.getUTCMonth(),
             ride.departureDate.getUTCDate(),
             hours,
             minutes,
-        );
-        if (Date.now() < departureAt - 10 * 60 * 1000) {
+        ));
+        if (isRideStartTooEarly(departureAt)) {
             throw new Error('RIDE_TOO_EARLY');
         }
     }

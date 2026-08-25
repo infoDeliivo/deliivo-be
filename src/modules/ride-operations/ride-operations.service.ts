@@ -2,6 +2,7 @@ import { BookingStatus, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
 import logger from '../../utils/logger.js';
+import { isRideStartTooEarly } from '../../utils/ride-start-window.js';
 import { sendMail } from '../mail/mail.service.js';
 import { sendSms } from '../sms/sms.service.js';
 import { createTrackingLink } from '../tracking/tracking.service.js';
@@ -209,8 +210,7 @@ export const startRide = async (driverId: string, rideId: string, input: RideEve
     const allowRideSimulation = process.env.ALLOW_RIDE_SIMULATION === 'true';
     if (!allowRideSimulation) {
         const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
-        const earliestStartAt = departureAt.getTime() - 10 * 60 * 1000;
-        if (Date.now() < earliestStartAt) {
+        if (isRideStartTooEarly(departureAt)) {
             throw new Error('RIDE_TOO_EARLY');
         }
     }

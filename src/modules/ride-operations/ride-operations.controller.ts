@@ -4,6 +4,7 @@ import { HttpStatus, sendError, sendSuccess, logError } from '../../utils/index.
 import { emitToRide } from '../../socket/index.js';
 import { deleteCache, deleteCachePattern } from '../../services/cache.service.js';
 import * as RideOpsService from './ride-operations.service.js';
+import { rideTooEarlyMessage } from '../../utils/ride-start-window.js';
 
 const cacheKeys = {
     bookingPattern: (id: string) => `booking:${id}:*`,
@@ -41,7 +42,7 @@ const mapRideOpsError = (error: Error) => {
         case 'RIDE_NOT_IN_PROGRESS':
             return { status: HttpStatus.CONFLICT, message: 'Ride is not in progress' };
         case 'RIDE_TOO_EARLY':
-            return { status: HttpStatus.CONFLICT, message: 'Ride cannot be started more than 10 minutes before the scheduled departure time' };
+            return { status: HttpStatus.CONFLICT, message: rideTooEarlyMessage() };
         case 'DEV_SIMULATION_DISABLED':
             return { status: HttpStatus.FORBIDDEN, message: 'Ride simulation is disabled' };
         case 'BOOKINGS_NOT_ALL_TERMINAL':
