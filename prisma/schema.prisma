@@ -1028,6 +1028,12 @@ model DlVerification {
   dobMatch         Boolean?
   genderMatch      Boolean?
 
+  // Stamped by Veriff's events webhook when the driver actually submits their documents.
+  // The row is created the moment a session opens, so PENDING alone cannot tell a driver
+  // who uploaded and is waiting from one who opened the flow and walked away — and those
+  // two need opposite things said to them.
+  submittedAt      DateTime?
+
   // Manual admin review. A driver who does not complete Veriff can upload a licence
   // photo instead; an admin reads it and approves or declines with a reason. The
   // image is a private S3 key served only through GET /uploads/read.

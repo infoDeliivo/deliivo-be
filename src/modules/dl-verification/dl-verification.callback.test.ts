@@ -81,6 +81,40 @@ describe('createSessionSchema', () => {
         );
     });
 
+    // A phone-registered driver has no email and an email-registered one has no phone. The
+    // client forwards the profile verbatim, so null is what "not set" looks like on the wire.
+    it('accepts a null email from a phone-registered driver', () => {
+        const parsed = createSessionSchema.safeParse({
+            firstName: 'Jon',
+            lastName: 'Smith',
+            email: null,
+        });
+
+        expect(parsed.success).toBe(true);
+    });
+
+    it('accepts a null phoneNumber from an email-registered driver', () => {
+        const parsed = createSessionSchema.safeParse({
+            firstName: 'Jon',
+            lastName: 'Smith',
+            phoneNumber: null,
+        });
+
+        expect(parsed.success).toBe(true);
+    });
+
+    // Null means "not set". A malformed value is still a caller error.
+    it('still rejects a malformed email', () => {
+        const parsed = createSessionSchema.safeParse({
+            firstName: 'Jon',
+            lastName: 'Smith',
+            email: 'not-an-email',
+        });
+
+        expect(parsed.success).toBe(false);
+        expect(parsed.error?.issues[0]?.message).toBe('Invalid email format');
+    });
+
     // DOB and gender come from the profile, so a caller-supplied value is stripped
     // rather than forwarded to Veriff.
     it('strips dateOfBirth and gender from the body', () => {

@@ -14,7 +14,7 @@ import paymentsConnectRouter from './payments/stripe.connect.routes.js';
 import { paymentRouter } from './payments/payment.routes.js';
 import ratingsRouter from './ratings/ratings.routes.js';
 import dlVerificationRouter from './dl-verification/dl-verification.routes.js';
-import dlVerificationWebhookRouter from './dl-verification/dl-verification.webhook.routes.js';
+import dlVerificationWebhookRouter, { eventsRouter as dlVerificationEventsRouter } from './dl-verification/dl-verification.webhook.routes.js';
 import adminRouter from './admin/admin.routes.js';
 import { rideOperationsRouter, bookingOperationsRouter } from './ride-operations/ride-operations.routes.js';
 import { pricingRouter } from './pricing/pricing.routes.js';
@@ -45,6 +45,7 @@ export {
     ratingsRouter,
     dlVerificationRouter,
     dlVerificationWebhookRouter,
+    dlVerificationEventsRouter,
     adminRouter,
     rideOperationsRouter,
     bookingOperationsRouter,

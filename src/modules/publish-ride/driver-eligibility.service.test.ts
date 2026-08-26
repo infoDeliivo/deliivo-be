@@ -218,6 +218,86 @@ describe('driver publish eligibility', () => {
         });
     });
 
+    describe('licence under review', () => {
+        // The service asks for IDENTITY_MISMATCH first, then PENDING. Answering per status
+        // keeps the two questions apart instead of returning the same row to both.
+        const answerByStatus = (rows: Partial<Record<'IDENTITY_MISMATCH' | 'PENDING', unknown>>) => {
+            mockPrisma.dlVerification.findFirst.mockImplementation(
+                (args: { where: { status: 'IDENTITY_MISMATCH' | 'PENDING'; submittedAt?: unknown } }) =>
+                    Promise.resolve(rows[args.where.status] ?? null),
+            );
+        };
+
+        // A licence waiting on the Veriff decision webhook is work already done. Telling the
+        // driver to verify it again invites a second session for the same document.
+        it('reports DL_VERIFICATION_PENDING while a submitted licence awaits a decision', async () => {
+            mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, dlVerified: false });
+            answerByStatus({ PENDING: { id: 'dlv-pending' } });
+
+            const result = await getDriverPublishEligibility('driver-1');
+            const check = result.requirements.find((item) => item.key === 'DL_VERIFICATION');
+
+            expect(check?.satisfied).toBe(false);
+            expect(check?.reason).toBe('DL_VERIFICATION_PENDING');
+            // Nothing to re-submit while waiting — the driver polls the status endpoint.
+            expect(check?.actionUrl).toBe('/api/v1/dl-verification/status');
+            await expect(assertDriverCanPublish('driver-1')).rejects.toThrow(
+                'DL_VERIFICATION_PENDING',
+            );
+        });
+
+        // Waiting is not actionable; a mismatch is. The driver sees the one they can fix.
+        it('prefers DL_IDENTITY_MISMATCH over a pending session', async () => {
+            mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, dlVerified: false });
+            answerByStatus({ IDENTITY_MISMATCH: { id: 'dlv-1' }, PENDING: { id: 'dlv-pending' } });
+
+            const result = await getDriverPublishEligibility('driver-1');
+            const check = result.requirements.find((item) => item.key === 'DL_VERIFICATION');
+
+            expect(check?.reason).toBe('DL_IDENTITY_MISMATCH');
+            expect(check?.actionUrl).toBe('/api/v1/dl-verification');
+        });
+
+        // The row exists from the moment a session opens. Asking only for PENDING would put a
+        // driver who abandoned the flow into a waiting state they cannot leave.
+        it('asks only for pending rows that carry a submission', async () => {
+            mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, dlVerified: false });
+            answerByStatus({ PENDING: { id: 'dlv-pending' } });
+
+            await getDriverPublishEligibility('driver-1');
+
+            const pendingQuery = mockPrisma.dlVerification.findFirst.mock.calls
+                .map((call: [{ where: { status: string; submittedAt?: unknown } }]) => call[0])
+                .find((args: { where: { status: string } }) => args.where.status === 'PENDING');
+
+            expect(pendingQuery?.where.submittedAt).toEqual({ not: null });
+        });
+
+        it('keeps DRIVER_NOT_VERIFIED for a driver who never started a session', async () => {
+            mockPrisma.user.findUnique.mockResolvedValue({ ...eligibleDriver, dlVerified: false });
+            answerByStatus({});
+
+            const result = await getDriverPublishEligibility('driver-1');
+            const check = result.requirements.find((item) => item.key === 'DL_VERIFICATION');
+
+            expect(check?.reason).toBe('DRIVER_NOT_VERIFIED');
+            expect(check?.actionUrl).toBe('/api/v1/dl-verification');
+        });
+
+        // The approved decision webhook flips dlVerified; the gate must then clear outright
+        // rather than reporting the row it was approved from as still under review.
+        it('satisfies the gate once approval lands, leaving no pending reason behind', async () => {
+            answerByStatus({ PENDING: { id: 'dlv-pending' } });
+
+            const result = await getDriverPublishEligibility('driver-1');
+            const check = result.requirements.find((item) => item.key === 'DL_VERIFICATION');
+
+            expect(check?.satisfied).toBe(true);
+            expect(check?.reason).toBeNull();
+            expect(mockPrisma.dlVerification.findFirst).not.toHaveBeenCalled();
+        });
+    });
+
     describe('bypass flags', () => {
         // DL verification is the platform's KYC: no environment flag may skip it.
         it('never skips the licence gates, whatever the environment says', async () => {

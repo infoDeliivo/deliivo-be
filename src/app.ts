@@ -22,6 +22,7 @@ import {
   ratingsRouter,
   dlVerificationRouter,
   dlVerificationWebhookRouter,
+  dlVerificationEventsRouter,
   adminRouter,
   rideOperationsRouter,
   bookingOperationsRouter,
@@ -87,6 +88,11 @@ app.use(
 // still receive parsed bodies.
 app.use('/api/v1/dl-verification/webhook', express.raw({ type: 'application/json' }));
 app.use('/api/v1/dl-verification/webhook', dlVerificationWebhookRouter);
+
+// Veriff's event stream carries no verdict — it only reports that the driver reached a stage
+// of the flow. Same signing, same raw-body constraint, its own path.
+app.use('/api/v1/dl-verification/events', express.raw({ type: 'application/json' }));
+app.use('/api/v1/dl-verification/events', dlVerificationEventsRouter);
 
 // Now apply JSON parsing for all other routes
 app.use(express.json({ limit: '50kb' }));

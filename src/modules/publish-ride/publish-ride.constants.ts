@@ -17,6 +17,11 @@ export const PUBLISH_ERROR_MAP: Record<string, PublishErrorMapping> = {
         status: HttpStatus.FORBIDDEN,
         message: 'Your driving licence must be verified before publishing a ride',
     },
+    DL_VERIFICATION_PENDING: {
+        status: HttpStatus.FORBIDDEN,
+        message:
+            'Your driving licence is under review. You can publish a ride as soon as the result arrives',
+    },
     DL_IDENTITY_MISMATCH: {
         status: HttpStatus.FORBIDDEN,
         message:

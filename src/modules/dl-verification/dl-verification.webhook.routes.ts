@@ -10,4 +10,11 @@ const router = Router();
 // authenticated JSON routes a Buffer instead of a parsed body.
 router.post('/', controller.webhook);
 
+export const eventsRouter = Router();
+
+// Veriff's event stream ("started", "submitted"). Signed with the same shared secret, so it
+// needs the same unparsed body, but it is mounted on its own path: pointing both streams at
+// one route would hand the decision handler flat event payloads it must reject.
+eventsRouter.post('/', controller.events);
+
 export default router;
