@@ -5,6 +5,7 @@ import * as adminController from './admin.controller.js';
 import { pricingConfigCreateSchema, pricingConfigIdSchema, pricingConfigUpdateSchema } from '../pricing/pricing.validator.js';
 import {
     adminForceCompleteBookingSchema,
+    adminDeleteUserSchema,
     adminVerificationEmailSchema,
     adminOpenBookingDisputeSchema,
     bookingIdParamSchema,
@@ -31,6 +32,11 @@ router.get('/sos', adminController.listEmergencyAlerts as any);
 router.post('/sos/:id/status', adminController.updateEmergencyAlertStatus as any);
 router.post('/users/:id/ban', adminController.banUser as any);
 router.post('/users/:id/unban', adminController.unbanUser as any);
+router.post(
+    '/users/:id/delete',
+    validate({ params: userIdParamSchema, body: adminDeleteUserSchema }),
+    adminController.deleteUser as any,
+);
 router.post(
     '/users/:id/require-veriff',
     validate({ params: userIdParamSchema }),

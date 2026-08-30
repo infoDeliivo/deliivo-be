@@ -13,6 +13,7 @@ import { recoverPendingVeriffDecisionsForUser } from '../dl-verification/dl-veri
 import { sendMail } from '../mail/mail.service.js';
 import { REQUIRED_DOCUMENT_TYPES, requiresFullDocumentSet } from '../vehicles/vehicle.constants.js';
 import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
+import { deleteUserAccount, hardDeleteUserAccount } from '../user/user-gdpr.service.js';
 
 const emergencyAlertSelect = {
     id: true,
@@ -52,6 +53,8 @@ const emergencyAlertSelect = {
 
 const adminUserName = (user: { firstName?: string | null; lastName?: string | null; email?: string | null }) =>
     [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'there';
+
+const HARD_DELETE_USERS_ENABLED = process.env.ADMIN_HARD_DELETE_USER_ENABLED === 'true';
 
 const htmlEscape = (value: string) =>
     value
@@ -789,6 +792,21 @@ export const setBanStatus = async (userId: string, isBanned: boolean) => {
     }
 
     return updated;
+};
+
+export const deleteUser = async (userId: string, options: { mode: 'soft' | 'hard' }) => {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+    if (!user) throw new Error('USER_NOT_FOUND');
+    if (user.role === 'ADMIN') throw new Error('CANNOT_DELETE_ADMIN');
+
+    if (options.mode === 'hard') {
+        if (!HARD_DELETE_USERS_ENABLED) {
+            throw new Error('HARD_DELETE_DISABLED');
+        }
+        return hardDeleteUserAccount(userId);
+    }
+
+    return deleteUserAccount(userId);
 };
 
 /* ================= PLATFORM STATS ================= */

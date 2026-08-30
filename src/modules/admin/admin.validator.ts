@@ -8,6 +8,11 @@ export const userIdParamSchema = z.object({
     id: z.string().uuid('A valid user id is required'),
 });
 
+export const adminDeleteUserSchema = z.object({
+    confirm: z.literal(true),
+    mode: z.enum(['soft', 'hard']).default('soft'),
+});
+
 export const rejectVehicleSchema = z.object({
     // The reason is shown to the driver verbatim in the rejection notification, so it
     // must actually say something.

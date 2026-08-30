@@ -62,6 +62,28 @@ export const unbanUser = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const deleteUser = async (req: AuthRequest, res: Response) => {
+    try {
+        const mode = req.body?.mode === 'hard' ? 'hard' : 'soft';
+        const result = await AdminService.deleteUser(req.params.id as string, { mode });
+        return sendSuccess(res, {
+            message: mode === 'hard' ? 'User permanently deleted' : 'User soft-deleted',
+            data: result,
+        });
+    } catch (error: any) {
+        if (error.message === 'USER_NOT_FOUND') {
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+        }
+        if (error.message === 'CANNOT_DELETE_ADMIN') {
+            return sendError(res, { status: HttpStatus.FORBIDDEN, message: 'Cannot delete an admin account' });
+        }
+        if (error.message === 'HARD_DELETE_DISABLED') {
+            return sendError(res, { status: HttpStatus.CONFLICT, message: 'Hard delete is disabled' });
+        }
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to delete user' });
+    }
+};
+
 export const requireVeriffForUser = async (req: AuthRequest, res: Response) => {
     try {
         const result = await AdminService.requireVeriffForUser(req.params.id as string, req.user?.id ?? null);
