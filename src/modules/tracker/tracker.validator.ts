@@ -38,6 +38,7 @@ const trackerTicketBaseSchema = z.object({
     priority: trackerTicketPrioritySchema.default('MEDIUM').optional(),
     status: trackerTicketStatusSchema.default('TODO').optional(),
     assigneeId: z.string().uuid().optional().nullable(),
+    assigneeName: z.string().trim().min(1).max(120).optional().nullable(),
     dueDate: z.string().datetime().optional().nullable(),
     description: z.string().trim().max(8000).optional().nullable(),
     acceptanceCriteria: z.string().trim().max(8000).optional().nullable(),

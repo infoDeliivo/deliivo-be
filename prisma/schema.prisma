@@ -668,6 +668,7 @@ model TrackerTicket {
   status             TrackerTicketStatus   @default(TODO)
   assigneeId         String?
   assignee           User?                 @relation("TrackerTicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assigneeName       String?
   dueDate            DateTime?
   description        String?
   acceptanceCriteria String?

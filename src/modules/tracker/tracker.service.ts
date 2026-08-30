@@ -64,6 +64,7 @@ type TicketRecordLike = {
     priority: TrackerTicketPriority;
     status: TrackerTicketStatus;
     assigneeId: string | null;
+    assigneeName: string | null;
     assignee: TicketPerson | null;
     dueDate: Date | null;
     description: string | null;
@@ -115,8 +116,8 @@ const toBoardTicket = (ticket: TicketRecordLike) => ({
     priority: ticket.priority,
     status: ticket.status,
     assigneeId: ticket.assigneeId,
+    assigneeName: ticket.assigneeName || fullName(ticket.assignee),
     assignee: toPerson(ticket.assignee),
-    assigneeName: fullName(ticket.assignee),
     dueDate: ticket.dueDate,
     description: ticket.description,
     acceptanceCriteria: ticket.acceptanceCriteria,
@@ -209,6 +210,7 @@ type TicketWriteInput = {
     priority?: TrackerTicketPriority;
     status?: TrackerTicketStatus;
     assigneeId?: string | null;
+    assigneeName?: string | null;
     dueDate?: string | null;
     description?: string | null;
     acceptanceCriteria?: string | null;
@@ -230,6 +232,7 @@ export const createTicket = async (input: TicketWriteInput, actorId: string | nu
             priority: input.priority ?? 'MEDIUM',
             status: input.status ?? 'TODO',
             assigneeId: input.assigneeId || null,
+            assigneeName: input.assigneeName?.trim() || null,
             dueDate: input.dueDate ? new Date(input.dueDate) : null,
             description: input.description?.trim() || null,
             acceptanceCriteria: input.acceptanceCriteria?.trim() || null,
@@ -261,6 +264,7 @@ export const updateTicket = async (ticketId: string, input: Partial<TicketWriteI
             ...(input.priority ? { priority: input.priority } : {}),
             ...(input.status ? { status: input.status } : {}),
             ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId || null } : {}),
+            ...(input.assigneeName !== undefined ? { assigneeName: input.assigneeName?.trim() || null } : {}),
             ...(input.dueDate !== undefined ? { dueDate: input.dueDate ? new Date(input.dueDate) : null } : {}),
             ...(input.description !== undefined ? { description: input.description?.trim() || null } : {}),
             ...(input.acceptanceCriteria !== undefined ? { acceptanceCriteria: input.acceptanceCriteria?.trim() || null } : {}),
