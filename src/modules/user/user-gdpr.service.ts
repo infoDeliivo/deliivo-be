@@ -2,6 +2,7 @@ import { BookingStatus, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
+import { logError } from '../../utils/logger.js';
 
 /* ====================== DATA EXPORT ====================== */
 export const exportUserData = async (userId: string) => {
@@ -297,129 +298,133 @@ export const deleteUserAccount = async (userId: string) => {
 export const hardDeleteUserAccount = async (userId: string) => {
     await deleteUserAccount(userId);
 
-    const [rideRows, passengerBookingRows, payoutBatchRows, referralRows] = await Promise.all([
-        prisma.ride.findMany({
-            where: { driverId: userId },
-            select: { id: true },
-        }),
-        prisma.rideBooking.findMany({
-            where: { passengerId: userId },
-            select: { id: true },
-        }),
-        prisma.payoutBatch.findMany({
-            where: { driverId: userId },
-            select: { id: true },
-        }),
-        prisma.rewardReferral.findMany({
+    try {
+        const [rideRows, passengerBookingRows, payoutBatchRows, referralRows] = await Promise.all([
+            prisma.ride.findMany({
+                where: { driverId: userId },
+                select: { id: true },
+            }),
+            prisma.rideBooking.findMany({
+                where: { passengerId: userId },
+                select: { id: true },
+            }),
+            prisma.payoutBatch.findMany({
+                where: { driverId: userId },
+                select: { id: true },
+            }),
+            prisma.rewardReferral.findMany({
+                where: {
+                    OR: [
+                        { referrerUserId: userId },
+                        { referredUserId: userId },
+                    ],
+                },
+                select: { id: true },
+            }),
+        ]);
+
+        const rideIds = rideRows.map((ride) => ride.id);
+        const passengerBookingIds = passengerBookingRows.map((booking) => booking.id);
+        const driverBookingRows = rideIds.length > 0
+            ? await prisma.rideBooking.findMany({
+                where: { rideId: { in: rideIds } },
+                select: { id: true },
+            })
+            : [];
+        const driverBookingIds = driverBookingRows.map((booking) => booking.id);
+        const bookingIds = Array.from(new Set([...passengerBookingIds, ...driverBookingIds]));
+
+        const paymentRecords = await prisma.payment.findMany({
             where: {
                 OR: [
-                    { referrerUserId: userId },
-                    { referredUserId: userId },
+                    { riderId: userId },
+                    ...(rideIds.length > 0 ? [{ rideId: { in: rideIds } }] : []),
+                    ...(bookingIds.length > 0 ? [{ bookingId: { in: bookingIds } }] : []),
                 ],
             },
-            select: { id: true },
-        }),
-    ]);
+            select: { id: true, bookingId: true, stripePaymentIntentId: true },
+        });
 
-    const rideIds = rideRows.map((ride) => ride.id);
-    const passengerBookingIds = passengerBookingRows.map((booking) => booking.id);
-    const driverBookingRows = rideIds.length > 0
-        ? await prisma.rideBooking.findMany({
-            where: { rideId: { in: rideIds } },
-            select: { id: true },
-        })
-        : [];
-    const driverBookingIds = driverBookingRows.map((booking) => booking.id);
-    const bookingIds = Array.from(new Set([...passengerBookingIds, ...driverBookingIds]));
+        const paymentIds = paymentRecords.map((payment) => payment.id);
+        const paymentIntentIds = paymentRecords.map((payment) => payment.stripePaymentIntentId).filter((value): value is string => Boolean(value));
+        const payoutBatchIdList = payoutBatchRows.map((batch) => batch.id);
+        const referralIdList = referralRows.map((row) => row.id);
 
-    const paymentRecords = await prisma.payment.findMany({
-        where: {
-            OR: [
-                { riderId: userId },
-                ...(rideIds.length > 0 ? [{ rideId: { in: rideIds } }] : []),
-                ...(bookingIds.length > 0 ? [{ bookingId: { in: bookingIds } }] : []),
-            ],
-        },
-        select: { id: true, bookingId: true, stripePaymentIntentId: true },
-    });
+        await prisma.$transaction(async (tx) => {
+            if (paymentIds.length > 0) {
+                await tx.payoutItem.deleteMany({ where: { paymentId: { in: paymentIds } } });
+            }
 
-    const paymentIds = paymentRecords.map((payment) => payment.id);
-    const paymentIntentIds = paymentRecords.map((payment) => payment.stripePaymentIntentId).filter((value): value is string => Boolean(value));
-    const payoutBatchIdList = payoutBatchRows.map((batch) => batch.id);
-    const referralIdList = referralRows.map((row) => row.id);
+            if (payoutBatchIdList.length > 0) {
+                await tx.payoutItem.deleteMany({ where: { payoutBatchId: { in: payoutBatchIdList } } });
+                await tx.payoutBatch.deleteMany({ where: { id: { in: payoutBatchIdList } } });
+            }
 
-    await prisma.$transaction(async (tx) => {
-        if (paymentIds.length > 0) {
-            await tx.payoutItem.deleteMany({ where: { paymentId: { in: paymentIds } } });
-        }
+            if (paymentIntentIds.length > 0) {
+                await tx.stripeWebhookEvent.deleteMany({ where: { paymentIntentId: { in: paymentIntentIds } } });
+            }
 
-        if (payoutBatchIdList.length > 0) {
-            await tx.payoutItem.deleteMany({ where: { payoutBatchId: { in: payoutBatchIdList } } });
-            await tx.payoutBatch.deleteMany({ where: { id: { in: payoutBatchIdList } } });
-        }
+            if (paymentIds.length > 0) {
+                await tx.paymentEventOutbox.deleteMany({
+                    where: {
+                        OR: [
+                            { aggregateType: 'PAYMENT', aggregateId: { in: paymentIds } },
+                        ],
+                    },
+                });
+                await tx.reconciliationIssue.deleteMany({ where: { paymentId: { in: paymentIds } } });
+                await tx.ledgerEntry.deleteMany({ where: { paymentId: { in: paymentIds } } });
+                await tx.payment.deleteMany({ where: { id: { in: paymentIds } } });
+            }
 
-        if (paymentIntentIds.length > 0) {
-            await tx.stripeWebhookEvent.deleteMany({ where: { paymentIntentId: { in: paymentIntentIds } } });
-        }
+            if (bookingIds.length > 0) {
+                await tx.trackingLink.deleteMany({ where: { bookingId: { in: bookingIds } } });
+                await tx.dispute.deleteMany({ where: { bookingId: { in: bookingIds } } });
+                await tx.paymentEventOutbox.deleteMany({
+                    where: {
+                        OR: [
+                            { aggregateType: 'BOOKING', aggregateId: { in: bookingIds } },
+                        ],
+                    },
+                });
+                await tx.reconciliationIssue.deleteMany({ where: { bookingId: { in: bookingIds } } });
+                await tx.ledgerEntry.deleteMany({ where: { bookingId: { in: bookingIds } } });
+                await tx.rideBooking.deleteMany({ where: { id: { in: bookingIds } } });
+            }
 
-        if (paymentIds.length > 0) {
-            await tx.paymentEventOutbox.deleteMany({
-                where: {
-                    OR: [
-                        { aggregateType: 'PAYMENT', aggregateId: { in: paymentIds } },
-                    ],
-                },
-            });
-            await tx.reconciliationIssue.deleteMany({ where: { paymentId: { in: paymentIds } } });
-            await tx.ledgerEntry.deleteMany({ where: { paymentId: { in: paymentIds } } });
-            await tx.payment.deleteMany({ where: { id: { in: paymentIds } } });
-        }
+            if (rideIds.length > 0) {
+                await tx.ridePricingSnapshot.deleteMany({ where: { rideId: { in: rideIds } } });
+                await tx.paymentEventOutbox.deleteMany({
+                    where: {
+                        OR: [
+                            { aggregateType: 'PAYOUT', aggregateId: { in: payoutBatchIdList } },
+                        ],
+                    },
+                });
+                await tx.ride.deleteMany({ where: { id: { in: rideIds } } });
+            }
 
-        if (bookingIds.length > 0) {
-            await tx.trackingLink.deleteMany({ where: { bookingId: { in: bookingIds } } });
-            await tx.dispute.deleteMany({ where: { bookingId: { in: bookingIds } } });
-            await tx.paymentEventOutbox.deleteMany({
-                where: {
-                    OR: [
-                        { aggregateType: 'BOOKING', aggregateId: { in: bookingIds } },
-                    ],
-                },
-            });
-            await tx.reconciliationIssue.deleteMany({ where: { bookingId: { in: bookingIds } } });
-            await tx.ledgerEntry.deleteMany({ where: { bookingId: { in: bookingIds } } });
-            await tx.rideBooking.deleteMany({ where: { id: { in: bookingIds } } });
-        }
+            if (referralIdList.length > 0) {
+                await tx.rewardWalletEntry.deleteMany({ where: { referralId: { in: referralIdList } } });
+                await tx.rewardReferral.deleteMany({ where: { id: { in: referralIdList } } });
+            }
 
-        if (rideIds.length > 0) {
-            await tx.ridePricingSnapshot.deleteMany({ where: { rideId: { in: rideIds } } });
-            await tx.paymentEventOutbox.deleteMany({
-                where: {
-                    OR: [
-                        { aggregateType: 'PAYOUT', aggregateId: { in: payoutBatchIdList } },
-                    ],
-                },
-            });
-            await tx.ride.deleteMany({ where: { id: { in: rideIds } } });
-        }
+            await tx.user.updateMany({ where: { referredByUserId: userId }, data: { referredByUserId: null } });
+            await tx.rewardCampaign.updateMany({ where: { createdById: userId }, data: { createdById: null } });
+            await tx.rewardCampaign.updateMany({ where: { updatedById: userId }, data: { updatedById: null } });
+            await tx.rewardWalletEntry.updateMany({ where: { createdById: userId }, data: { createdById: null } });
+            await tx.$executeRaw`UPDATE "RewardSettlementBatch" SET "createdById" = NULL WHERE "createdById" = ${userId}`;
 
-        if (referralIdList.length > 0) {
-            await tx.rewardWalletEntry.deleteMany({ where: { referralId: { in: referralIdList } } });
-            await tx.rewardReferral.deleteMany({ where: { id: { in: referralIdList } } });
-        }
+            await tx.rewardWalletEntry.deleteMany({ where: { userId } });
+            await tx.paymentMethod.deleteMany({ where: { userId } });
+            await tx.userReport.deleteMany({ where: { OR: [{ reporterId: userId }, { reportedId: userId }] } });
+            await tx.userBlock.deleteMany({ where: { OR: [{ blockerId: userId }, { blockedId: userId }] } });
 
-        await tx.user.updateMany({ where: { referredByUserId: userId }, data: { referredByUserId: null } });
-        await tx.rewardCampaign.updateMany({ where: { createdById: userId }, data: { createdById: null } });
-        await tx.rewardCampaign.updateMany({ where: { updatedById: userId }, data: { updatedById: null } });
-        await tx.rewardWalletEntry.updateMany({ where: { createdById: userId }, data: { createdById: null } });
-        await tx.$executeRaw`UPDATE "RewardSettlementBatch" SET "createdById" = NULL WHERE "createdById" = ${userId}`;
-
-        await tx.rewardWalletEntry.deleteMany({ where: { userId } });
-        await tx.paymentMethod.deleteMany({ where: { userId } });
-        await tx.userReport.deleteMany({ where: { OR: [{ reporterId: userId }, { reportedId: userId }] } });
-        await tx.userBlock.deleteMany({ where: { OR: [{ blockerId: userId }, { blockedId: userId }] } });
-
-        await tx.user.delete({ where: { id: userId } });
-    });
+            await tx.user.delete({ where: { id: userId } });
+        });
+    } catch (error) {
+        logError('[USER] hard delete cleanup failed after anonymization', error, { userId });
+    }
 
     return { deleted: true, hardDeleted: true };
 };
