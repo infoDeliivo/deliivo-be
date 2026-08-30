@@ -299,6 +299,10 @@ export const hardDeleteUserAccount = async (userId: string) => {
     await deleteUserAccount(userId);
 
     try {
+        const rewardSettlementBatchTable = await prisma.$queryRaw<Array<{ tableName: string | null }>>`
+            SELECT to_regclass('public."RewardSettlementBatch"') AS "tableName"
+        `;
+
         const [rideRows, passengerBookingRows, payoutBatchRows, referralRows] = await Promise.all([
             prisma.ride.findMany({
                 where: { driverId: userId },
@@ -413,7 +417,9 @@ export const hardDeleteUserAccount = async (userId: string) => {
             await tx.rewardCampaign.updateMany({ where: { createdById: userId }, data: { createdById: null } });
             await tx.rewardCampaign.updateMany({ where: { updatedById: userId }, data: { updatedById: null } });
             await tx.rewardWalletEntry.updateMany({ where: { createdById: userId }, data: { createdById: null } });
-            await tx.$executeRaw`UPDATE "RewardSettlementBatch" SET "createdById" = NULL WHERE "createdById" = ${userId}`;
+            if (rewardSettlementBatchTable[0]?.tableName) {
+                await tx.$executeRaw`UPDATE "RewardSettlementBatch" SET "createdById" = NULL WHERE "createdById" = ${userId}`;
+            }
 
             await tx.rewardWalletEntry.deleteMany({ where: { userId } });
             await tx.paymentMethod.deleteMany({ where: { userId } });
