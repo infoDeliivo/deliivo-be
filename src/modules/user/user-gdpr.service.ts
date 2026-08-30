@@ -299,8 +299,13 @@ export const hardDeleteUserAccount = async (userId: string) => {
     await deleteUserAccount(userId);
 
     try {
-        const rewardSettlementBatchTable = await prisma.$queryRaw<Array<{ tableName: string | null }>>`
-            SELECT to_regclass('public."RewardSettlementBatch"') AS "tableName"
+        const rewardSettlementBatchTable = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'RewardSettlementBatch'
+            ) AS "exists"
         `;
 
         const [rideRows, passengerBookingRows, payoutBatchRows, referralRows] = await Promise.all([
@@ -417,7 +422,7 @@ export const hardDeleteUserAccount = async (userId: string) => {
             await tx.rewardCampaign.updateMany({ where: { createdById: userId }, data: { createdById: null } });
             await tx.rewardCampaign.updateMany({ where: { updatedById: userId }, data: { updatedById: null } });
             await tx.rewardWalletEntry.updateMany({ where: { createdById: userId }, data: { createdById: null } });
-            if (rewardSettlementBatchTable[0]?.tableName) {
+            if (rewardSettlementBatchTable[0]?.exists) {
                 await tx.$executeRaw`UPDATE "RewardSettlementBatch" SET "createdById" = NULL WHERE "createdById" = ${userId}`;
             }
 
