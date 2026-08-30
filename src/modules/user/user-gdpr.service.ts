@@ -423,7 +423,6 @@ export const hardDeleteUserAccount = async (userId: string) => {
         await tx.rewardCampaign.updateMany({ where: { createdById: userId }, data: { createdById: null } });
         await tx.rewardCampaign.updateMany({ where: { updatedById: userId }, data: { updatedById: null } });
         await tx.rewardWalletEntry.updateMany({ where: { createdById: userId }, data: { createdById: null } });
-        await tx.rewardSettlementBatch.updateMany({ where: { createdById: userId }, data: { createdById: null } });
 
         await tx.rewardWalletEntry.deleteMany({ where: { userId } });
         await tx.paymentMethod.deleteMany({ where: { userId } });
@@ -432,6 +431,8 @@ export const hardDeleteUserAccount = async (userId: string) => {
 
         await tx.user.delete({ where: { id: userId } });
     });
+
+    await prisma.rewardSettlementBatch.updateMany({ where: { createdById: userId }, data: { createdById: null } });
 
     return { deleted: true, hardDeleted: true };
 };
