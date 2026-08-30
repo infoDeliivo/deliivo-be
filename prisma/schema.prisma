@@ -122,6 +122,12 @@ model User {
   gender     Gender?
   dob        DateTime?
 
+  // Language the user picked on the website, captured at signup.
+  preferredLocale String? @db.VarChar(10)
+
+  // Country the user appears to connect from, derived from request IP.
+  detectedCountry String? @db.VarChar(2)
+
   email         String?  @unique
   phone         String?  @unique
   emailVerified Boolean  @default(false)
