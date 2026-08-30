@@ -37,12 +37,13 @@ import {
   safetyRouter,
   contentRouter,
   adminContentRouter,
+  trackerRouter,
   uploadsRouter,
   rewardsRouter,
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
-import { protect, errorHandler, rateLimiter, otpLimiters, requestTimeout, searchLimiter, bookingLimiter, requestContext, learnRequestContext } from './middlewares/index.js';
+import { protect, errorHandler, rateLimiter, otpLimiters, requestTimeout, searchLimiter, bookingLimiter, requestContext } from './middlewares/index.js';
 import './queue/deadline.queue.js'; // start BullMQ deadline worker
 import './queue/maintenance.queue.js'; // start nightly maintenance worker
 
@@ -93,13 +94,6 @@ app.use('/api/v1/dl-verification/webhook', dlVerificationWebhookRouter);
 app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 app.use(requestTimeout);
-
-// Follow what a signed-in caller's requests reveal — language and country — whatever route
-// they are on. Mounted
-// here so it covers the public ones too — the blog and the map used to teach us nothing, even
-// though the token and Accept-Language were on the request. Below the raw-body webhook mounts
-// above, which must keep their untouched bodies, and never a gate: see middlewares/locale.ts.
-app.use('/api/v1', learnRequestContext);
 
 app.get('/health', async (req, res) => {
   const checks: Record<string, boolean> = { database: false, redis: false };
@@ -203,6 +197,7 @@ app.use('/api/v1/payments/connect', protect, paymentsConnectRouter);
 app.use('/api/v1/admin', protect, adminRouter);
 app.use('/api/v1/admin/rewards', protect, rewardsRouter);
 app.use('/api/v1/admin/content', protect, adminContentRouter);
+app.use('/api/v1/admin/tracker', protect, trackerRouter);
 app.use('/api/v1/pricing', protect, pricingRouter);
 app.use('/api/v1/payment-methods', protect, paymentMethodsRouter);
 app.use('/api/v1/admin/payouts', protect, adminPayoutRouter);

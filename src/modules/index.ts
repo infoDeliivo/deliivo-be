@@ -27,6 +27,7 @@ import safetyRouter from './safety/safety.routes.js';
 import { contentRouter, adminContentRouter } from './content/content.routes.js';
 import uploadsRouter from './uploads/uploads.routes.js';
 import rewardsRouter from './rewards/rewards.routes.js';
+import trackerRouter from './tracker/tracker.routes.js';
 
 export {
     authRouter,
@@ -63,4 +64,5 @@ export {
     adminContentRouter,
     uploadsRouter,
     rewardsRouter,
+    trackerRouter,
 };

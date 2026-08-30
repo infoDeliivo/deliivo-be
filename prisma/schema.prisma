@@ -86,6 +86,33 @@ enum DlVerificationStatus {
   SUPERSEDED
 }
 
+enum TrackerProductArea {
+  WEBAPP
+  MOBILE_APP
+}
+
+enum TrackerTicketType {
+  BUG
+  STORY
+  TASK
+  CHORE
+  IMPROVEMENT
+}
+
+enum TrackerTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TrackerTicketStatus {
+  TODO
+  IN_PROGRESS
+  IN_TESTING
+  DONE
+}
+
 model User {
   id String @id @default(uuid())
 
@@ -102,13 +129,6 @@ model User {
 
   avatarUrl String?
   avatarKey String?
-
-  // Language the user picked on the website, captured at signup. Null = never learned.
-  preferredLocale String? @db.VarChar(10)
-
-  // Country the user was last seen connecting from, ISO-3166 alpha-2, derived from the request IP.
-  // Null = never learned. Approximate by nature: a VPN or a roaming carrier moves it.
-  detectedCountry String? @db.VarChar(2)
 
   referralCode     String?  @unique
   referredByUserId String?
@@ -173,6 +193,12 @@ model User {
   rewardReferralsReceived RewardReferral[] @relation("RewardReferralReferred")
   rewardWalletEntries RewardWalletEntry[]
   rewardWalletEntriesCreated RewardWalletEntry[] @relation("RewardWalletEntryCreatedBy")
+  rewardSettlementBatchesCreated RewardSettlementBatch[] @relation("RewardSettlementBatchCreatedBy")
+  trackerTicketsAssigned TrackerTicket[] @relation("TrackerTicketAssignee")
+  trackerTicketsCreated TrackerTicket[] @relation("TrackerTicketCreatedBy")
+  trackerTicketsUpdated TrackerTicket[] @relation("TrackerTicketUpdatedBy")
+  trackerCommentsAuthored TrackerComment[] @relation("TrackerCommentAuthor")
+  trackerAttachmentsUploaded TrackerAttachment[] @relation("TrackerAttachmentUploader")
 
   @@index([id])
 }
@@ -625,6 +651,83 @@ model NewsletterSubscriber {
   @@index([unsubscribedAt, createdAt])
 }
 
+// ============ TRACKER MODELS ============
+model TrackerTicket {
+  id                 String                @id @default(uuid())
+  productArea        TrackerProductArea
+  title              String
+  summary            String?
+  ticketType         TrackerTicketType
+  priority           TrackerTicketPriority @default(MEDIUM)
+  status             TrackerTicketStatus   @default(TODO)
+  assigneeId         String?
+  assignee           User?                 @relation("TrackerTicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  dueDate            DateTime?
+  description        String?
+  acceptanceCriteria String?
+  notes              String?
+  blockerReason      String?
+  releaseTarget      String?
+  externalLinksJson  Json?
+  metadataJson       Json?
+  sortOrder          Int                   @default(0)
+  createdById        String?
+  createdBy          User?                 @relation("TrackerTicketCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById        String?
+  updatedBy          User?                 @relation("TrackerTicketUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  comments           TrackerComment[]
+  attachments        TrackerAttachment[]
+  checklistItems     TrackerChecklistItem[]
+
+  @@index([productArea, status, priority, dueDate])
+  @@index([assigneeId, status])
+  @@index([createdAt])
+}
+
+model TrackerComment {
+  id        String        @id @default(uuid())
+  ticketId  String
+  ticket    TrackerTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String?
+  author    User?         @relation("TrackerCommentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  body      String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([ticketId, createdAt])
+}
+
+model TrackerAttachment {
+  id           String        @id @default(uuid())
+  ticketId     String
+  ticket       TrackerTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  label        String
+  url          String
+  mimeType     String?
+  sizeBytes    Int?
+  uploadedById String?
+  uploadedBy   User?         @relation("TrackerAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+model TrackerChecklistItem {
+  id        String        @id @default(uuid())
+  ticketId  String
+  ticket    TrackerTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  label     String
+  done      Boolean       @default(false)
+  sortOrder Int           @default(0)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([ticketId, sortOrder])
+}
+
 // ============ PAYMENT & PRICING MODELS ============
 model Payment {
   id                     String    @id @default(uuid())
@@ -814,12 +917,64 @@ model RewardWalletEntry {
   createdBy User?           @relation("RewardWalletEntryCreatedBy", fields: [createdById], references: [id])
   reversalOf RewardWalletEntry? @relation("RewardWalletReversal", fields: [reversalOfEntryId], references: [id])
   reversals  RewardWalletEntry[] @relation("RewardWalletReversal")
+  settlementItem RewardSettlementItem? @relation("RewardWalletEntrySettlement")
 
   @@index([userId, createdAt])
   @@index([walletType, createdAt])
   @@index([campaignId])
   @@index([referralId])
   @@index([reversalOfEntryId])
+}
+
+model RewardSettlementBatch {
+  id             String   @id @default(uuid())
+  batchKey       String   @unique
+  walletType     String
+  currency       String   @default("EUR")
+  sourceDate     DateTime
+  status         String   @default("OPEN") // OPEN, FUNDING_REQUESTED, SETTLED, FAILED
+  topupId        String?
+  topupStatus    String?
+  topupAmount    Float?
+  notes          String?
+  createdById    String?
+  fundingRequestedAt DateTime?
+  settledAt      DateTime?
+  failedAt       DateTime?
+  failureReason  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  createdBy User? @relation("RewardSettlementBatchCreatedBy", fields: [createdById], references: [id])
+  items     RewardSettlementItem[]
+
+  @@index([walletType, currency, status])
+  @@index([sourceDate])
+  @@index([topupId])
+}
+
+model RewardSettlementItem {
+  id                 String   @id @default(uuid())
+  settlementBatchId  String
+  rewardWalletEntryId String   @unique
+  userId             String
+  walletType         String
+  amount             Float
+  currency           String   @default("EUR")
+  status             String   @default("PENDING") // PENDING, SETTLED, REVERSED, FAILED
+  sourceType         String
+  sourceId           String
+  metadataJson       Json?
+  settledAt          DateTime?
+  reversedAt         DateTime?
+  createdAt          DateTime @default(now())
+
+  settlementBatch RewardSettlementBatch @relation(fields: [settlementBatchId], references: [id], onDelete: Cascade)
+  rewardWalletEntry RewardWalletEntry @relation("RewardWalletEntrySettlement", fields: [rewardWalletEntryId], references: [id], onDelete: Cascade)
+
+  @@index([settlementBatchId, status])
+  @@index([userId, createdAt])
+  @@index([walletType, createdAt])
 }
 
 model PricingConfig {
