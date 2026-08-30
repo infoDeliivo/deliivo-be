@@ -2,8 +2,6 @@ import { BookingStatus, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
-import { clearPreferredLocaleCache } from './user-locale.service.js';
-import { clearDetectedCountryCache } from './user-geo.service.js';
 
 /* ====================== DATA EXPORT ====================== */
 export const exportUserData = async (userId: string) => {
@@ -20,10 +18,6 @@ export const exportUserData = async (userId: string) => {
             phone: true,
             emailVerified: true,
             phoneVerified: true,
-            // Derived personal data: inferred from their requests rather than given by them, so a
-            // subject-access request must show it.
-            preferredLocale: true,
-            detectedCountry: true,
             role: true,
             onboardingStatus: true,
             isVerified: true,
@@ -285,7 +279,6 @@ export const deleteUserAccount = async (userId: string) => {
             email: null,
             phone: null,
             avatarUrl: null,
-            detectedCountry: null,
             emailVerified: false,
             phoneVerified: false,
             isVerified: false,
@@ -297,11 +290,6 @@ export const deleteUserAccount = async (userId: string) => {
             privacyVersion: null,
         },
     });
-
-    // 5. Drop what Redis still remembers about them, including the language sync marker, which
-    // would otherwise describe a row that no longer exists for up to a day.
-    await clearPreferredLocaleCache(userId);
-    await clearDetectedCountryCache(userId);
 
     return { deleted: true };
 };
