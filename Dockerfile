@@ -36,18 +36,19 @@ FROM base AS geoip
 ARG MAXMIND_LICENSE_KEY
 
 # bash and curl exist only for this script, and only in this discarded stage.
+RUN apk add --no-cache bash curl
+
+# The key is never named in this instruction. BuildKit expands variable references into the step
+# text it echoes, so `[ -n "$MAXMIND_LICENSE_KEY" ]` here published the licence key in plaintext to
+# the build log of every deploy. The script reads it from the environment instead, where it stays
+# unprinted, and reports for itself when it is missing.
 #
 # Deliberately non-fatal. The refresh talks to MaxMind over the network, and a deploy must not fail
-# because a third party was slow or reset a connection — a ECONNRESET here once already killed an
-# otherwise good build. The script puts the previous tables back if it cannot finish, so failing
-# means shipping data that is merely older, never data that is wrong.
-RUN if [ -n "$MAXMIND_LICENSE_KEY" ]; then \
-      apk add --no-cache bash curl \
-      && (bash scripts/update-geoip.sh \
-          || echo 'WARNING: GeoLite2 refresh failed — shipping the previous snapshot.'); \
-    else \
-      echo 'No MAXMIND_LICENSE_KEY set — keeping the GeoLite2 snapshot bundled with geoip-lite.'; \
-    fi
+# because a third party was slow, throttled us, or reset a connection — an ECONNRESET here once
+# already killed an otherwise good build. The script puts the previous tables back if it cannot
+# finish, so failing means shipping data that is merely older, never data that is wrong.
+RUN bash scripts/update-geoip.sh \
+    || echo 'WARNING: GeoLite2 tables not refreshed — shipping the snapshot already in the image.'
 
 # Production image
 FROM node:20-alpine AS production

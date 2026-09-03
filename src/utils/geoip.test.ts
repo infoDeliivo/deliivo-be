@@ -48,13 +48,20 @@ describe('resolveCountryFromIp', () => {
 });
 
 describe('getClientIpForGeo', () => {
-  it('prefers x-real-ip, which our own proxy sets and no intermediary rewrites', () => {
+  it('prefers the leftmost x-forwarded-for entry over x-real-ip', () => {
+    // Railway's edge sets x-real-ip to its own address, so trusting that first resolved every
+    // caller to the hosting region — a request from Delhi was recorded as the United States.
+    // The leftmost forwarded entry is the original client by convention, and survives extra hops.
     expect(
       getClientIpForGeo({
-        headers: { 'x-real-ip': '8.8.8.8', 'x-forwarded-for': '8.8.8.8, 10.0.0.7' },
+        headers: { 'x-real-ip': '76.76.21.21', 'x-forwarded-for': '157.49.51.193, 10.0.0.7' },
         ip: '10.0.0.7',
       }),
-    ).toBe('8.8.8.8');
+    ).toBe('157.49.51.193');
+  });
+
+  it('uses x-real-ip only when nothing is forwarded', () => {
+    expect(getClientIpForGeo({ headers: { 'x-real-ip': '8.8.8.8' }, ip: '10.0.0.7' })).toBe('8.8.8.8');
   });
 
   it('falls back to the leftmost x-forwarded-for entry', () => {

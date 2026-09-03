@@ -81,12 +81,17 @@ const firstHeaderValue = (value: string | string[] | undefined): string | undefi
  * the rate limiters stay on `req.ip` for exactly that reason.
  */
 export const getClientIpForGeo = (req: ForwardedRequest): string | undefined => {
-  const realIp = firstHeaderValue(req.headers['x-real-ip'])?.trim();
-  if (realIp) return realIp;
-
+  // `x-forwarded-for` first, and its leftmost entry: that position is the original client by
+  // convention, and the convention is what every hop in the chain agrees on. `x-real-ip` is not
+  // standardised — nginx sets it to the original caller, but a platform edge may set it to the
+  // peer it received from, which is itself. Reading that first made every request resolve to the
+  // hosting region: US for a caller in Delhi, indistinguishable from the bug this replaced.
   const forwarded = firstHeaderValue(req.headers['x-forwarded-for']);
   const client = forwarded?.split(',')[0]?.trim();
   if (client) return client;
+
+  const realIp = firstHeaderValue(req.headers['x-real-ip'])?.trim();
+  if (realIp) return realIp;
 
   // No forwarded address, so this request did not come from a browser: the webapp's SSR and proxy
   // routes call the backend directly, and every real user arrives through that proxy, which always
