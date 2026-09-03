@@ -14,6 +14,7 @@ import {
     PERMANENT_PREFIX,
 } from '../../services/s3.service.js';
 import { deleteCache, cacheKeys } from '../../services/cache.service.js';
+import redis from '../../cache/redis.js';
 import * as VehicleService from '../vehicles/vehicle.service.js';
 import { updateAvatarService, clearAvatarService } from '../user/user.service.js';
 import {
@@ -22,7 +23,47 @@ import {
     PRESIGN_TTL,
     UPLOAD_MAX_SIZE,
     ALLOWED_CONTENT_TYPES,
+    PENDING_UPLOAD_PREFIX,
+    PENDING_UPLOAD_TTL,
 } from './uploads.constants.js';
+
+/**
+ * Presign -> confirm ledger.
+ *
+ * A presigned upload that is never confirmed leaves its object stranded under tmp/,
+ * where the bucket lifecycle rule expires it (see scripts/put-tmp-lifecycle.ts). Until
+ * now that was invisible: nothing recorded that the upload had been started, so an
+ * upload the client abandoned mid-flight could not be detected or counted.
+ *
+ * getPresign writes an entry; confirmUpload deletes it once the object is safely
+ * promoted. Whatever is left is an abandoned upload, tagged with the user, the target
+ * and the request id. The maintenance queue reports on these.
+ *
+ * Both helpers are best-effort: the ledger is diagnostics, and must never fail an
+ * upload that would otherwise have succeeded.
+ */
+const recordPendingUpload = async (
+    key: string,
+    entry: { userId: string; target: string; requestId?: string },
+): Promise<void> => {
+    try {
+        await redis.setex(
+            `${PENDING_UPLOAD_PREFIX}${key}`,
+            PENDING_UPLOAD_TTL,
+            JSON.stringify({ ...entry, presignedAt: new Date().toISOString() }),
+        );
+    } catch (error) {
+        logError('Failed to record pending upload', error, { key });
+    }
+};
+
+const clearPendingUpload = async (key: string): Promise<void> => {
+    try {
+        await redis.del(`${PENDING_UPLOAD_PREFIX}${key}`);
+    } catch (error) {
+        logError('Failed to clear pending upload', error, { key });
+    }
+};
 
 /**
  * Best-effort delete of the object a public image just replaced. A failure here must
@@ -61,6 +102,12 @@ export const getPresign = async (req: AuthRequest, res: Response) => {
             contentType,
             fileExtension,
             expiresIn: PRESIGN_TTL,
+        });
+
+        await recordPendingUpload(tmpKey, {
+            userId: req.user.id,
+            target,
+            requestId: res.locals.requestId,
         });
 
         return sendSuccess(res, {
@@ -105,24 +152,49 @@ export const confirmUpload = async (req: AuthRequest, res: Response) => {
             }
         }
 
+        const permanentKey = `${PERMANENT_PREFIX}${key.slice(TMP_PREFIX.length)}`;
+
         // 3. Verify the object was actually uploaded, and validate type/size.
         const head = await headObject(key);
+
+        // A retried confirm finds no tmp/ object, because promoteObject deletes it after
+        // copying. Without this branch the retry returns "Uploaded file not found" even
+        // though the file is safely stored, which is what made the client unable to
+        // recover from a confirm whose response it never received. An existing object at
+        // the permanent key means this upload was already promoted and validated.
+        let alreadyPromoted = false;
         if (!head.exists) {
-            return sendError(res, {
-                status: HttpStatus.BAD_REQUEST,
-                message: 'Uploaded file not found. Upload to the presigned URL before confirming.',
+            const promoted = await headObject(permanentKey);
+            if (!promoted.exists) {
+                return sendError(res, {
+                    status: HttpStatus.BAD_REQUEST,
+                    message: 'Uploaded file not found. Upload to the presigned URL before confirming.',
+                });
+            }
+            alreadyPromoted = true;
+            logInfo('confirmUpload: object already promoted, treating as retry', {
+                key,
+                target,
+                requestId: res.locals.requestId,
             });
         }
-        if (head.contentType && !(ALLOWED_CONTENT_TYPES as readonly string[]).includes(head.contentType)) {
-            return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'Unsupported file type' });
-        }
-        if (head.contentLength != null && head.contentLength > UPLOAD_MAX_SIZE) {
-            return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'File exceeds the 5MB limit' });
+
+        if (!alreadyPromoted) {
+            if (head.contentType && !(ALLOWED_CONTENT_TYPES as readonly string[]).includes(head.contentType)) {
+                return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'Unsupported file type' });
+            }
+            if (head.contentLength != null && head.contentLength > UPLOAD_MAX_SIZE) {
+                return sendError(res, { status: HttpStatus.BAD_REQUEST, message: 'File exceeds the 5MB limit' });
+            }
+
+            // 4. Promote tmp/ → uploads/.
+            await promoteObject(key, permanentKey, TARGETS[target].visibility === 'public');
         }
 
-        // 4. Promote tmp/ → uploads/.
-        const permanentKey = `${PERMANENT_PREFIX}${key.slice(TMP_PREFIX.length)}`;
-        await promoteObject(key, permanentKey, TARGETS[target].visibility === 'public');
+        // The object is now permanent, so this upload is no longer abandoned. Everything
+        // below only attaches it to a record; a failure there is a different problem and
+        // shows up as an orphan in uploads/, not as a stranded tmp/ object.
+        await clearPendingUpload(key);
 
         // 5. Persist per target.
         if (target === 'avatar') {

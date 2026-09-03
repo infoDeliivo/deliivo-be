@@ -205,6 +205,15 @@ export const addVehicleDocument = async (
     throw new Error('VEHICLE_NOT_FOUND');
   }
 
+  // A confirm the client retried (because it never saw the first response) arrives with
+  // the same storage key. The key is a per-upload uuid, so an existing row for it means
+  // this exact upload was already recorded — return it instead of creating a duplicate
+  // and re-triggering the review reset.
+  const existing = await prisma.vehicleDocument.findFirst({
+    where: { vehicleId, imageKey: input.imageKey },
+  });
+  if (existing) return existing;
+
   const reviewReset = buildReviewReset(
     vehicle.verificationStatus,
     changeKindForDocumentType(input.documentType),
