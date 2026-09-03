@@ -48,57 +48,53 @@ describe('resolveCountryFromIp', () => {
 });
 
 describe('getClientIpForGeo', () => {
-  it('prefers the leftmost x-forwarded-for entry over x-real-ip', () => {
-    // Railway's edge sets x-real-ip to its own address, so trusting that first resolved every
-    // caller to the hosting region — a request from Delhi was recorded as the United States.
-    // The leftmost forwarded entry is the original client by convention, and survives extra hops.
+  const CLIENT_HEADER = 'x-deliivo-client-ip';
+
+  it('reads the address the webapp declares', () => {
+    expect(getClientIpForGeo({ headers: { [CLIENT_HEADER]: '157.49.51.193' } })).toBe('157.49.51.193');
+    expect(resolveCountryFromIp(getClientIpForGeo({ headers: { [CLIENT_HEADER]: '157.49.51.193' } }))).toBe('IN');
+  });
+
+  it('ignores x-forwarded-for and x-real-ip entirely', () => {
+    // Railway replaces both with the address of whoever connected to it, which is Vercel's egress
+    // in us-east-1 — measured on staging, every request resolved to Ashburn and no browser address
+    // appeared at all. Trusting either header records the webapp's hosting region as the country.
     expect(
       getClientIpForGeo({
-        headers: { 'x-real-ip': '76.76.21.21', 'x-forwarded-for': '157.49.51.193, 10.0.0.7' },
-        ip: '10.0.0.7',
+        headers: {
+          [CLIENT_HEADER]: '157.49.51.193',
+          'x-forwarded-for': '98.80.101.1, 152.233.47.68',
+          'x-real-ip': '98.80.101.1',
+        },
+        ip: '152.233.47.68',
       }),
     ).toBe('157.49.51.193');
-  });
 
-  it('uses x-real-ip only when nothing is forwarded', () => {
-    expect(getClientIpForGeo({ headers: { 'x-real-ip': '8.8.8.8' }, ip: '10.0.0.7' })).toBe('8.8.8.8');
-  });
-
-  it('falls back to the leftmost x-forwarded-for entry', () => {
-    expect(getClientIpForGeo({ headers: { 'x-forwarded-for': '8.8.8.8' }, ip: '10.0.0.7' })).toBe('8.8.8.8');
-  });
-
-  it('ignores proxy hops appended to the right of the client', () => {
-    // The bug this helper exists for: req.ip lands on the rightmost hop, so a platform edge
-    // appending its own address made every user look like they connect from a datacenter.
+    // And with no declared caller, those headers buy nothing.
     expect(
-      getClientIpForGeo({ headers: { 'x-forwarded-for': '80.235.1.1, 10.0.0.7, 172.20.0.3' }, ip: '172.20.0.3' }),
-    ).toBe('80.235.1.1');
-    expect(resolveCountryFromIp(getClientIpForGeo({ headers: { 'x-forwarded-for': '80.235.1.1, 10.0.0.7' } }))).toBe('EE');
+      getClientIpForGeo({
+        headers: { 'x-forwarded-for': '98.80.101.1, 152.233.47.68', 'x-real-ip': '98.80.101.1' },
+        ip: '152.233.47.68',
+      }),
+    ).toBeUndefined();
   });
 
-  it('reads the first value when a header arrives repeated', () => {
-    expect(getClientIpForGeo({ headers: { 'x-real-ip': ['8.8.8.8', '1.1.1.1'] } })).toBe('8.8.8.8');
-    expect(getClientIpForGeo({ headers: { 'x-forwarded-for': ['8.8.8.8, 10.0.0.7', '1.1.1.1'] } })).toBe('8.8.8.8');
-  });
-
-  it('trims surrounding whitespace', () => {
-    expect(getClientIpForGeo({ headers: { 'x-forwarded-for': '  8.8.8.8 , 10.0.0.7' } })).toBe('8.8.8.8');
-  });
-
-  it('never falls back to the socket address', () => {
-    // Every real user reaches us through the webapp's proxy, which always forwards the caller's
-    // address. A request without one is our own server-to-server traffic — the webapp's SSR and
-    // proxy routes call the backend directly — and its socket address is a datacenter's, not a
-    // user's. Resolving it would stamp the hosting region on people who have never been there,
-    // and a public egress address is perfectly routable, so nothing downstream would reject it.
+  it('learns nothing from an internal call that declares no caller', () => {
+    // The webapp's SSR calls this API directly, carrying a user's token but no client address.
     expect(getClientIpForGeo({ headers: {}, ip: '76.76.21.21' })).toBeUndefined();
     expect(resolveCountryFromIp(getClientIpForGeo({ headers: {}, ip: '76.76.21.21' }))).toBeNull();
   });
 
+  it('reads the first value when the header arrives repeated', () => {
+    expect(getClientIpForGeo({ headers: { [CLIENT_HEADER]: ['8.8.8.8', '1.1.1.1'] } })).toBe('8.8.8.8');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(getClientIpForGeo({ headers: { [CLIENT_HEADER]: '  8.8.8.8  ' } })).toBe('8.8.8.8');
+  });
+
   it('treats a header that is present but empty as no address at all', () => {
-    expect(getClientIpForGeo({ headers: { 'x-real-ip': '   ' }, ip: '8.8.8.8' })).toBeUndefined();
-    expect(getClientIpForGeo({ headers: { 'x-forwarded-for': ' , 10.0.0.7' }, ip: '8.8.8.8' })).toBeUndefined();
+    expect(getClientIpForGeo({ headers: { [CLIENT_HEADER]: '   ' }, ip: '8.8.8.8' })).toBeUndefined();
   });
 
   it('places nobody when there is no address anywhere', () => {

@@ -81,23 +81,25 @@ const firstHeaderValue = (value: string | string[] | undefined): string | undefi
  * the rate limiters stay on `req.ip` for exactly that reason.
  */
 export const getClientIpForGeo = (req: ForwardedRequest): string | undefined => {
-  // `x-forwarded-for` first, and its leftmost entry: that position is the original client by
-  // convention, and the convention is what every hop in the chain agrees on. `x-real-ip` is not
-  // standardised — nginx sets it to the original caller, but a platform edge may set it to the
-  // peer it received from, which is itself. Reading that first made every request resolve to the
-  // hosting region: US for a caller in Delhi, indistinguishable from the bug this replaced.
-  const forwarded = firstHeaderValue(req.headers['x-forwarded-for']);
-  const client = forwarded?.split(',')[0]?.trim();
-  if (client) return client;
+  // Only the address our own webapp declares, under a name no infrastructure touches.
+  //
+  // The standard forwarding headers cannot be used here, and this is not a matter of precedence:
+  // Railway's edge *replaces* `x-forwarded-for` and `x-real-ip` with the address of whoever
+  // connected to it. Since the browser talks to the webapp on Vercel and the webapp talks to this
+  // API, the address Railway reports is always Vercel's egress — measured on staging, every single
+  // request resolved to AWS us-east-1 in Ashburn, and no browser address appeared once. Reading
+  // those headers therefore records the webapp's hosting region as every user's country, whichever
+  // end of the chain you read them from.
+  //
+  // The webapp sets this header from the client address Vercel gives it, and nothing in between
+  // rewrites it. A request without it — this API's own server-to-server traffic, or anything
+  // reaching it directly — declares no caller, so no country is learned. That is the honest
+  // answer: `null` means "never learned", and it is better than a datacenter's country.
+  //
+  // Being client-supplied, it is spoofable by anyone calling this API directly, so it decides
+  // nothing but the country an admin reads. The rate limiters stay on `req.ip`.
+  const declared = firstHeaderValue(req.headers['x-deliivo-client-ip'])?.trim();
+  if (declared) return declared;
 
-  const realIp = firstHeaderValue(req.headers['x-real-ip'])?.trim();
-  if (realIp) return realIp;
-
-  // No forwarded address, so this request did not come from a browser: the webapp's SSR and proxy
-  // routes call the backend directly, and every real user arrives through that proxy, which always
-  // forwards the caller. `req.socket`'s address here belongs to our own hosting — and a platform's
-  // egress address is routable, so it resolves to a perfectly plausible country and would be
-  // written to whichever user's token the internal call happened to carry. That is how a whole
-  // user base ends up living in the region the webapp is deployed to. Learning nothing is correct.
   return undefined;
 };

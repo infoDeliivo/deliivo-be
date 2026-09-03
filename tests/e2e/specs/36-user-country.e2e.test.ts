@@ -1,10 +1,12 @@
 /**
  * E2E — Country detected from the request IP
- * Covers: TC-COUNTRY-001 through TC-COUNTRY-004
+  * Covers: TC-COUNTRY-001 through TC-COUNTRY-004
  *
  * Any authenticated request teaches the backend where the caller appears to connect from, and
- * admin reads it on the user page. The address arrives as `X-Forwarded-For` — in production from
- * the webapp's proxy, here from the test itself.
+ * admin reads it on the user page. The address arrives as `X-Deliivo-Client-Ip` — in production
+ * set by the webapp's proxy, here by the test itself. Deliberately not `X-Forwarded-For`: hosting
+ * platforms rewrite that header with the address of whoever connected to them, so between Vercel
+ * and Railway it always named a datacenter rather than the visitor.
  *
  * Admin role cannot be assigned via the API — promoted directly in the DB, same pattern as
  * 35-user-locale.e2e.test.ts.
@@ -55,7 +57,7 @@ describe('TC-COUNTRY-001 — an authenticated request places the user', () => {
     const { user, accessToken } = await signupAndVerifyEmail(email);
 
     const res = await api.get('/users/me', {
-      headers: { Authorization: `Bearer ${accessToken}`, 'X-Forwarded-For': '8.8.8.8' },
+      headers: { Authorization: `Bearer ${accessToken}`, 'X-Deliivo-Client-Ip': '8.8.8.8' },
     });
     expect(res.status).toBe(200);
 
@@ -71,7 +73,7 @@ describe('TC-COUNTRY-002 — public routes place the user too', () => {
     const { user, accessToken } = await signupAndVerifyEmail(email);
 
     const res = await api.get('/content/posts', {
-      headers: { Authorization: `Bearer ${accessToken}`, 'X-Forwarded-For': '80.235.1.1' },
+      headers: { Authorization: `Bearer ${accessToken}`, 'X-Deliivo-Client-Ip': '80.235.1.1' },
     });
     expect(res.status).toBe(200);
 
@@ -86,7 +88,7 @@ describe('TC-COUNTRY-003 — the country follows the user', () => {
     const { user, accessToken } = await signupAndVerifyEmail(email);
 
     await api.get('/users/me', {
-      headers: { Authorization: `Bearer ${accessToken}`, 'X-Forwarded-For': '80.235.1.1' },
+      headers: { Authorization: `Bearer ${accessToken}`, 'X-Deliivo-Client-Ip': '80.235.1.1' },
     });
     let admin = await authed(adminToken).get(`/admin/users/${user.id}`);
     expect(admin.data.data.user.detectedCountry).toBe('EE');
@@ -94,7 +96,7 @@ describe('TC-COUNTRY-003 — the country follows the user', () => {
     // Nobody chooses their country in the UI, so unlike the language there is no user intent to
     // protect: the newest observation wins.
     await api.get('/users/me', {
-      headers: { Authorization: `Bearer ${accessToken}`, 'X-Forwarded-For': '8.8.8.8' },
+      headers: { Authorization: `Bearer ${accessToken}`, 'X-Deliivo-Client-Ip': '8.8.8.8' },
     });
     admin = await authed(adminToken).get(`/admin/users/${user.id}`);
     expect(admin.data.data.user.detectedCountry).toBe('US');
@@ -108,7 +110,7 @@ describe('TC-COUNTRY-004 — an address that places nobody changes nothing', () 
 
     // A private address: the request came from inside a network, which names no country.
     const res = await api.get('/users/me', {
-      headers: { Authorization: `Bearer ${accessToken}`, 'X-Forwarded-For': '192.168.1.50' },
+      headers: { Authorization: `Bearer ${accessToken}`, 'X-Deliivo-Client-Ip': '192.168.1.50' },
     });
     expect(res.status).toBe(200);
 
@@ -121,11 +123,11 @@ describe('TC-COUNTRY-004 — an address that places nobody changes nothing', () 
     const { user, accessToken } = await signupAndVerifyEmail(email);
 
     await api.get('/users/me', {
-      headers: { Authorization: `Bearer ${accessToken}`, 'X-Forwarded-For': '8.8.8.8' },
+      headers: { Authorization: `Bearer ${accessToken}`, 'X-Deliivo-Client-Ip': '8.8.8.8' },
     });
 
     await api.get('/users/me', {
-      headers: { Authorization: `Bearer ${accessToken}`, 'X-Forwarded-For': '10.0.0.9' },
+      headers: { Authorization: `Bearer ${accessToken}`, 'X-Deliivo-Client-Ip': '10.0.0.9' },
     });
 
     const admin = await authed(adminToken).get(`/admin/users/${user.id}`);
