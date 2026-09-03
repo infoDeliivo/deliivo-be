@@ -5,9 +5,9 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "dev:server": "NODE_ENV=staging nodemon --watch 'src/**/*.ts' --exec 'node --loader ts-node/esm' src/server.ts",
-    "dev:worker": "NODE_ENV=staging nodemon --watch 'src/**/*.ts' --exec 'node --loader ts-node/esm' src/modules/mail/mail.worker.ts",
-    "dev:sms-worker": "NODE_ENV=staging nodemon --watch 'src/**/*.ts' --exec 'node --loader ts-node/esm' src/modules/sms/sms.worker.ts",
+    "dev:server": "NODE_ENV=staging nodemon --watch 'src/**/*.ts' --watch .env --ext ts,json,env --exec 'node --loader ts-node/esm' src/server.ts",
+    "dev:worker": "NODE_ENV=staging nodemon --watch 'src/**/*.ts' --watch .env --ext ts,json,env --exec 'node --loader ts-node/esm' src/modules/mail/mail.worker.ts",
+    "dev:sms-worker": "NODE_ENV=staging nodemon --watch 'src/**/*.ts' --watch .env --ext ts,json,env --exec 'node --loader ts-node/esm' src/modules/sms/sms.worker.ts",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:worker\" \"npm run dev:sms-worker\"",
     "test:twilio": "node --loader ts-node/esm src/scripts/test-twilio-integration.ts",
     "db:seed": "node --loader ts-node/esm src/scripts/seed.ts",

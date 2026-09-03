@@ -88,5 +88,11 @@ export const getClientIpForGeo = (req: ForwardedRequest): string | undefined => 
   const client = forwarded?.split(',')[0]?.trim();
   if (client) return client;
 
-  return req.ip;
+  // No forwarded address, so this request did not come from a browser: the webapp's SSR and proxy
+  // routes call the backend directly, and every real user arrives through that proxy, which always
+  // forwards the caller. `req.socket`'s address here belongs to our own hosting — and a platform's
+  // egress address is routable, so it resolves to a perfectly plausible country and would be
+  // written to whichever user's token the internal call happened to carry. That is how a whole
+  // user base ends up living in the region the webapp is deployed to. Learning nothing is correct.
+  return undefined;
 };

@@ -44,10 +44,20 @@ describe('learnRequestContext', () => {
   });
 
   it('records the country of the same request, on one token verification', async () => {
-    const next = await run({ authorization: 'Bearer token-123' }, '80.235.1.1');
+    const next = await run({ authorization: 'Bearer token-123', 'x-real-ip': '80.235.1.1' });
 
     expect(mockVerifyAccessToken).toHaveBeenCalledTimes(1);
     expect(mockSyncDetectedCountry).toHaveBeenCalledWith('u1', '80.235.1.1');
+    expect(next).toHaveBeenCalledWith();
+  });
+
+  it('learns no country from an internal call that forwards no caller', async () => {
+    // The webapp's SSR and proxy routes reach the backend directly, carrying a user's token but
+    // no client address. The socket address then belongs to our own hosting, and resolving it
+    // would record the deployment's region as that user's country.
+    const next = await run({ authorization: 'Bearer token-123' }, '76.76.21.21');
+
+    expect(mockSyncDetectedCountry).toHaveBeenCalledWith('u1', undefined);
     expect(next).toHaveBeenCalledWith();
   });
 
