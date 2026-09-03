@@ -50,14 +50,49 @@ for EDITION in GeoLite2-Country-CSV GeoLite2-City-CSV; do
   fi
 done
 
+# Keep the tables we already have. The converter writes the .dat files in place, and it dies
+# partway through often enough to matter — it still fetches a checksum per database over the
+# network, and a reset there (or MaxMind throttling) aborts it mid-write. A half-written table is
+# the worst outcome available: it loads without complaint and answers wrongly. So the current data
+# is set aside first and put back if anything goes wrong.
+BACKUP_DIR="${GEOIP_DIR}/data.before-update"
+rm -rf "${BACKUP_DIR:?}"
+cp -a "${GEOIP_DIR}/data" "$BACKUP_DIR"
+
+restore_backup() {
+  echo "Restoring the previous snapshot — the tables are unchanged." >&2
+  rm -rf "${GEOIP_DIR:?}/data"
+  mv "$BACKUP_DIR" "${GEOIP_DIR}/data"
+}
+
 echo "Converting to geoip-lite format (a few minutes)"
-LICENSE_KEY="$MAXMIND_LICENSE_KEY" node "${GEOIP_DIR}/scripts/updatedb.js"
+converted=0
+for attempt in 1 2 3; do
+  if LICENSE_KEY="$MAXMIND_LICENSE_KEY" node "${GEOIP_DIR}/scripts/updatedb.js"; then
+    converted=1
+    break
+  fi
+  echo "Conversion attempt ${attempt} failed." >&2
+  if (( attempt < 3 )); then
+    # A fresh copy of the tables for the retry to write over, since the failed run left the .dat
+    # files in an unknown state.
+    rm -rf "${GEOIP_DIR:?}/data"
+    cp -a "$BACKUP_DIR" "${GEOIP_DIR}/data"
+    sleep $(( attempt * 15 ))
+  fi
+done
+
+if (( converted == 0 )); then
+  restore_backup
+  echo "Could not refresh the GeoLite2 tables after 3 attempts." >&2
+  exit 1
+fi
 
 # The extracted CSVs are ~50MB of scratch and are of no use once converted.
 rm -rf "${TMP_DIR:?}"/*
 
 echo "Verifying"
-node -e '
+if ! node -e '
 const geoip = require("geoip-lite");
 const expected = { "8.8.8.8": "US", "80.235.1.1": "EE", "212.7.0.1": "EE" };
 let failed = false;
@@ -65,8 +100,13 @@ for (const [ip, want] of Object.entries(expected)) {
   const got = geoip.lookup(ip)?.country ?? null;
   if (got !== want) { console.error(`  ${ip}: expected ${want}, got ${got}`); failed = true; }
 }
-if (failed) { console.error("Snapshot looks wrong — do not ship it."); process.exit(1); }
+if (failed) { console.error("Snapshot looks wrong."); process.exit(1); }
 console.log("  country lookups OK");
-'
+'; then
+  # Tables that answer wrongly are worse than tables that are merely old.
+  restore_backup
+  exit 1
+fi
 
+rm -rf "${BACKUP_DIR:?}"
 echo "GeoLite2 snapshot updated."
