@@ -26,24 +26,26 @@ export const syncDetectedCountry = async (
 ): Promise<void> => {
   if (!userId) return;
 
-  const country = resolveCountryFromIp(ip);
-  if (!country) return;
+  // City and country in one value, "New Delhi, IN" — or a bare country code where the lookup
+  // table names no city. Either way it is a label to read, not a code to compare against.
+  const location = resolveCountryFromIp(ip);
+  if (!location) return;
 
   try {
     const alreadySynced = await getCache<string>(countrySyncKey(userId));
-    if (alreadySynced === country) return;
+    if (alreadySynced === location) return;
 
-    // The explicit null branch matters: in SQL `detectedCountry != 'EE'` is unknown for NULL, so a
-    // user we have never placed would not be matched by the inequality alone.
+    // The explicit null branch matters: in SQL `detectedCountry != 'Tallinn, EE'` is unknown for
+    // NULL, so a user we have never placed would not be matched by the inequality alone.
     const { count } = await prisma.user.updateMany({
       where: {
         id: userId,
-        OR: [{ detectedCountry: null }, { detectedCountry: { not: country } }],
+        OR: [{ detectedCountry: null }, { detectedCountry: { not: location } }],
       },
-      data: { detectedCountry: country },
+      data: { detectedCountry: location },
     });
 
-    await setCache(countrySyncKey(userId), country, COUNTRY_SYNC_TTL_SECONDS);
+    await setCache(countrySyncKey(userId), location, COUNTRY_SYNC_TTL_SECONDS);
 
     if (count > 0) {
       await deleteCache(cacheKeys.user(userId));
@@ -52,7 +54,7 @@ export const syncDetectedCountry = async (
     // A failed lookup must never break the request it rode in on.
     logWarn('Could not sync detected country', {
       userId,
-      country,
+      location,
       error: error instanceof Error ? error.message : String(error),
     });
   }

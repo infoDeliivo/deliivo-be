@@ -1,9 +1,10 @@
 import { getClientIpForGeo, resolveCountryFromIp } from './geoip.js';
 
 describe('resolveCountryFromIp', () => {
-  it('resolves a public address to its country', () => {
+  it('resolves a public address to its city and country', () => {
     expect(resolveCountryFromIp('8.8.8.8')).toBe('US');
-    expect(resolveCountryFromIp('80.235.1.1')).toBe('EE');
+    // City and country together when the table names a city, which it does for most of Europe.
+    expect(resolveCountryFromIp('80.235.1.1')).toBe('Tallinn, EE');
   });
 
   it('reads an IPv4-mapped IPv6 address like its IPv4 form', () => {
@@ -52,7 +53,9 @@ describe('getClientIpForGeo', () => {
 
   it('reads the address the webapp declares', () => {
     expect(getClientIpForGeo({ headers: { [CLIENT_HEADER]: '157.49.51.193' } })).toBe('157.49.51.193');
-    expect(resolveCountryFromIp(getClientIpForGeo({ headers: { [CLIENT_HEADER]: '157.49.51.193' } }))).toBe('IN');
+    expect(resolveCountryFromIp(getClientIpForGeo({ headers: { [CLIENT_HEADER]: '157.49.51.193' } }))).toBe(
+      'New Delhi, IN',
+    );
   });
 
   it('ignores x-forwarded-for and x-real-ip entirely', () => {
@@ -100,5 +103,28 @@ describe('getClientIpForGeo', () => {
   it('places nobody when there is no address anywhere', () => {
     expect(getClientIpForGeo({ headers: {} })).toBeUndefined();
     expect(resolveCountryFromIp(getClientIpForGeo({ headers: {} }))).toBeNull();
+  });
+});
+
+describe('resolveCountryFromIp — the city half', () => {
+  it('falls back to the country alone when the table names no city', () => {
+    // Common, and not an error: many ranges are placed in a country and nowhere more precise.
+    expect(resolveCountryFromIp('8.8.8.8')).toBe('US');
+  });
+
+  it('always ends with the country, so the last segment can be read as the country', () => {
+    for (const ip of ['157.49.51.193', '80.235.1.1', '8.8.8.8']) {
+      const value = resolveCountryFromIp(ip);
+      expect(value).not.toBeNull();
+      const country = value!.split(',').pop()!.trim();
+      expect(country).toMatch(/^[A-Z]{2}$/);
+    }
+  });
+
+  it('stays within the column width', () => {
+    // detectedCountry is VARCHAR(120); a value longer than that would fail the write outright.
+    for (const ip of ['157.49.51.193', '80.235.1.1', '212.7.0.1', '133.11.0.1']) {
+      expect((resolveCountryFromIp(ip) ?? '').length).toBeLessThanOrEqual(120);
+    }
   });
 });
