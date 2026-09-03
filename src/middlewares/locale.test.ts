@@ -44,7 +44,7 @@ describe('learnRequestContext', () => {
   });
 
   it('records the country of the same request, on one token verification', async () => {
-    const next = await run({ authorization: 'Bearer token-123', 'x-real-ip': '80.235.1.1' });
+    const next = await run({ authorization: 'Bearer token-123', 'x-deliivo-client-ip': '80.235.1.1' });
 
     expect(mockVerifyAccessToken).toHaveBeenCalledTimes(1);
     expect(mockSyncDetectedCountry).toHaveBeenCalledWith('u1', '80.235.1.1');
