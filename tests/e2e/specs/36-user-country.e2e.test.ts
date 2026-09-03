@@ -1,6 +1,10 @@
 /**
  * E2E — Country detected from the request IP
-  * Covers: TC-COUNTRY-001 through TC-COUNTRY-004
+ * Covers: TC-COUNTRY-001 through TC-COUNTRY-004
+ *
+ * The stored value is city and country together — "Tallinn, EE" — and a bare country code
+ * wherever the offline table names no city, which is why 8.8.8.8 asserts "US" and 80.235.1.1
+ * asserts "Tallinn, EE".
  *
  * Any authenticated request teaches the backend where the caller appears to connect from, and
  * admin reads it on the user page. The address arrives as `X-Deliivo-Client-Ip` — in production
@@ -78,7 +82,7 @@ describe('TC-COUNTRY-002 — public routes place the user too', () => {
     expect(res.status).toBe(200);
 
     const admin = await authed(adminToken).get(`/admin/users/${user.id}`);
-    expect(admin.data.data.user.detectedCountry).toBe('EE');
+    expect(admin.data.data.user.detectedCountry).toBe('Tallinn, EE');
   });
 });
 
@@ -91,7 +95,7 @@ describe('TC-COUNTRY-003 — the country follows the user', () => {
       headers: { Authorization: `Bearer ${accessToken}`, 'X-Deliivo-Client-Ip': '80.235.1.1' },
     });
     let admin = await authed(adminToken).get(`/admin/users/${user.id}`);
-    expect(admin.data.data.user.detectedCountry).toBe('EE');
+    expect(admin.data.data.user.detectedCountry).toBe('Tallinn, EE');
 
     // Nobody chooses their country in the UI, so unlike the language there is no user intent to
     // protect: the newest observation wins.

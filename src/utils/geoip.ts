@@ -44,8 +44,16 @@ export const resolveCountryFromIp = (ip?: string | null): string | null => {
   if (!normalized || isNonRoutable(normalized)) return null;
 
   try {
-    const country = geoip.lookup(normalized)?.country;
-    return country ? country.toUpperCase() : null;
+    const found = geoip.lookup(normalized);
+    const country = found?.country ? found.country.toUpperCase() : null;
+    if (!country) return null;
+
+    // City and country in one value, "New Delhi, IN". The city is the less certain half of the
+    // same lookup — the table names no city for a great many addresses, and a mobile carrier
+    // resolves to wherever its gateway sits — so the country is what always survives, and the
+    // country alone is what a bare value means.
+    const city = found?.city?.trim();
+    return city ? `${city}, ${country}` : country;
   } catch {
     // A malformed address is not worth an error — we simply learned nothing.
     return null;
