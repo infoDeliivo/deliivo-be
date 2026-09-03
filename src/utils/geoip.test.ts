@@ -79,15 +79,19 @@ describe('getClientIpForGeo', () => {
     expect(getClientIpForGeo({ headers: { 'x-forwarded-for': '  8.8.8.8 , 10.0.0.7' } })).toBe('8.8.8.8');
   });
 
-  it('falls back to the socket address when no forwarding header is present', () => {
-    // Local dev and any non-proxied deployment.
-    expect(getClientIpForGeo({ headers: {}, ip: '127.0.0.1' })).toBe('127.0.0.1');
-    expect(resolveCountryFromIp(getClientIpForGeo({ headers: {}, ip: '127.0.0.1' }))).toBeNull();
+  it('never falls back to the socket address', () => {
+    // Every real user reaches us through the webapp's proxy, which always forwards the caller's
+    // address. A request without one is our own server-to-server traffic — the webapp's SSR and
+    // proxy routes call the backend directly — and its socket address is a datacenter's, not a
+    // user's. Resolving it would stamp the hosting region on people who have never been there,
+    // and a public egress address is perfectly routable, so nothing downstream would reject it.
+    expect(getClientIpForGeo({ headers: {}, ip: '76.76.21.21' })).toBeUndefined();
+    expect(resolveCountryFromIp(getClientIpForGeo({ headers: {}, ip: '76.76.21.21' }))).toBeNull();
   });
 
-  it('skips a header that is present but empty rather than returning a blank address', () => {
-    expect(getClientIpForGeo({ headers: { 'x-real-ip': '   ' }, ip: '8.8.8.8' })).toBe('8.8.8.8');
-    expect(getClientIpForGeo({ headers: { 'x-forwarded-for': ' , 10.0.0.7' }, ip: '8.8.8.8' })).toBe('8.8.8.8');
+  it('treats a header that is present but empty as no address at all', () => {
+    expect(getClientIpForGeo({ headers: { 'x-real-ip': '   ' }, ip: '8.8.8.8' })).toBeUndefined();
+    expect(getClientIpForGeo({ headers: { 'x-forwarded-for': ' , 10.0.0.7' }, ip: '8.8.8.8' })).toBeUndefined();
   });
 
   it('places nobody when there is no address anywhere', () => {
