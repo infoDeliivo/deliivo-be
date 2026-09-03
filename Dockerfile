@@ -36,8 +36,15 @@ FROM base AS geoip
 ARG MAXMIND_LICENSE_KEY
 
 # bash and curl exist only for this script, and only in this discarded stage.
+#
+# Deliberately non-fatal. The refresh talks to MaxMind over the network, and a deploy must not fail
+# because a third party was slow or reset a connection — a ECONNRESET here once already killed an
+# otherwise good build. The script puts the previous tables back if it cannot finish, so failing
+# means shipping data that is merely older, never data that is wrong.
 RUN if [ -n "$MAXMIND_LICENSE_KEY" ]; then \
-      apk add --no-cache bash curl && bash scripts/update-geoip.sh; \
+      apk add --no-cache bash curl \
+      && (bash scripts/update-geoip.sh \
+          || echo 'WARNING: GeoLite2 refresh failed — shipping the previous snapshot.'); \
     else \
       echo 'No MAXMIND_LICENSE_KEY set — keeping the GeoLite2 snapshot bundled with geoip-lite.'; \
     fi
