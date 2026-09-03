@@ -43,7 +43,7 @@ import {
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
-import { protect, errorHandler, rateLimiter, otpLimiters, requestTimeout, searchLimiter, bookingLimiter, requestContext } from './middlewares/index.js';
+import { protect, errorHandler, rateLimiter, otpLimiters, requestTimeout, searchLimiter, bookingLimiter, requestContext, learnRequestContext } from './middlewares/index.js';
 import './queue/deadline.queue.js'; // start BullMQ deadline worker
 import './queue/maintenance.queue.js'; // start nightly maintenance worker
 
@@ -94,6 +94,13 @@ app.use('/api/v1/dl-verification/webhook', dlVerificationWebhookRouter);
 app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 app.use(requestTimeout);
+
+// Learn the caller's language and country from any request that carries a token — public routes
+// included, which is the point: a signed-in user reading the blog or the map teaches us as much as
+// one calling a protected endpoint. Mounted here rather than inside `protect` for that reason.
+// Never a gate: it swallows every token problem and always calls next(). Mounted after the two
+// webhook routers above so Stripe and Veriff callbacks, which carry no user token, skip it.
+app.use(learnRequestContext);
 
 app.get('/health', async (req, res) => {
   const checks: Record<string, boolean> = { database: false, redis: false };

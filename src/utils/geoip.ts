@@ -1,4 +1,5 @@
 import geoip from 'geoip-lite';
+import type { IncomingHttpHeaders } from 'http';
 
 /**
  * Country lookup from a request IP, used to show admins where a user connects from.
@@ -49,4 +50,43 @@ export const resolveCountryFromIp = (ip?: string | null): string | null => {
     // A malformed address is not worth an error — we simply learned nothing.
     return null;
   }
+};
+
+/** Only the parts of a request this needs, so tests need no Express instance. */
+type ForwardedRequest = {
+  headers: IncomingHttpHeaders;
+  ip?: string;
+};
+
+/** Node hands a repeated header over as an array; the first value is the one that arrived first. */
+const firstHeaderValue = (value: string | string[] | undefined): string | undefined =>
+  Array.isArray(value) ? value[0] : value;
+
+/**
+ * The address of the caller a request came from, for country lookup.
+ *
+ * Deliberately not `req.ip`. With a numeric `trust proxy`, Express resolves `req.ip` by counting
+ * hops from the socket inwards, so it lands on whichever address sits that many entries from the
+ * right of `x-forwarded-for` — and every platform edge that appends its own address on the way in
+ * shifts the answer by one. The count has to match each deployment exactly, and when it does not,
+ * the result is not an error but a plausible-looking wrong country: the datacenter's.
+ *
+ * So this reads the client from the left instead, where the original caller always is:
+ *  - `x-real-ip`, which our own Next proxy sets to the caller it saw and no intermediary rewrites;
+ *  - else the leftmost `x-forwarded-for` entry, the original client by convention;
+ *  - else the socket address, for a direct connection with no proxy in front (local dev).
+ *
+ * Both headers are ultimately client-supplied, so this answers "where does this user appear to
+ * connect from" for an admin to read, and must not be used to key anything that guards the API —
+ * the rate limiters stay on `req.ip` for exactly that reason.
+ */
+export const getClientIpForGeo = (req: ForwardedRequest): string | undefined => {
+  const realIp = firstHeaderValue(req.headers['x-real-ip'])?.trim();
+  if (realIp) return realIp;
+
+  const forwarded = firstHeaderValue(req.headers['x-forwarded-for']);
+  const client = forwarded?.split(',')[0]?.trim();
+  if (client) return client;
+
+  return req.ip;
 };

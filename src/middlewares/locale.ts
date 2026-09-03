@@ -2,6 +2,7 @@ import { NextFunction, Request, RequestHandler, Response } from 'express';
 import { verifyAccessToken } from '../modules/token/tokens.service.js';
 import { syncPreferredLocale } from '../modules/user/user-locale.service.js';
 import { syncDetectedCountry } from '../modules/user/user-geo.service.js';
+import { getClientIpForGeo } from '../utils/geoip.js';
 
 /**
  * Learn what a request tells us about the caller — the language they are browsing in, and the
@@ -42,7 +43,7 @@ export const learnRequestContext: RequestHandler = async (
   try {
     const decoded = verifyAccessToken(token);
     await syncPreferredLocale(decoded.id, req.headers['accept-language']);
-    await syncDetectedCountry(decoded.id, req.ip);
+    await syncDetectedCountry(decoded.id, getClientIpForGeo(req));
   } catch {
     // A token we cannot read tells us nothing about the caller. It is not this middleware's job
     // to reject it — whatever the route is, it decides that for itself.
