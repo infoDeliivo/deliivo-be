@@ -10,36 +10,37 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
 COPY scripts ./scripts/
-
-# bash and curl are needed only to refresh the GeoLite2 snapshot below. They stay in this build
-# stage — the production stage starts from a clean alpine and copies just node_modules and dist.
-RUN apk add --no-cache bash curl
-
 RUN npm ci
 RUN sh -n scripts/docker-entrypoint.sh
-
-# Refresh the GeoLite2 tables that back country detection (src/utils/geoip.ts). The snapshot
-# geoip-lite bundles is already stale the day the package is published, and a stale table does not
-# fail — it reports the country an address used to be in. The refreshed data lands in
-# node_modules/geoip-lite/data, which the production stage copies wholesale.
-#
-# The licence key arrives as a BuildKit secret, never an ARG or ENV: those are recorded in the
-# image history and would ship the key inside the image. Build with:
-#   DOCKER_BUILDKIT=1 docker build --secret id=maxmind_license_key,env=MAXMIND_LICENSE_KEY .
-# A build with no secret mounted keeps the bundled tables and carries on, so CI without MaxMind
-# credentials still succeeds.
-RUN --mount=type=secret,id=maxmind_license_key \
-    if [ -s /run/secrets/maxmind_license_key ]; then \
-      MAXMIND_LICENSE_KEY="$(cat /run/secrets/maxmind_license_key)" bash scripts/update-geoip.sh; \
-    else \
-      echo 'No MaxMind key mounted — keeping the GeoLite2 snapshot bundled with geoip-lite.'; \
-    fi
 
 # Build
 COPY tsconfig.json ./
 COPY src ./src/
 COPY docs ./docs/
 RUN npm run build
+
+# Refresh the GeoLite2 tables that back country detection (src/utils/geoip.ts). The snapshot
+# geoip-lite bundles is already stale the day the package is published, and a stale table does not
+# announce itself — it simply reports the country an address used to be in.
+#
+# This is a stage of its own for one reason: the licence key is a secret. Railway's builder accepts
+# no mount type but cache, so `RUN --mount=type=secret` is not available and the key has to arrive
+# as a build ARG — which is recorded in the layer history of whatever stage declares it. Declaring
+# it here confines that record to a stage nobody ships: the production image below copies only the
+# converted .dat files out, so the key appears in no layer of the pushed image.
+#
+# With no key set the stage is a no-op passthrough and the bundled tables travel on unchanged, so a
+# build without MaxMind credentials still succeeds.
+FROM base AS geoip
+
+ARG MAXMIND_LICENSE_KEY
+
+# bash and curl exist only for this script, and only in this discarded stage.
+RUN if [ -n "$MAXMIND_LICENSE_KEY" ]; then \
+      apk add --no-cache bash curl && bash scripts/update-geoip.sh; \
+    else \
+      echo 'No MAXMIND_LICENSE_KEY set — keeping the GeoLite2 snapshot bundled with geoip-lite.'; \
+    fi
 
 # Production image
 FROM node:20-alpine AS production
@@ -51,6 +52,8 @@ ENV PRISMA_RECOVERABLE_MIGRATION=20260707113000_localize_content_slugs
 
 COPY --from=base /app/package.json /app/package-lock.json ./
 COPY --from=base /app/node_modules ./node_modules/
+# Only the converted country/city tables come out of the geoip stage — never its environment.
+COPY --from=geoip /app/node_modules/geoip-lite/data ./node_modules/geoip-lite/data/
 COPY --from=base /app/dist ./dist/
 COPY --from=base /app/prisma ./prisma/
 COPY --from=base /app/prisma.config.ts ./

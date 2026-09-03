@@ -35,10 +35,9 @@ services:
       dockerfile: Dockerfile
       args:
         DATABASE_URL: ${DATABASE_URL:-postgresql://deliivo:deliivo_secret@postgres:5432/deliivo}
-      # Refreshes the GeoLite2 country tables during the build. A secret rather than an arg so the
-      # key is not recorded in the image history. Builds fine without it — see the Dockerfile.
-      secrets:
-        - maxmind_license_key
+        # Refreshes the GeoLite2 country tables during the build. Consumed by the throwaway `geoip`
+        # stage so it reaches no layer of the final image. Empty is fine — see the Dockerfile.
+        MAXMIND_LICENSE_KEY: ${MAXMIND_LICENSE_KEY:-}
     restart: unless-stopped
     env_file:
       - .env
@@ -196,9 +195,3 @@ volumes:
   postgres_data:
   redis_data:
   uploads_data:
-
-secrets:
-  # Read from the environment so the key stays in .env (gitignored) and never reaches a build arg
-  # or an image layer. Absent or empty, the build keeps the snapshot bundled with geoip-lite.
-  maxmind_license_key:
-    environment: MAXMIND_LICENSE_KEY
