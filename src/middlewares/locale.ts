@@ -3,6 +3,7 @@ import { verifyAccessToken } from '../modules/token/tokens.service.js';
 import { syncPreferredLocale } from '../modules/user/user-locale.service.js';
 import { syncDetectedCountry } from '../modules/user/user-geo.service.js';
 import { getClientIpForGeo } from '../utils/geoip.js';
+import { logDebug } from '../utils/logger.js';
 
 /**
  * Learn what a request tells us about the caller — the language they are browsing in, and the
@@ -43,7 +44,20 @@ export const learnRequestContext: RequestHandler = async (
   try {
     const decoded = verifyAccessToken(token);
     await syncPreferredLocale(decoded.id, req.headers['accept-language']);
-    await syncDetectedCountry(decoded.id, getClientIpForGeo(req));
+
+    const clientIp = getClientIpForGeo(req);
+    // Which address a hosting platform forwards, and in which header, is not something the code
+    // can know from here — and getting it wrong is silent: a plausible country gets recorded for
+    // the wrong place. This makes the inputs visible in the deployment's own logs, so the chain
+    // can be read rather than inferred. Debug level, so it costs nothing in normal operation.
+    logDebug('Request context: resolving caller country', {
+      forwardedFor: req.headers['x-forwarded-for'],
+      realIp: req.headers['x-real-ip'],
+      socketIp: req.ip,
+      resolved: clientIp,
+    });
+
+    await syncDetectedCountry(decoded.id, clientIp);
   } catch {
     // A token we cannot read tells us nothing about the caller. It is not this middleware's job
     // to reject it — whatever the route is, it decides that for itself.
