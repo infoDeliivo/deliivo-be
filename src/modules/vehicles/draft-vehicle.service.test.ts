@@ -22,6 +22,18 @@ jest.mock('../../config/index.js', () => ({
     prisma: mockPrisma,
 }));
 
+// saveVehicle verifies every draft document still exists in storage before creating the
+// vehicle, so the storage layer has to be stubbed or the check hits a real bucket.
+const mockHeadObject = jest.fn();
+jest.mock('../../services/s3.service.js', () => ({
+    __esModule: true,
+    headObject: (key: string) => mockHeadObject(key),
+    keyFromPublicUrl: (url: string) => {
+        const idx = url.indexOf('/uploads/');
+        return idx === -1 ? null : url.slice(idx + 1);
+    },
+}));
+
 import * as DraftVehicleService from './draft-vehicle.service.js';
 
 const registryDocument = {
@@ -56,6 +68,7 @@ const draftWith = (licenseCountry: string, documents: unknown[]) =>
 describe('saveVehicle', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockHeadObject.mockResolvedValue({ exists: true });
         delete process.env.SKIP_VEHICLE_VERIFICATION;
         mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-1', dlVerified: false });
         mockPrisma.vehicle.count.mockResolvedValue(0);
@@ -256,6 +269,49 @@ describe('saveVehicle', () => {
             await expect(DraftVehicleService.saveVehicle('user-1')).rejects.toThrow(
                 'MAX_VEHICLE_LIMIT_REACHED',
             );
+        });
+    });
+
+    // An upload that dies between the PUT and the confirm leaves the object under tmp/,
+    // where the lifecycle rule deletes it. The draft can still name the document, which
+    // is how a vehicle used to be saved pointing at storage that holds nothing.
+    describe('storage verification', () => {
+        it('rejects when a draft document is not in storage, naming the types', async () => {
+            mockRedis.get.mockResolvedValue(
+                draftWith('GB', [registryDocument, insuranceDocument]),
+            );
+            mockHeadObject.mockImplementation((key: string) =>
+                Promise.resolve({ exists: !key.includes('insurance') }),
+            );
+
+            await expect(DraftVehicleService.saveVehicle('user-1')).rejects.toThrow(
+                'VEHICLE_DOCUMENT_MISSING:INSURANCE_DOCUMENT',
+            );
+            expect(mockPrisma.vehicle.create).not.toHaveBeenCalled();
+        });
+
+        it('checks public photos by the key recovered from their URL', async () => {
+            mockRedis.get.mockResolvedValue(
+                draftWith('GB', [
+                    { documentType: 'VEHICLE_IMAGE_FRONT', imageUrl: 'https://cdn.example.com/uploads/vehicle/user-1/front.jpg' },
+                ]),
+            );
+            mockHeadObject.mockResolvedValue({ exists: false });
+
+            await expect(DraftVehicleService.saveVehicle('user-1')).rejects.toThrow(
+                'VEHICLE_DOCUMENT_MISSING:VEHICLE_IMAGE_FRONT',
+            );
+            expect(mockHeadObject).toHaveBeenCalledWith('uploads/vehicle/user-1/front.jpg');
+        });
+
+        // A storage outage must not block a driver whose documents are actually fine.
+        // Only a definitive 404 counts as missing; headObject throws for anything else.
+        it('saves anyway when storage cannot be reached', async () => {
+            mockRedis.get.mockResolvedValue(draftWith('GB', [registryDocument]));
+            mockHeadObject.mockRejectedValue(new Error('ServiceUnavailable'));
+
+            await expect(DraftVehicleService.saveVehicle('user-1')).resolves.toBeDefined();
+            expect(mockPrisma.vehicle.create).toHaveBeenCalled();
         });
     });
 });

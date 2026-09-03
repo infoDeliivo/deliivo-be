@@ -53,6 +53,12 @@ jest.mock('../user/user.service.js', () => ({
     updateAvatarService: mockUpdateAvatarService,
     clearAvatarService: mockClearAvatarService,
 }));
+// The presign -> confirm ledger writes to Redis; keep the unit test off a real client.
+const mockRedisDel = jest.fn();
+jest.mock('../../cache/redis.js', () => ({
+    __esModule: true,
+    default: { setex: jest.fn(), del: mockRedisDel, get: jest.fn(), scan: jest.fn() },
+}));
 
 import { confirmUpload, deleteUpload, readUrl } from './uploads.controller.js';
 
@@ -127,6 +133,69 @@ describe('confirmUpload — vehicle_image replace deletes the previous object', 
             res as never,
         );
         expect(mockDeleteObject).toHaveBeenCalledWith('uploads/vehicle/u1/old.png');
+    });
+});
+
+// A client that never saw the confirm response retries it. By then promoteObject has
+// already deleted the tmp/ object, so the naive existence check reported the file as
+// missing and the upload could not be recovered.
+describe('confirmUpload — is idempotent so a retried confirm succeeds', () => {
+    const alreadyPromoted = (tmpKey: string, permanentKey: string) =>
+        mockHeadObject.mockImplementation(async (key: string) =>
+            key === permanentKey
+                ? { exists: true, contentType: 'image/png', contentLength: 1000 }
+                : { exists: false },
+        );
+
+    it('returns success without re-promoting when the permanent object already exists', async () => {
+        alreadyPromoted('tmp/vehicle/u1/x.png', 'uploads/vehicle/u1/x.png');
+        const { res, out } = makeRes();
+        await confirmUpload(
+            { user: { id: 'u1' }, body: { target: 'vehicle_draft_document', key: 'tmp/vehicle/u1/x.png' } } as never,
+            res as never,
+        );
+        expect(mockPromoteObject).not.toHaveBeenCalled();
+        expect(out.body).toMatchObject({
+            success: true,
+            data: { key: 'uploads/vehicle/u1/x.png', url: 'https://cdn.test/uploads/vehicle/u1/x.png' },
+        });
+    });
+
+    it('produces the same payload on the first and the retried call', async () => {
+        const first = makeRes();
+        await confirmUpload(
+            { user: { id: 'u1' }, body: { target: 'vehicle_draft_document', key: 'tmp/vehicle/u1/x.png' } } as never,
+            first.res as never,
+        );
+
+        alreadyPromoted('tmp/vehicle/u1/x.png', 'uploads/vehicle/u1/x.png');
+        const retry = makeRes();
+        await confirmUpload(
+            { user: { id: 'u1' }, body: { target: 'vehicle_draft_document', key: 'tmp/vehicle/u1/x.png' } } as never,
+            retry.res as never,
+        );
+
+        expect(retry.out.body).toEqual(first.out.body);
+    });
+
+    it('still rejects when neither the staged nor the permanent object exists', async () => {
+        mockHeadObject.mockResolvedValue({ exists: false });
+        const { res, out } = makeRes();
+        await confirmUpload(
+            { user: { id: 'u1' }, body: { target: 'vehicle_draft_document', key: 'tmp/vehicle/u1/x.png' } } as never,
+            res as never,
+        );
+        expect(out.status).toBe(400);
+        expect(mockPromoteObject).not.toHaveBeenCalled();
+    });
+
+    it('clears the pending-upload ledger entry once the object is permanent', async () => {
+        const { res } = makeRes();
+        await confirmUpload(
+            { user: { id: 'u1' }, body: { target: 'vehicle_draft_document', key: 'tmp/vehicle/u1/x.png' } } as never,
+            res as never,
+        );
+        expect(mockRedisDel).toHaveBeenCalledWith('pendingUpload:tmp/vehicle/u1/x.png');
     });
 });
 

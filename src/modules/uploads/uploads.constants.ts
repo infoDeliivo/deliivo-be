@@ -6,6 +6,15 @@
 export const UPLOAD_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
 export const PRESIGN_TTL = 300; // seconds
 
+/**
+ * Redis key prefix for the presign -> confirm ledger. getPresign writes
+ * `pendingUpload:<tmpKey>`; confirmUpload deletes it once the object is promoted, so a
+ * surviving entry is an upload the client abandoned before the file reached permanent
+ * storage. Read by the abandoned-upload report in the maintenance queue.
+ */
+export const PENDING_UPLOAD_PREFIX = 'pendingUpload:';
+export const PENDING_UPLOAD_TTL = 60 * 60; // 1 hour — outlives any real upload
+
 export const ALLOWED_CONTENT_TYPES = ['image/jpeg', 'image/png'] as const;
 export const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png'] as const;
 
