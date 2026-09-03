@@ -99,12 +99,12 @@ app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 app.use(requestTimeout);
 
-// Follow what a signed-in caller's requests reveal — language and country — whatever route
-// they are on. Mounted
-// here so it covers the public ones too — the blog and the map used to teach us nothing, even
-// though the token and Accept-Language were on the request. Below the raw-body webhook mounts
-// above, which must keep their untouched bodies, and never a gate: see middlewares/locale.ts.
-app.use('/api/v1', learnRequestContext);
+// Learn the caller's language and country from any request that carries a token — public routes
+// included, which is the point: a signed-in user reading the blog or the map teaches us as much as
+// one calling a protected endpoint. Mounted here rather than inside `protect` for that reason.
+// Never a gate: it swallows every token problem and always calls next(). Mounted after the two
+// webhook routers above so Stripe and Veriff callbacks, which carry no user token, skip it.
+app.use(learnRequestContext);
 
 app.get('/health', async (req, res) => {
   const checks: Record<string, boolean> = { database: false, redis: false };

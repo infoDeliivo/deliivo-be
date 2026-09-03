@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#
+# Refresh the GeoLite2 snapshot that backs country detection (src/utils/geoip.ts).
+#
+# `geoip-lite` ships a bundled snapshot that ages from the day the package was published, so an
+# address reassigned to another country since then resolves to the old one. This pulls the current
+# MaxMind tables and converts them in place.
+#
+# Requires MAXMIND_LICENSE_KEY (a free MaxMind account; the key is a secret, keep it in .env).
+#
+# Two details this works around, both verified against geoip-lite 2.0.3:
+#  - Its own downloader follows MaxMind's 302 to the signed URL and gets 401 back, so the archives
+#    are fetched with curl first. The converter reuses whatever is already in its tmp directory.
+#  - Its CSV reader closes readline before the last line is consumed, which is fatal from Node 22
+#    on (ERR_USE_AFTER_CLOSE) and silently leaves a half-written IPv6 table behind. So this refuses
+#    to run on anything newer than Node 20 — the version the Docker image uses anyway.
+set -euo pipefail
+
+if [[ -z "${MAXMIND_LICENSE_KEY:-}" ]]; then
+  echo "MAXMIND_LICENSE_KEY is not set. Add it to .env (never to a committed file)." >&2
+  exit 1
+fi
+
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+if (( NODE_MAJOR > 20 )); then
+  echo "Node ${NODE_MAJOR} crashes geoip-lite's CSV reader mid-write (ERR_USE_AFTER_CLOSE)." >&2
+  echo "Run under Node 20, e.g.: nvm exec 20 npm run geoip:update" >&2
+  exit 1
+fi
+
+GEOIP_DIR="node_modules/geoip-lite"
+TMP_DIR="${GEOIP_DIR}/tmp"
+
+if [[ ! -d "$GEOIP_DIR" ]]; then
+  echo "geoip-lite is not installed — run npm ci first." >&2
+  exit 1
+fi
+
+mkdir -p "$TMP_DIR"
+
+for EDITION in GeoLite2-Country-CSV GeoLite2-City-CSV; do
+  echo "Fetching ${EDITION}.zip"
+  STATUS="$(curl -sL --retry 3 --fail-with-body \
+    -o "${TMP_DIR}/${EDITION}.zip" \
+    -w '%{http_code}' \
+    "https://download.maxmind.com/app/geoip_download?edition_id=${EDITION}&suffix=zip&license_key=${MAXMIND_LICENSE_KEY}")"
+  if [[ "$STATUS" != "200" ]]; then
+    echo "MaxMind returned HTTP ${STATUS} for ${EDITION}. Check the licence key." >&2
+    exit 1
+  fi
+done
+
+echo "Converting to geoip-lite format (a few minutes)"
+LICENSE_KEY="$MAXMIND_LICENSE_KEY" node "${GEOIP_DIR}/scripts/updatedb.js"
+
+# The extracted CSVs are ~50MB of scratch and are of no use once converted.
+rm -rf "${TMP_DIR:?}"/*
+
+echo "Verifying"
+node -e '
+const geoip = require("geoip-lite");
+const expected = { "8.8.8.8": "US", "80.235.1.1": "EE", "212.7.0.1": "EE" };
+let failed = false;
+for (const [ip, want] of Object.entries(expected)) {
+  const got = geoip.lookup(ip)?.country ?? null;
+  if (got !== want) { console.error(`  ${ip}: expected ${want}, got ${got}`); failed = true; }
+}
+if (failed) { console.error("Snapshot looks wrong — do not ship it."); process.exit(1); }
+console.log("  country lookups OK");
+'
+
+echo "GeoLite2 snapshot updated."
