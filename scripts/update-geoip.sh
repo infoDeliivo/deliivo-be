@@ -40,10 +40,19 @@ mkdir -p "$TMP_DIR"
 
 for EDITION in GeoLite2-Country-CSV GeoLite2-City-CSV; do
   echo "Fetching ${EDITION}.zip"
-  STATUS="$(curl -sL --retry 3 --fail-with-body \
+  # `|| true` so a 4xx does not trip `set -e` before the status can be reported: curl's own exit
+  # code says only "it failed", while the status tells the caller whether to fix the key or wait.
+  STATUS="$(curl -sL --retry 3 \
     -o "${TMP_DIR}/${EDITION}.zip" \
     -w '%{http_code}' \
-    "https://download.maxmind.com/app/geoip_download?edition_id=${EDITION}&suffix=zip&license_key=${MAXMIND_LICENSE_KEY}")"
+    "https://download.maxmind.com/app/geoip_download?edition_id=${EDITION}&suffix=zip&license_key=${MAXMIND_LICENSE_KEY}" || true)"
+  if [[ "$STATUS" == "429" ]]; then
+    # MaxMind throttles per account, and updatedb.js spends requests on a checksum per database
+    # even when it downloads nothing — so a few runs in quick succession is enough to trip this.
+    # Backing off by seconds does not clear it; the limit resets on MaxMind's own schedule.
+    echo "MaxMind is rate-limiting this account (HTTP 429). The tables are unchanged; try later." >&2
+    exit 1
+  fi
   if [[ "$STATUS" != "200" ]]; then
     echo "MaxMind returned HTTP ${STATUS} for ${EDITION}. Check the licence key." >&2
     exit 1
