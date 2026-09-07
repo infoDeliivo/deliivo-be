@@ -262,6 +262,7 @@ const vehicleDocumentSelect = {
   imageKey: true,
   image: true,
   documentType: true,
+  storageMissingAt: true,
   createdAt: true,
 } satisfies Prisma.VehicleDocumentSelect;
 
@@ -276,12 +277,24 @@ const mapVehicleDocument = (
   documentType: doc.documentType,
   previewKey: doc.imageKey ?? null,
   image: doc.image ?? null,
+  storageMissing: Boolean(doc.storageMissingAt),
   createdAt: doc.createdAt,
 });
 
 const mapVehicle = (vehicle: VehicleWithDocuments) => {
   const { documents, ...rest } = vehicle;
-  return { ...rest, documents: documents.map(mapVehicleDocument) };
+  // Surfaced at the vehicle level so the client can warn once per vehicle rather than
+  // reasoning about the document array itself.
+  const missingDocumentTypes = documents
+    .filter((doc) => Boolean(doc.storageMissingAt))
+    .map((doc) => doc.documentType);
+
+  return {
+    ...rest,
+    hasMissingDocuments: missingDocumentTypes.length > 0,
+    missingDocumentTypes,
+    documents: documents.map(mapVehicleDocument),
+  };
 };
 
 export const getVehicle = async (

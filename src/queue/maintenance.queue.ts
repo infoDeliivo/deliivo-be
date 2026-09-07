@@ -11,6 +11,7 @@ import redis from '../cache/redis.js';
 import { PENDING_UPLOAD_PREFIX } from '../modules/uploads/uploads.constants.js';
 import { prisma } from '../config/index.js';
 import { createNotification } from '../modules/notification/notification.service.js';
+import { auditVehicleDocuments } from '../modules/vehicles/vehicle-document-audit.service.js';
 import { releaseSegmentSeats } from '../modules/ride-booking/segment-capacity.utils.js';
 
 const QUEUE_NAME = 'maintenance';
@@ -141,6 +142,21 @@ scheduleMaintenanceJob(
     {
         repeat: { pattern: '0 * * * *' }, // hourly
         jobId: 'abandoned-upload-report',
+        removeOnComplete: true,
+        removeOnFail: 50,
+    }
+);
+
+// Vehicle document audit: asks storage whether the file behind each saved document row is
+// actually there. The abandoned-upload report above sees only uploads that were never
+// confirmed; this catches the ones that were confirmed and still left us holding nothing.
+// Marks the row and tells the owner once, so they can re-add the vehicle.
+scheduleMaintenanceJob(
+    'vehicle-document-audit',
+    {},
+    {
+        repeat: { pattern: '30 4 * * *' }, // 04:30 UTC daily
+        jobId: 'vehicle-document-audit',
         removeOnComplete: true,
         removeOnFail: 50,
     }
@@ -720,6 +736,11 @@ export const maintenanceWorker = new Worker(
 
         if (job.name === 'abandoned-upload-report') {
             await runAbandonedUploadReport();
+            return;
+        }
+
+        if (job.name === 'vehicle-document-audit') {
+            await auditVehicleDocuments();
             return;
         }
 

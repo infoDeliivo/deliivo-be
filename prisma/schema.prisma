@@ -210,6 +210,11 @@ model Vehicle {
   reviewedAt         DateTime?
   reviewedById       String?
 
+  // When the owner was last told that a document of theirs never reached storage. Guards the
+  // message so the audit does not repeat itself every night; cleared once the vehicle recovers,
+  // so a fresh breakage is announced again.
+  documentIssueNotifiedAt DateTime?
+
   documents VehicleDocument[]
   rides     Ride[]
 
@@ -229,9 +234,18 @@ model VehicleDocument {
   imageKey     String?
   documentType DocumentType
 
+  // Set when a HEAD against storage returned a definitive 404 — the row survived but the file
+  // never arrived, or was removed under us. Null means "believed present": either the last check
+  // found the object, or the row has never been checked (see storageCheckedAt).
+  storageMissingAt DateTime?
+  // When the audit last reached a verdict on this row. Null rows are checked first.
+  storageCheckedAt DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([vehicleId])
+  @@index([storageMissingAt])
+  @@index([storageCheckedAt])
 }
 
 model RefreshToken {
