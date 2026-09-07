@@ -8,6 +8,8 @@ import {
 } from './vehicle.types.js';
 import { DocumentType, VehicleVerificationStatus } from '@prisma/client';
 import { isPrivateDocumentType } from './vehicle-documents.util.js';
+import { headObject, keyFromPublicUrl } from '../../services/s3.service.js';
+import { logError, logInfo } from '../../utils/logger.js';
 import { hasDlDocumentOnFile } from '../dl-verification/dl-review.service.js';
 import {
     REQUIRED_DOCUMENT_TYPES,
@@ -37,7 +39,10 @@ export const formatDraftResponse = (draft: DraftVehicle) => {
 //  CONSTANTS
 // ============================================================
 
-const DRAFT_TTL = 300; // 5 minutes
+// Long enough for a driver to photograph five documents on a phone. At 5 minutes the
+// draft expired between two uploads and the flow died with DRAFT_NOT_FOUND. Every write
+// refreshes the TTL, so this only bounds the idle gap between steps.
+const DRAFT_TTL = 30 * 60; // 30 minutes
 
 // ============================================================
 //  CACHE KEY HELPER
@@ -158,6 +163,39 @@ export const addDocument = async (
 
 const MAX_VEHICLES_PER_USER = 1;
 
+/**
+ * Confirm every document on the draft actually exists in storage.
+ *
+ * Uploading is four calls (presign -> PUT -> confirm -> attach). If the client dies
+ * between the PUT and the confirm, the object stays under tmp/ and the lifecycle rule
+ * deletes it, yet the draft can still carry the document if a later attach succeeded —
+ * producing a saved vehicle whose image URL points at nothing. This is the last place
+ * that can catch it before the vehicle reaches the database.
+ *
+ * Only a definitive 404 counts as missing. headObject throws on any other storage error
+ * (and always in local-disk mode, where there is no bucket), and a storage blip must not
+ * block a driver from saving a vehicle whose documents are fine.
+ */
+const findMissingDocumentObjects = async (documents: DraftDocument[]): Promise<DocumentType[]> => {
+    const missing: DocumentType[] = [];
+
+    for (const doc of documents) {
+        const key = doc.imageKey || (doc.imageUrl ? keyFromPublicUrl(doc.imageUrl) : null);
+        if (!key) continue; // Nothing to check against — the draft holds no locator.
+        try {
+            const head = await headObject(key);
+            if (!head.exists) missing.push(doc.documentType);
+        } catch (error) {
+            logError('Could not verify draft document object; allowing save', error, {
+                documentType: doc.documentType,
+                key,
+            });
+        }
+    }
+
+    return missing;
+};
+
 const shouldAutoVerifyVehicle = () => process.env.SKIP_VEHICLE_VERIFICATION === 'true';
 
 export const saveVehicle = async (userId: string) => {
@@ -205,6 +243,15 @@ export const saveVehicle = async (userId: string) => {
         isPrimaryImageDocumentType(d.documentType),
     );
     const mainImageUrl = vehicleImage?.imageUrl || null;
+
+    const missingObjects = await findMissingDocumentObjects(draft.documents || []);
+    if (missingObjects.length > 0) {
+        logInfo('Blocking vehicle save: draft documents missing from storage', {
+            userId,
+            missing: missingObjects,
+        });
+        throw new Error(`VEHICLE_DOCUMENT_MISSING:${missingObjects.join(',')}`);
+    }
 
     // A vehicle starts PENDING and waits for an admin decision, unless the dev bypass
     // flag auto-approves it.

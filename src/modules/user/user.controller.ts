@@ -15,6 +15,7 @@ import {
 } from './user.service.js';
 import { reportUser, blockUser, unblockUser, listBlockedUsers } from './user-safety.service.js';
 import { exportUserData, deleteUserAccount } from './user-gdpr.service.js';
+import { setPreferredLocale } from './user-locale.service.js';
 
 // Cache TTL constants
 const PROFILE_CACHE_TTL = 300; // 5 minutes
@@ -394,5 +395,38 @@ export const deleteAccount = async (req: AuthRequest, res: Response) => {
     return sendSuccess(res, { message: 'Account deleted. Your personal data has been removed.', data: result });
   } catch {
     return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to delete account' });
+  }
+};
+
+// ====================== UPDATE PREFERRED LOCALE ======================
+/**
+ * PATCH /api/v1/users/me/locale
+ *
+ * Called by the language switcher so the change lands immediately instead of waiting for the
+ * user's next request. Authenticated requests also sync this passively; this is the explicit path.
+ */
+export const updateLocale = async (req: AuthRequest, res: Response) => {
+  try {
+    const stored = await setPreferredLocale(req.user.id, req.body.locale);
+
+    if (!stored) {
+      return sendError(res, {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Unsupported language',
+      });
+    }
+
+    return sendSuccess(res, {
+      status: HttpStatus.OK,
+      message: 'Language updated',
+      data: { preferredLocale: stored },
+    });
+  } catch (error) {
+    logError('updateLocale controller error', error);
+    return sendError(res, {
+      status: HttpStatus.INTERNAL_ERROR,
+      message: 'Server error',
+      error,
+    });
   }
 };

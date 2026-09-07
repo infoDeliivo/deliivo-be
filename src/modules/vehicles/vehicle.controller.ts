@@ -293,6 +293,7 @@ export const saveVehicleFromDraft = async (req: AuthRequest, res: Response) => {
       LICENSE_REQUIRED: HttpStatus.BAD_REQUEST,
       MAX_VEHICLE_LIMIT_REACHED: HttpStatus.CONFLICT,
       VEHICLE_DOCUMENTS_REQUIRED: HttpStatus.BAD_REQUEST,
+      VEHICLE_DOCUMENT_MISSING: HttpStatus.BAD_REQUEST,
       DL_DOCUMENT_REQUIRED: HttpStatus.BAD_REQUEST,
     };
     const messageMap: Record<string, string> = {
@@ -303,18 +304,23 @@ export const saveVehicleFromDraft = async (req: AuthRequest, res: Response) => {
       DL_DOCUMENT_REQUIRED: 'Upload a photo of your driving licence before adding a vehicle',
     };
 
-    // VEHICLE_DOCUMENTS_REQUIRED carries the missing types after a colon so the app can
-    // tell the driver exactly what is still outstanding.
+    // Both document errors carry the affected types after a colon so the app can tell
+    // the driver exactly what is outstanding. They mean different things:
+    // VEHICLE_DOCUMENTS_REQUIRED = never supplied; VEHICLE_DOCUMENT_MISSING = supplied,
+    // but the file is not in storage, so the upload died part-way and must be redone.
     const [code, detail] = String(error.message).split(':');
-    const missingDocuments = code === 'VEHICLE_DOCUMENTS_REQUIRED' && detail
-      ? detail.split(',')
-      : null;
+    const documentTypes = detail ? detail.split(',') : null;
+
+    let message = messageMap[code] || 'Failed to save vehicle';
+    if (code === 'VEHICLE_DOCUMENTS_REQUIRED' && documentTypes) {
+      message = `Missing required vehicle documents: ${documentTypes.join(', ')}`;
+    } else if (code === 'VEHICLE_DOCUMENT_MISSING' && documentTypes) {
+      message = `These documents did not finish uploading — please upload them again: ${documentTypes.join(', ')}`;
+    }
 
     return sendError(res, {
       status: statusMap[code] || HttpStatus.INTERNAL_ERROR,
-      message: missingDocuments
-        ? `Missing required vehicle documents: ${missingDocuments.join(', ')}`
-        : messageMap[code] || 'Failed to save vehicle',
+      message,
     });
   }
 };

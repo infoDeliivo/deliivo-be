@@ -25,6 +25,10 @@ import {
   resetOtpSmsTemplate,
 } from '../sms/index.js';
 import { cacheKeys, deleteCache } from '../../services/cache.service.js';
+import { resolveRequestLocale } from '../../utils/locale.js';
+import { syncPreferredLocale } from '../user/user-locale.service.js';
+import { syncDetectedCountry } from '../user/user-geo.service.js';
+import { getClientIpForGeo } from '../../utils/geoip.js';
 
 type OtpPurpose = 'signup' | 'login' | 'reset_password';
 
@@ -56,7 +60,11 @@ const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
 
 export const googleAuth = async (req: Request, res: Response) => {
   try {
-    const result = await googleAuthService(req.body.idToken);
+    const locale = resolveRequestLocale(req.body.locale, req.header('accept-language'));
+    const result = await googleAuthService(req.body.idToken, locale);
+    // Same reason as the OTP path: a Google sign-in is public, so the country has to be recorded
+    // where the user first becomes known.
+    await syncDetectedCountry(result.user.id, getClientIpForGeo(req));
     return sendSuccess(res, {
       message: 'Google authentication successful',
       data: {
@@ -113,6 +121,7 @@ export const signup = async (req: Request, res: Response) => {
       method: 'email' | 'phone';
       email?: string;
       phone?: string;
+      locale?: string;
     };
     const rawIdentifier = method === 'email' ? email : phone;
 
@@ -124,7 +133,9 @@ export const signup = async (req: Request, res: Response) => {
     }
     const identifier = normalizeAuthIdentifier(method, rawIdentifier);
 
-    const result = await signupService(method, identifier);
+    const locale = resolveRequestLocale(req.body.locale, req.header('accept-language'));
+
+    const result = await signupService(method, identifier, locale);
     if (result.success === false) {
       return sendError(res, {
         message: result.reason || 'Failed to create user',
@@ -268,6 +279,12 @@ export const verifyOtpCont = async (req: Request, res: Response) => {
     }
 
     if ('tokens' in result && result.user && result.success) {
+      // Signing in is the first moment we know who the caller is, and this route is public, so
+      // `learnRequestContext` cannot see them. Record the country here or an admin sees nothing
+      // until the app happens to make its next authenticated call. Failure is swallowed inside
+      // the service — learning nothing must never cost someone their login.
+      await syncDetectedCountry(result.user.id, getClientIpForGeo(req));
+
       // Small delay to ensure response is fully ready (prevents HTTP/2 stream resets)
       await new Promise(resolve => setTimeout(resolve, 20));
       
@@ -363,6 +380,15 @@ export const refreshToken = async (req: Request, res: Response) => {
         message: tokens.reason || 'Invalid refresh token',
       });
     }
+
+    // A silent renewal is the one request an otherwise idle session makes, and this route is
+    // public, so `learnRequestLocale` cannot see who is calling. Follow the language here.
+    if ('userId' in tokens) {
+      await syncPreferredLocale(tokens.userId, req.headers['accept-language'], req.body.locale);
+      // A session that moved country since the last renewal shows up here first.
+      await syncDetectedCountry(tokens.userId, getClientIpForGeo(req));
+    }
+
     return sendSuccess(res, { data: tokens.tokens });
   } catch (err) {
     logError('Refresh token error', err);

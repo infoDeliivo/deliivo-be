@@ -7,6 +7,8 @@ import { resolveStorageTarget } from '../config/s3.config.js';
 import { TMP_PREFIX } from '../services/s3.service.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { bullRedis } from './redisConnection.js';
+import redis from '../cache/redis.js';
+import { PENDING_UPLOAD_PREFIX } from '../modules/uploads/uploads.constants.js';
 import { prisma } from '../config/index.js';
 import { createNotification } from '../modules/notification/notification.service.js';
 import { releaseSegmentSeats } from '../modules/ride-booking/segment-capacity.utils.js';
@@ -125,6 +127,20 @@ scheduleMaintenanceJob(
     {
         repeat: { pattern: '30 2 * * *' }, // 02:30 UTC daily
         jobId: 'tmp-upload-sweep',
+        removeOnComplete: true,
+        removeOnFail: 50,
+    }
+);
+
+// Abandoned-upload report: counts presigned uploads that were never confirmed. Each one
+// is a file the user believes they uploaded and that never reached permanent storage.
+// Diagnostics only — it reports, it never deletes (the tmp/ lifecycle rule does that).
+scheduleMaintenanceJob(
+    'abandoned-upload-report',
+    {},
+    {
+        repeat: { pattern: '0 * * * *' }, // hourly
+        jobId: 'abandoned-upload-report',
         removeOnComplete: true,
         removeOnFail: 50,
     }
@@ -591,6 +607,65 @@ export const runTmpUploadSweep = async () => {
     return { swept, skipped: false };
 };
 
+/** How many stranded entries to name individually in the log line. */
+const ABANDONED_SAMPLE_SIZE = 20;
+
+interface PendingUploadEntry {
+    userId?: string;
+    target?: string;
+    requestId?: string;
+    presignedAt?: string;
+}
+
+/**
+ * Report presigned uploads that were never confirmed.
+ *
+ * getPresign writes a `pendingUpload:<tmpKey>` entry and confirmUpload deletes it once
+ * the object is promoted, so anything still present is an upload the client started and
+ * abandoned — the file never left tmp/ and the user's document is silently missing.
+ *
+ * The count per target is the metric: it should fall to ~0 once the client retries and
+ * reports failures properly. The sample gives concrete users and request ids to chase in
+ * the HTTP logs, where an interrupted request shows up as `event: 'close'`.
+ */
+export const runAbandonedUploadReport = async () => {
+    const byTarget: Record<string, number> = {};
+    const sample: Array<{ key: string } & PendingUploadEntry> = [];
+    let total = 0;
+
+    // SCAN, not KEYS: this runs against the shared production Redis and must not block it.
+    let cursor = '0';
+    do {
+        const [next, keys] = await redis.scan(
+            cursor,
+            'MATCH',
+            `${PENDING_UPLOAD_PREFIX}*`,
+            'COUNT',
+            200,
+        );
+        cursor = next;
+
+        for (const redisKey of keys) {
+            total++;
+            let entry: PendingUploadEntry = {};
+            try {
+                const raw = await redis.get(redisKey);
+                if (raw) entry = JSON.parse(raw) as PendingUploadEntry;
+            } catch {
+                // A malformed or already-expired entry still counts as abandoned.
+            }
+            const target = entry.target || 'unknown';
+            byTarget[target] = (byTarget[target] || 0) + 1;
+            if (sample.length < ABANDONED_SAMPLE_SIZE) {
+                sample.push({ key: redisKey.slice(PENDING_UPLOAD_PREFIX.length), ...entry });
+            }
+        }
+    } while (cursor !== '0');
+
+    logInfo('Abandoned upload report', { total, byTarget, sample });
+    return { total, byTarget, sample };
+};
+
 export const maintenanceWorker = new Worker(
     QUEUE_NAME,
     async (job: any) => {
@@ -640,6 +715,11 @@ export const maintenanceWorker = new Worker(
 
         if (job.name === 'tmp-upload-sweep') {
             await runTmpUploadSweep();
+            return;
+        }
+
+        if (job.name === 'abandoned-upload-report') {
+            await runAbandonedUploadReport();
             return;
         }
 

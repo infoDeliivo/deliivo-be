@@ -20,7 +20,8 @@ const mockIsOtpValid = jest.fn();
 
 jest.mock('../../config/index.js', () => ({
     __esModule: true,
-    prisma: mockPrisma,
+    // withPrismaFallback: unlisted models/methods resolve empty instead of throwing.
+    prisma: require('../../test-utils/prisma-mock.js').withPrismaFallback(mockPrisma),
 }));
 
 jest.mock('../notification/notification.service.js', () => ({
@@ -75,6 +76,9 @@ describe('driver booking service', () => {
                 driverId: 'driver-1',
                 originAddress: 'Mathura',
                 destinationAddress: 'Delhi',
+                // Accept/reject notifications include the departure, so both fields must be present.
+                departureDate: new Date('2026-09-01T00:00:00.000Z'),
+                departureTime: '09:00',
                 driver: { id: 'driver-1', name: 'Driver', avatarUrl: null, dlVerified: true },
                 waypoints: [],
             },
@@ -128,6 +132,8 @@ describe('driver booking service', () => {
                 driverId: 'driver-2',
                 originAddress: 'A',
                 destinationAddress: 'B',
+                departureDate: new Date('2026-09-01T00:00:00.000Z'),
+                departureTime: '09:00',
                 waypoints: [],
             },
         });
@@ -182,6 +188,8 @@ describe('driver booking service', () => {
                 driverId: 'driver-3',
                 originAddress: 'A',
                 destinationAddress: 'B',
+                departureDate: new Date('2026-09-01T00:00:00.000Z'),
+                departureTime: '09:00',
                 waypoints: [],
             },
         });
@@ -223,6 +231,8 @@ describe('driver booking service', () => {
                 driverId: 'driver-4',
                 originAddress: 'A',
                 destinationAddress: 'B',
+                departureDate: new Date('2026-09-01T00:00:00.000Z'),
+                departureTime: '09:00',
                 waypoints: [],
             },
         });
@@ -257,7 +267,7 @@ describe('driver booking service', () => {
             stripePaymentIntentId: null,
             driverDecisionDeadlineAt: new Date(Date.now() + 60_000),
             passenger: { id: 'passenger-2', name: 'Rider', avatarUrl: null },
-            ride: { id: 'ride-2', driverId: 'driver-2', originAddress: 'A', destinationAddress: 'B', waypoints: [] },
+            ride: { id: 'ride-2', driverId: 'driver-2', originAddress: 'A', destinationAddress: 'B', departureDate: new Date('2026-09-01T00:00:00.000Z'), departureTime: '09:00', waypoints: [] },
         });
 
         const tx = {
@@ -307,7 +317,7 @@ describe('driver booking service', () => {
             totalPrice: 900,
             stripePaymentIntentId: null,
             passenger: { id: 'passenger-3', name: 'Rider', avatarUrl: null },
-            ride: { id: 'ride-3', driverId: 'driver-3', originAddress: 'A', destinationAddress: 'B', waypoints: [] },
+            ride: { id: 'ride-3', driverId: 'driver-3', originAddress: 'A', destinationAddress: 'B', departureDate: new Date('2026-09-01T00:00:00.000Z'), departureTime: '09:00', waypoints: [] },
         });
 
         const tx = {

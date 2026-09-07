@@ -35,6 +35,9 @@ services:
       dockerfile: Dockerfile
       args:
         DATABASE_URL: ${DATABASE_URL:-postgresql://deliivo:deliivo_secret@postgres:5432/deliivo}
+        # Refreshes the GeoLite2 country tables during the build. Consumed by the throwaway `geoip`
+        # stage so it reaches no layer of the final image. Empty is fine — see the Dockerfile.
+        MAXMIND_LICENSE_KEY: ${MAXMIND_LICENSE_KEY:-}
     restart: unless-stopped
     env_file:
       - .env

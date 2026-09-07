@@ -106,8 +106,8 @@ let rides: InMemoryRide[] = [];
 let bookings: InMemoryBooking[] = [];
 let segmentCapacities: InMemorySegmentCapacity[] = [];
 let waypoints: InMemoryWaypoint[] = [];
-let users: Array<{ id: string; name: string; avatarUrl: string | null; tosAcceptedAt: Date | null; isBanned: boolean; dlVerified: boolean; salutation: string | null; gender: string | null }> = [];
-let vehicles: Array<{ id: string; userId: string; deletedAt: null }> = [];
+let users: Array<{ id: string; name: string; avatarUrl: string | null; tosAcceptedAt: Date | null; privacyAcceptedAt: Date | null; dob: Date; isBanned: boolean; dlVerified: boolean; salutation: string | null; gender: string | null; stripeOnboardingComplete: boolean }> = [];
+let vehicles: Array<{ id: string; userId: string; deletedAt: null; verificationStatus: string; rejectionReason: string | null }> = [];
 let blocks: Array<{ blockerId: string; blockedId: string }> = [];
 let draftStore: Record<string, string> = {};
 
@@ -119,14 +119,14 @@ const resetState = () => {
     blocks = [];
     draftStore = {};
     users = [
-        { id: 'driver-1', name: 'Alice Driver', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: true, salutation: 'MS', gender: 'FEMALE' },
-        { id: 'passenger-1', name: 'Bob Rider', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE' },
-        { id: 'passenger-2', name: 'Carol Rider', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: false, salutation: 'MS', gender: 'FEMALE' },
-        { id: 'passenger-banned', name: 'Banned User', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: true, dlVerified: false, salutation: 'MR', gender: 'MALE' },
-        { id: 'passenger-no-tos', name: 'No TOS', avatarUrl: null, tosAcceptedAt: null, isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE' },
+        { id: 'driver-1', name: 'Alice Driver', avatarUrl: null, tosAcceptedAt: new Date(), privacyAcceptedAt: new Date(), dob: new Date('1990-01-01T00:00:00.000Z'), isBanned: false, dlVerified: true, salutation: 'MS', gender: 'FEMALE', stripeOnboardingComplete: true },
+        { id: 'passenger-1', name: 'Bob Rider', avatarUrl: null, tosAcceptedAt: new Date(), privacyAcceptedAt: new Date(), dob: new Date('1990-01-01T00:00:00.000Z'), isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE', stripeOnboardingComplete: false },
+        { id: 'passenger-2', name: 'Carol Rider', avatarUrl: null, tosAcceptedAt: new Date(), privacyAcceptedAt: new Date(), dob: new Date('1990-01-01T00:00:00.000Z'), isBanned: false, dlVerified: false, salutation: 'MS', gender: 'FEMALE', stripeOnboardingComplete: false },
+        { id: 'passenger-banned', name: 'Banned User', avatarUrl: null, tosAcceptedAt: new Date(), privacyAcceptedAt: new Date(), dob: new Date('1990-01-01T00:00:00.000Z'), isBanned: true, dlVerified: false, salutation: 'MR', gender: 'MALE', stripeOnboardingComplete: false },
+        { id: 'passenger-no-tos', name: 'No TOS', avatarUrl: null, tosAcceptedAt: null, privacyAcceptedAt: null, dob: new Date('1990-01-01T00:00:00.000Z'), isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE', stripeOnboardingComplete: false },
     ];
     vehicles = [
-        { id: 'vehicle-1', userId: 'driver-1', deletedAt: null },
+        { id: 'vehicle-1', userId: 'driver-1', deletedAt: null, verificationStatus: 'APPROVED', rejectionReason: null },
     ];
 };
 
@@ -475,7 +475,20 @@ jest.mock('../../cache/redis.js', () => ({
 
 jest.mock('../../config/index.js', () => ({
     __esModule: true,
-    prisma: mockPrisma,
+    // withPrismaFallback: unlisted models/methods resolve empty instead of throwing.
+    prisma: require('../../test-utils/prisma-mock.js').withPrismaFallback(mockPrisma),
+}));
+
+// Publishing validates that the origin sits in the Baltics and the destination in Europe by
+// asking Google for each place's country. Without this the real HTTP call fails and every
+// publish in this suite dies as LOCATION_COUNTRY_UNVERIFIED.
+jest.mock('../maps/google.service.js', () => ({
+    __esModule: true,
+    googleService: {
+        placeDetails: jest.fn(async () => ({
+            address_components: [{ types: ['country'], short_name: 'LV', long_name: 'Latvia' }],
+        })),
+    },
 }));
 
 jest.mock('../notification/notification.service.js', () => ({
@@ -522,8 +535,29 @@ jest.mock('../payments/payment.service.js', () => ({
 //  IMPORTS (after mocks)
 // ============================================================
 
+import polyline from '@mapbox/polyline';
 import * as DraftRideService from '../publish-ride/draft-ride.service';
-import { createBooking, cancelBooking } from '../ride-booking/ride-booking.service';
+import { createBooking as createBookingRaw, cancelBooking } from '../ride-booking/ride-booking.service';
+
+/**
+ * Every published ride now carries pickup/dropoff meeting points, and a booking must name one at
+ * each end or it is rejected as PICKUP_POINT_REQUIRED / DROPOFF_POINT_REQUIRED. Tests that target
+ * a specific segment still pass those ids explicitly; everything else defaults to the ride's
+ * origin pickup and destination dropoff, which is the full-route booking these tests assume.
+ */
+const createBooking = (
+    passengerId: string,
+    input: Parameters<typeof createBookingRaw>[1],
+) => {
+    const rideWaypoints = waypoints.filter((w: any) => w.rideId === input.rideId);
+    const pickup = rideWaypoints.find((w: any) => w.waypointType === 'PICKUP');
+    const dropoff = rideWaypoints.find((w: any) => w.waypointType === 'DROPOFF');
+    return createBookingRaw(passengerId, {
+        ...input,
+        pickupWaypointId: input.pickupWaypointId ?? pickup?.id,
+        dropoffWaypointId: input.dropoffWaypointId ?? dropoff?.id,
+    });
+};
 import { acceptBooking, rejectBooking, cancelAfterAccept, verifyPickupOtp } from '../driver-booking/driver-booking.service';
 
 // ============================================================
@@ -531,6 +565,15 @@ import { acceptBooking, rejectBooking, cancelAfterAccept, verifyPickupOtp } from
 // ============================================================
 
 const DRAFT_KEY = 'rideDraft:driver-1';
+
+// London Victoria → Gatwick → Crawley → Brighton. Encoded for real: publishing measures every
+// meeting point and stopover against the decoded route, so a placeholder string fails the check.
+const ROUTE_POLYLINE = polyline.encode([
+    [51.495, -0.144],
+    [51.148, -0.190],
+    [51.109, -0.187],
+    [50.829, -0.141],
+]);
 
 const buildCompleteDraft = (overrides: Record<string, any> = {}) => ({
     userId: 'driver-1',
@@ -545,7 +588,7 @@ const buildCompleteDraft = (overrides: Record<string, any> = {}) => ({
     destinationAddress: 'Brighton Station',
     destinationLat: 50.829,
     destinationLng: -0.141,
-    routePolyline: 'encoded-polyline-data',
+    routePolyline: ROUTE_POLYLINE,
     routeDistanceMeters: 85000,
     routeDurationSeconds: 5400,
     // Relative to now: publishing rejects a departure less than three hours away, so a fixed
@@ -567,8 +610,9 @@ const buildCompleteDraft = (overrides: Record<string, any> = {}) => ({
         'place-gatwick': 12,
         'place-crawley': 22,
     },
-    pickups: [],
-    dropoffs: [],
+    // Publishing requires at least one meeting point at each end.
+    pickups: [{ placeId: 'place-origin-pickup', address: 'London Victoria', lat: 51.495, lng: -0.144 }],
+    dropoffs: [{ placeId: 'place-dest-dropoff', address: 'Brighton Station', lat: 50.829, lng: -0.141 }],
     ...overrides,
 });
 
@@ -606,11 +650,11 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             const rideWaypoints = waypoints.filter(w => w.rideId === rides[0].id);
             expect(rideWaypoints.filter(w => w.waypointType === 'STOPOVER')).toHaveLength(2);
 
-            // Segment capacity edges created (2 stopovers = 3 edges)
+            // Segment capacity edges: 1 pickup + 2 stopovers + 1 dropoff = 4 waypoints = 5 edges
             const rideEdges = segmentCapacities.filter(sc => sc.rideId === rides[0].id);
-            expect(rideEdges).toHaveLength(3);
+            expect(rideEdges).toHaveLength(5);
             expect(rideEdges.map(e => [e.fromPosition, e.toPosition])).toEqual([
-                [0, 1], [1, 2], [2, 3],
+                [0, 1], [1, 2], [2, 3], [3, 4], [4, 5],
             ]);
             expect(rideEdges.every(e => e.occupiedSeats === 0)).toBe(true);
 
@@ -637,13 +681,17 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             expect(booking.status).toBe('DRIVER_PENDING');
             expect(booking.totalPrice).toBe(18);
             expect(booking.pickupWaypointId).toBe(gatwickWp.id);
-            expect(booking.dropoffWaypointId).toBeNull();
+            // Riding to the end of the route means the destination meeting point, not "no dropoff":
+            // a booking must always name one now.
+            const dropoffPoint = waypoints.find(w => w.rideId === rideId && w.waypointType === 'DROPOFF')!;
+            expect(booking.dropoffWaypointId).toBe(dropoffPoint.id);
 
-            // Segment capacity updated: edges 1→2 and 2→3 should have 1 occupied
+            // Positions: 0 origin, 1 pickup point, 2 gatwick, 3 crawley, 4 dropoff point.
+            // Boarding at Gatwick leaves everything before it free and takes everything after.
             const edges = segmentCapacities.filter(sc => sc.rideId === rideId);
-            expect(edges.find(e => e.fromPosition === 0)!.occupiedSeats).toBe(0); // origin→gatwick unaffected
-            expect(edges.find(e => e.fromPosition === 1)!.occupiedSeats).toBe(1); // gatwick→crawley
-            expect(edges.find(e => e.fromPosition === 2)!.occupiedSeats).toBe(1); // crawley→destination
+            expect(edges.find(e => e.fromPosition === 1)!.occupiedSeats).toBe(0); // pickup point→gatwick unaffected
+            expect(edges.find(e => e.fromPosition === 2)!.occupiedSeats).toBe(1); // gatwick→crawley
+            expect(edges.find(e => e.fromPosition === 3)!.occupiedSeats).toBe(1); // crawley→dropoff point
 
             // Driver notified
             expect(mockCreateNotification).toHaveBeenCalledWith(
@@ -991,15 +1039,16 @@ describe('Integration: Publish → Book → Driver Actions', () => {
                 pickupWaypointId: gatwickWp.id,
             });
 
-            // Edges 1→2, 2→3 should have 2 occupied
-            expect(segmentCapacities.find(e => e.fromPosition === 1)!.occupiedSeats).toBe(2);
+            // Booked from Gatwick to the destination dropoff point, so every edge it spans is taken.
+            const bookedSpan = () => segmentCapacities.filter(e =>
+                e.fromPosition >= bookings[0].pickupPosition! && e.toPosition <= bookings[0].dropoffPosition!);
+            expect(bookedSpan().every(e => e.occupiedSeats === 2)).toBe(true);
 
             bookings[0].driverDecisionDeadlineAt = new Date(Date.now() + 60_000);
             await rejectBooking('driver-1', bookings[0].id, 'not available');
 
             // Seats released
-            expect(segmentCapacities.find(e => e.fromPosition === 1)!.occupiedSeats).toBe(0);
-            expect(segmentCapacities.find(e => e.fromPosition === 2)!.occupiedSeats).toBe(0);
+            expect(bookedSpan().every(e => e.occupiedSeats === 0)).toBe(true);
             expect(rides[0].availableSeats).toBe(3);
 
             // Notification sent to passenger
@@ -1017,8 +1066,10 @@ describe('Integration: Publish → Book → Driver Actions', () => {
                 seatsBooked: 1,
             });
 
-            // All edges should have 1 occupied (full route)
-            expect(segmentCapacities.every(e => e.occupiedSeats === 1)).toBe(true);
+            // Every edge between the pickup and dropoff meeting points is occupied.
+            const bookedSpan = () => segmentCapacities.filter(e =>
+                e.fromPosition >= bookings[0].pickupPosition! && e.toPosition <= bookings[0].dropoffPosition!);
+            expect(bookedSpan().every(e => e.occupiedSeats === 1)).toBe(true);
 
             const result = await cancelBooking('passenger-1', bookings[0].id);
 
@@ -1164,20 +1215,21 @@ describe('Integration: Publish → Book → Driver Actions', () => {
 
             // P2: origin → gatwick, 2 seats → edge 0→1 gets +2
             // (Need a third user)
-            users.push({ id: 'passenger-3', name: 'Dave', avatarUrl: null, tosAcceptedAt: new Date(), isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE' });
+            users.push({ id: 'passenger-3', name: 'Dave', avatarUrl: null, tosAcceptedAt: new Date(), privacyAcceptedAt: new Date(), dob: new Date('1990-01-01T00:00:00.000Z'), isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE', stripeOnboardingComplete: false });
             await createBooking('passenger-2', { rideId, seatsBooked: 2, dropoffWaypointId: gatwickWp.id });
 
-            // Edge 0→1: 1 + 2 = 3 (full!)
-            expect(segmentCapacities.find(e => e.fromPosition === 0)!.occupiedSeats).toBe(3);
-            // Edge 1→2: 1 (only P1)
-            expect(segmentCapacities.find(e => e.fromPosition === 1)!.occupiedSeats).toBe(1);
-            // Edge 2→3: 1 (only P1)
+            // Positions: 0 origin, 1 pickup point, 2 gatwick, 3 crawley, 4 dropoff point, 5 destination.
+            // Edge 1→2 (pickup point → gatwick): 1 + 2 = 3 (full!)
+            expect(segmentCapacities.find(e => e.fromPosition === 1)!.occupiedSeats).toBe(3);
+            // Edge 2→3 (gatwick → crawley): 1 (only P1)
             expect(segmentCapacities.find(e => e.fromPosition === 2)!.occupiedSeats).toBe(1);
+            // Edge 3→4 (crawley → dropoff point): 1 (only P1)
+            expect(segmentCapacities.find(e => e.fromPosition === 3)!.occupiedSeats).toBe(1);
 
-            // P3: crawley → destination, 2 seats should succeed (edge 2→3 has only 1)
+            // P3: crawley → destination, 2 seats should succeed (edge 3→4 has only 1)
             await createBooking('passenger-3', { rideId, seatsBooked: 2, pickupWaypointId: crawleyWp.id });
 
-            expect(segmentCapacities.find(e => e.fromPosition === 2)!.occupiedSeats).toBe(3);
+            expect(segmentCapacities.find(e => e.fromPosition === 3)!.occupiedSeats).toBe(3);
             expect(rides[0].availableSeats).toBe(0);
         });
 
@@ -1230,7 +1282,7 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             expect(booking.dropoffPosition).toBe(2);
         });
 
-        it('stores positions 0 and 3 for full-route booking', async () => {
+        it('stores the pickup and dropoff meeting-point positions for a full-route booking', async () => {
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft());
             await DraftRideService.publishRide('driver-1');
 
@@ -1240,8 +1292,9 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             });
 
             const booking = bookings[0];
-            expect(booking.pickupPosition).toBe(0);
-            expect(booking.dropoffPosition).toBe(3);
+            // Position 0 is the origin itself; the pickup meeting point is the first waypoint.
+            expect(booking.pickupPosition).toBe(1);
+            expect(booking.dropoffPosition).toBe(4);
             expect(booking.pickupAddress).toBe('London Victoria');
             expect(booking.dropoffAddress).toBe('Brighton Station');
             expect(booking.segmentFare).toBe(30);
@@ -1253,18 +1306,19 @@ describe('Integration: Publish → Book → Driver Actions', () => {
     // =========================================
 
     describe('Ride without stopovers', () => {
-        it('publishes with single edge (0→1) and full-route booking works', async () => {
+        it('publishes with meeting-point edges only and full-route booking works', async () => {
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({
                 stopovers: [],
                 stopoverPricingByPlaceId: {},
             }));
             await DraftRideService.publishRide('driver-1');
 
-            // 0 stopovers = 1 edge
+            // No stopovers, but the two mandatory meeting points still split the route: 3 edges.
             const edges = segmentCapacities.filter(sc => sc.rideId === rides[0].id);
-            expect(edges).toHaveLength(1);
-            expect(edges[0].fromPosition).toBe(0);
-            expect(edges[0].toPosition).toBe(1);
+            expect(edges).toHaveLength(3);
+            expect(edges.map(e => [e.fromPosition, e.toPosition])).toEqual([
+                [0, 1], [1, 2], [2, 3],
+            ]);
 
             const booking = await createBooking('passenger-1', {
                 rideId: rides[0].id,
@@ -1272,7 +1326,8 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             });
 
             expect(booking.totalPrice).toBe(30);
-            expect(edges[0].occupiedSeats).toBe(1);
+            // The booking runs pickup(1) → dropoff(2), so that middle edge is the occupied one.
+            expect(edges.find(e => e.fromPosition === 1)!.occupiedSeats).toBe(1);
         });
     });
 });

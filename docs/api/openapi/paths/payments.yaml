@@ -98,13 +98,17 @@
                           "type": "boolean"
                         },
                         "disabledReason": {
-                          "type": "string",
-                          "nullable": true,
+                          "type": [
+                            "string",
+                            "null"
+                          ],
                           "example": "requirements.past_due"
                         },
                         "currentDeadline": {
-                          "type": "integer",
-                          "nullable": true,
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
                           "description": "Unix time by which currentlyDue must be satisfied."
                         },
                         "currentlyDue": {
@@ -156,28 +160,38 @@
                           "type": "boolean"
                         },
                         "externalAccount": {
-                          "type": "object",
-                          "nullable": true,
+                          "type": [
+                            "object",
+                            "null"
+                          ],
                           "description": "The payout bank account, masked. Full account numbers are never stored or returned.",
                           "properties": {
                             "id": {
                               "type": "string"
                             },
                             "bankName": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "last4": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "currency": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "country": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "defaultForCurrency": {
                               "type": "boolean"
@@ -201,7 +215,12 @@
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/api/v1/payments/connect/details": {
@@ -241,8 +260,10 @@
                     "format": "email"
                   },
                   "phone": {
-                    "type": "string",
-                    "nullable": true,
+                    "type": [
+                      "string",
+                      "null"
+                    ],
                     "pattern": "^\\+[1-9]\\d{6,14}$",
                     "description": "E.164 only. Omit rather than send a local format.",
                     "example": "+37255512345"
@@ -250,7 +271,7 @@
                   "dob": {
                     "type": "string",
                     "format": "date",
-                    "description": "YYYY-MM-DD. Must be at least 13 years ago \u2014 Stripe rejects younger account holders.",
+                    "description": "YYYY-MM-DD. Must be at least 13 years ago — Stripe rejects younger account holders.",
                     "example": "2000-03-04"
                   },
                   "address": {
@@ -266,8 +287,10 @@
                         "example": "12 Pikk"
                       },
                       "line2": {
-                        "type": "string",
-                        "nullable": true
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       },
                       "city": {
                         "type": "string",
@@ -278,8 +301,10 @@
                         "example": "10123"
                       },
                       "state": {
-                        "type": "string",
-                        "nullable": true
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       },
                       "country": {
                         "type": "string",
@@ -338,13 +363,17 @@
                           "type": "boolean"
                         },
                         "disabledReason": {
-                          "type": "string",
-                          "nullable": true,
+                          "type": [
+                            "string",
+                            "null"
+                          ],
                           "example": "requirements.past_due"
                         },
                         "currentDeadline": {
-                          "type": "integer",
-                          "nullable": true,
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
                           "description": "Unix time by which currentlyDue must be satisfied."
                         },
                         "currentlyDue": {
@@ -396,28 +425,38 @@
                           "type": "boolean"
                         },
                         "externalAccount": {
-                          "type": "object",
-                          "nullable": true,
+                          "type": [
+                            "object",
+                            "null"
+                          ],
                           "description": "The payout bank account, masked. Full account numbers are never stored or returned.",
                           "properties": {
                             "id": {
                               "type": "string"
                             },
                             "bankName": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "last4": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "currency": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "country": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "defaultForCurrency": {
                               "type": "boolean"
@@ -444,7 +483,12 @@
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/api/v1/payments/connect/bank-account": {
@@ -521,13 +565,17 @@
                           "type": "boolean"
                         },
                         "disabledReason": {
-                          "type": "string",
-                          "nullable": true,
+                          "type": [
+                            "string",
+                            "null"
+                          ],
                           "example": "requirements.past_due"
                         },
                         "currentDeadline": {
-                          "type": "integer",
-                          "nullable": true,
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
                           "description": "Unix time by which currentlyDue must be satisfied."
                         },
                         "currentlyDue": {
@@ -579,28 +627,38 @@
                           "type": "boolean"
                         },
                         "externalAccount": {
-                          "type": "object",
-                          "nullable": true,
+                          "type": [
+                            "object",
+                            "null"
+                          ],
                           "description": "The payout bank account, masked. Full account numbers are never stored or returned.",
                           "properties": {
                             "id": {
                               "type": "string"
                             },
                             "bankName": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "last4": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "currency": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "country": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "defaultForCurrency": {
                               "type": "boolean"
@@ -627,7 +685,12 @@
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/api/v1/payments/connect/account": {
@@ -685,14 +748,19 @@
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/api/v1/payments/connect/terms": {
       "post": {
         "operationId": "paymentsPostConnectTerms",
         "summary": "Record Stripe terms acceptance",
-        "description": "Records the driver's acceptance of Stripe's agreement together with the IP it was accepted from. Required on controller-based accounts \u2014 without it the account stays disabled however complete the details are.",
+        "description": "Records the driver's acceptance of Stripe's agreement together with the IP it was accepted from. Required on controller-based accounts — without it the account stays disabled however complete the details are.",
         "tags": [
           "Payments"
         ],
@@ -763,13 +831,17 @@
                           "type": "boolean"
                         },
                         "disabledReason": {
-                          "type": "string",
-                          "nullable": true,
+                          "type": [
+                            "string",
+                            "null"
+                          ],
                           "example": "requirements.past_due"
                         },
                         "currentDeadline": {
-                          "type": "integer",
-                          "nullable": true,
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
                           "description": "Unix time by which currentlyDue must be satisfied."
                         },
                         "currentlyDue": {
@@ -821,28 +893,38 @@
                           "type": "boolean"
                         },
                         "externalAccount": {
-                          "type": "object",
-                          "nullable": true,
+                          "type": [
+                            "object",
+                            "null"
+                          ],
                           "description": "The payout bank account, masked. Full account numbers are never stored or returned.",
                           "properties": {
                             "id": {
                               "type": "string"
                             },
                             "bankName": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "last4": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "currency": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "country": {
-                              "type": "string",
-                              "nullable": true
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             },
                             "defaultForCurrency": {
                               "type": "boolean"
@@ -869,7 +951,12 @@
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     }
   }

@@ -49,6 +49,69 @@
         }
       }
     },
+    "/api/v1/users/me/locale": {
+      "patch": {
+        "operationId": "usersUpdateMeLocale",
+        "summary": "PATCH users/me/locale",
+        "description": "Record the language the user just switched to. Called by the website's language switcher so the change lands immediately rather than waiting for the next request, where Accept-Language would carry it anyway. An unsupported language is rejected and nothing is stored.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "locale"
+                ],
+                "properties": {
+                  "locale": {
+                    "type": "string",
+                    "maxLength": 20,
+                    "description": "Language the site is being used in, e.g. `et`, `ru-RU`. Resolved to a supported language (en/et/lv/lt/ru); anything else is rejected.",
+                    "example": "et"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Language updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
     "/api/v1/users/me/profile": {
       "get": {
         "operationId": "usersGetMeProfile",

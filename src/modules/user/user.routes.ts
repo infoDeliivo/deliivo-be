@@ -11,6 +11,13 @@ const router = express.Router();
 // Get basic user info
 router.get('/me', userController.getMe as unknown as express.RequestHandler);
 
+// Record a language change the moment the switcher fires
+router.patch(
+  '/me/locale',
+  validate({ body: schemas.updateLocaleSchema }),
+  userController.updateLocale as unknown as express.RequestHandler,
+);
+
 // Update basic profile (firstName, lastName, salutation, etc.)
 router.put('/me', userController.updateProfile as unknown as express.RequestHandler);
 

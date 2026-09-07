@@ -103,6 +103,15 @@ model User {
   avatarUrl String?
   avatarKey String?
 
+  // Language the user picked on the website, captured at signup. Null = never learned.
+  preferredLocale String? @db.VarChar(10)
+
+  // Where the user appears to connect from, derived from the request IP: city and country in one
+  // readable string, "New Delhi, IN", or bare "IN" when the offline table names no city — which
+  // is common, and means "city not known" rather than "no city". Despite the name this is no
+  // longer an ISO-3166 code; read the last comma-separated segment for the country alone.
+  detectedCountry String? @db.VarChar(120)
+
   role             UserRole         @default(USER)
   isBanned         Boolean          @default(false)
 

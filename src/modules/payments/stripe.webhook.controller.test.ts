@@ -15,7 +15,8 @@ const mockConstructStripeEvent = jest.fn();
 
 jest.mock('../../config/index.js', () => ({
     __esModule: true,
-    prisma: mockPrisma,
+    // withPrismaFallback: unlisted models/methods resolve empty instead of throwing.
+    prisma: require('../../test-utils/prisma-mock.js').withPrismaFallback(mockPrisma),
 }));
 
 jest.mock('./stripe.service.js', () => ({

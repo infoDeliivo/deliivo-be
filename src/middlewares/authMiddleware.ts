@@ -19,6 +19,7 @@ const authUserSelect = {
   onboardingStatus: true,
   isVerified: true,
   isBanned: true,
+  preferredLocale: true,
   createdAt: true,
   updatedAt: true,
 } as const;

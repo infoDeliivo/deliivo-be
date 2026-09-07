@@ -14,6 +14,10 @@ type MockRide = {
     id: string;
     driverId: string;
     status: string;
+    departureDate: Date;
+    departureTime: string;
+    originAddress: string;
+    destinationAddress: string;
     originLat: number;
     originLng: number;
     destinationLat: number;
@@ -125,7 +129,11 @@ const mockPrisma: any = {
             const ride = rides.find(r => r.id === where.id);
             if (!ride) return null;
             const result: any = select
-                ? { id: ride.id, driverId: ride.driverId, status: ride.status }
+                ? Object.fromEntries(
+                    Object.keys(select)
+                        .filter((field) => select[field])
+                        .map((field) => [field, (ride as any)[field]]),
+                )
                 : { ...ride };
             if (include?.bookings) {
                 const filter = include.bookings.where;
@@ -134,10 +142,14 @@ const mockPrisma: any = {
                     rideBookings = rideBookings.filter(b => filter.status.in.includes(b.status));
                 }
                 if (include.bookings.select) {
-                    result.bookings = rideBookings.map(b => ({
-                        id: b.id,
-                        status: b.status,
-                    }));
+                    // Honour the requested fields rather than a fixed id/status pair, so a new
+                    // select in the service does not arrive as undefined.
+                    const bookingSelect = include.bookings.select;
+                    result.bookings = rideBookings.map(b => Object.fromEntries(
+                        Object.keys(bookingSelect)
+                            .filter((field) => bookingSelect[field])
+                            .map((field) => [field, (b as any)[field]]),
+                    ));
                 } else {
                     result.bookings = rideBookings;
                 }
@@ -248,7 +260,8 @@ const mockPrisma: any = {
 
 jest.mock('../../config/index.js', () => ({
     __esModule: true,
-    prisma: mockPrisma,
+    // withPrismaFallback: unlisted models/methods resolve empty instead of throwing.
+    prisma: require('../../test-utils/prisma-mock.js').withPrismaFallback(mockPrisma),
 }));
 
 // ============================================================
@@ -273,11 +286,26 @@ import {
 //  HELPERS
 // ============================================================
 
+/** Departure date/time for right now, in UTC, matching how the service recombines the two. */
+const departingNow = (): Pick<MockRide, 'departureDate' | 'departureTime'> => {
+    const now = new Date();
+    return {
+        departureDate: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
+        departureTime: `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`,
+    };
+};
+
 const createTestRide = (overrides: Partial<MockRide> = {}): MockRide => {
     const ride: MockRide = {
         id: nextId('ride'),
         driverId: 'driver-1',
         status: 'IN_PROGRESS',
+        // Starting a ride is only allowed from 10 minutes before departure, so the fixture
+        // departs "now" — a fixed future date makes every start throw RIDE_TOO_EARLY.
+        ...departingNow(),
+        // The live-tracking email labels the route from these.
+        originAddress: 'London Victoria, London',
+        destinationAddress: 'Brighton Station, Brighton',
         originLat: 51.495,
         originLng: -0.144,
         destinationLat: 50.829,
