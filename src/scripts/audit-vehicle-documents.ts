@@ -72,4 +72,8 @@ main()
     })
     .finally(async () => {
         await prisma.$disconnect();
+        // The notification path pulls in Redis and the BullMQ push queue, whose connections keep
+        // the event loop alive indefinitely. Nothing is left to flush once prisma is closed, so
+        // exit rather than leaving an ops script hanging at the end of a completed run.
+        process.exit(process.exitCode ?? 0);
     });
