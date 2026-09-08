@@ -195,6 +195,22 @@ export const createDraftWithLicense = async (req: AuthRequest, res: Response) =>
 };
 
 /* ================= DRAFT: STEP 2 — UPDATE VEHICLE DETAILS ================= */
+export const getActiveDraft = async (req: AuthRequest, res: Response) => {
+  try {
+    const draft = await DraftVehicleService.getActiveDraft(req.user.id);
+    return sendSuccess(res, {
+      message: draft ? 'Vehicle draft fetched successfully' : 'No active vehicle draft',
+      data: draft ? formatDraftResponse(draft) : null,
+    });
+  } catch (error: any) {
+    logError('Vehicle getActiveDraft error', error);
+    return sendError(res, {
+      status: HttpStatus.INTERNAL_ERROR,
+      message: 'Failed to fetch vehicle draft',
+    });
+  }
+};
+
 export const updateDraftVehicleDetails = async (req: AuthRequest, res: Response) => {
   try {
     const { brand, model_num, model_name, type, color, year } = req.body;

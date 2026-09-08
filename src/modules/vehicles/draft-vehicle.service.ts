@@ -66,6 +66,18 @@ const getDraft = async (userId: string): Promise<DraftVehicle> => {
     return JSON.parse(data) as DraftVehicle;
 };
 
+/** Return the current draft without refreshing its expiry. */
+export const getActiveDraft = async (userId: string): Promise<DraftVehicle | null> => {
+    try {
+        return await getDraft(userId);
+    } catch (error) {
+        if (error instanceof Error && error.message === 'DRAFT_NOT_FOUND') {
+            return null;
+        }
+        throw error;
+    }
+};
+
 /**
  * Save (create/update) draft to Redis with TTL refresh.
  */
