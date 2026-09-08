@@ -173,7 +173,7 @@ export const addDocument = async (
 //  SAVE VEHICLE — Move from Redis → DB
 // ============================================================
 
-const MAX_VEHICLES_PER_USER = 1;
+const MAX_VEHICLES_PER_USER = 3;
 
 /**
  * Confirm every document on the draft actually exists in storage.

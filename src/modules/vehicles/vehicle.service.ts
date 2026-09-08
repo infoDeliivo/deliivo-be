@@ -12,7 +12,7 @@ type UpdateVehicleDetailsInput = {
   year: number;
 };
 
-const MAX_VEHICLES_PER_USER = 1;
+const MAX_VEHICLES_PER_USER = 3;
 
 /* ================= CREATE VEHICLE ================= */
 export const createVehicle = async (
@@ -221,7 +221,10 @@ export const addVehicleDocument = async (
 
   // The document row and the review reset must land together — a stored document with a
   // stale APPROVED status would leave an unreviewed change looking verified.
-  const [document] = await prisma.$transaction([
+  const [, document] = await prisma.$transaction([
+    // One current document per type makes re-upload a true replacement. In particular,
+    // it clears a prior audit row whose storage object was missing.
+    prisma.vehicleDocument.deleteMany({ where: { vehicleId, documentType: input.documentType } }),
     prisma.vehicleDocument.create({
       data: {
         vehicleId,
