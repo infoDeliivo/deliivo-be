@@ -9,6 +9,9 @@ import { SupportedLocale } from '../../utils/locale.js';
 
 const googleClient = new OAuth2Client();
 
+/** The two identifier channels an account can be reached and verified on. */
+export type AuthMethod = 'email' | 'phone';
+
 export const normalizeAuthIdentifier = (method: string, identifier: string) =>
   method === 'email' ? identifier.trim().toLowerCase() : identifier.trim();
 
@@ -187,7 +190,7 @@ export const verifyOtpService = async (
   identifier: string,
   code: string,
   purpose: 'signup' | 'login' | 'reset_password',
-  method: string,
+  method: AuthMethod,
 ) => {
   try {
     const normalized = normalizeAuthIdentifier(method, identifier);
@@ -199,19 +202,39 @@ export const verifyOtpService = async (
       return { success: false, reason: 'USER_NOT_FOUND' };
     }
 
-    // Signup flow → mark user verified
-    if (purpose === 'signup') {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { isVerified: true },
-      });
-
-      user.isVerified = true;
-    }
-
-    // Login flow → ensure verified user
+    // Login flow → ensure verified user. This runs before anything is written so an
+    // unverified account never picks up a channel flag from a login attempt.
     if (purpose === 'login' && !user.isVerified) {
       return { success: false, reason: 'USER_NOT_VERIFIED' };
+    }
+
+    // A passed OTP proves the user controls this identifier, so the per-channel flag is
+    // recorded for every purpose — not only signup. Without this the columns stay at their
+    // default and admin sees "Email verified: No" for accounts that verified years ago.
+    const channelVerified = method === 'email' ? user.emailVerified : user.phoneVerified;
+    const markSignupVerified = purpose === 'signup' && !user.isVerified;
+
+    if (markSignupVerified || !channelVerified) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          ...(markSignupVerified ? { isVerified: true } : {}),
+          ...(channelVerified
+            ? {}
+            : method === 'email'
+              ? { emailVerified: true }
+              : { phoneVerified: true }),
+        },
+      });
+
+      if (markSignupVerified) {
+        user.isVerified = true;
+      }
+      if (method === 'email') {
+        user.emailVerified = true;
+      } else {
+        user.phoneVerified = true;
+      }
     }
 
     const tokens = await generateTokens({
