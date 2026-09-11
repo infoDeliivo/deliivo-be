@@ -15,6 +15,7 @@ import {
   RouteOption,
   ComputeRoutesResult,
   PriceRecommendation,
+  PriceQuote,
   DraftSummary,
   ListDraftsQuery,
   LocationInput,
@@ -26,7 +27,8 @@ import {
 } from './publish-ride.types.js';
 import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
 import { assertDriverCanPublish } from './driver-eligibility.service.js';
-import { DEFAULT_BALTIC_PRICING_CONFIG, getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { DEFAULT_BALTIC_PRICING_CONFIG, getPricePreview, resolveActiveFeeTerms, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { calculateBookingPrice } from '../ride-booking/booking-price.js';
 import { calculatePrice, PricingConfigData } from '../pricing/pricing.calculator.js';
 import { createNotification } from '../notification/notification.service.js';
 import { googleService } from '../maps/google.service.js';
@@ -1173,6 +1175,7 @@ const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = DEFAULT_BALTIC_PRICIN
 
 export const getRecommendedPrice = async (
   driverId: string,
+  candidateBasePricePerSeat?: number,
 ): Promise<
   PriceRecommendation & {
     stopoverPricing?: {
@@ -1254,11 +1257,53 @@ export const getRecommendedPrice = async (
     stopoverPricing.sort((a, b) => a.distanceFromOriginKm - b.distanceFromOriginKm);
   }
 
+  const currency = calculation.currency || draft.currency || 'EUR';
+
+  // Every amount the publish screen shows is computed here, with the same function that prices the
+  // rider's real booking, so the driver-facing promise cannot drift from what the rider is charged.
+  const feeTerms = await resolveActiveFeeTerms(calculation.regionCode);
+  const quotedBasePrice =
+    candidateBasePricePerSeat !== undefined && candidateBasePricePerSeat > 0
+      ? candidateBasePricePerSeat
+      : recommendedPrice;
+  const seats = draft.totalSeats && draft.totalSeats > 0 ? draft.totalSeats : 1;
+
+  const priceFor = (seatsBooked: number) =>
+    calculateBookingPrice({
+      basePricePerSeat: quotedBasePrice,
+      seatsBooked,
+      currency,
+      serviceFeePercent: feeTerms.serviceFeePercent,
+      serviceFeeFlat: feeTerms.serviceFeeFlat,
+    });
+
+  const perSeatBreakdown = priceFor(1);
+  const fullRideBreakdown = priceFor(seats);
+
+  const quote: PriceQuote = {
+    basePricePerSeat: quotedBasePrice,
+    seats,
+    currency,
+    serviceFeePercent: feeTerms.serviceFeePercent,
+    serviceFeeFlat: feeTerms.serviceFeeFlat,
+    perSeat: {
+      driverNet: perSeatBreakdown.subtotal,
+      serviceFee: perSeatBreakdown.serviceFee,
+      riderTotal: perSeatBreakdown.totalPrice,
+    },
+    fullRide: {
+      driverNet: fullRideBreakdown.subtotal,
+      serviceFee: fullRideBreakdown.serviceFee,
+      riderTotal: fullRideBreakdown.totalPrice,
+    },
+  };
+
   return {
     recommendedPrice,
     minPrice,
     maxPrice,
-    currency: calculation.currency || draft.currency || 'EUR',
+    currency,
+    quote,
     breakdown: {
       estimatedRouteCost: Math.round(estimatedRouteCost * 100) / 100,
       distanceKm: Math.round(distanceKm * 10) / 10,

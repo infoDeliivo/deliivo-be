@@ -522,11 +522,24 @@ jest.mock('../ride-booking/booking-otp.utils.js', () => ({
 jest.mock('../pricing/pricing.service.js', () => ({
     __esModule: true,
     validateAndSnapshotPricing: jest.fn().mockResolvedValue({ valid: true, snapshotId: 'snap-mock' }),
+    // No service fee here: these cases assert segment fare arithmetic, which the fee sits on top of.
+    resolveRideFeeTerms: jest.fn().mockResolvedValue({
+        serviceFeePercent: 0,
+        serviceFeeFlat: 0,
+        source: 'ACTIVE_CONFIG',
+    }),
 }));
 
 jest.mock('../payments/payment.service.js', () => ({
     __esModule: true,
+    PAYMENT_STATUSES: {
+        CREATED: 'CREATED',
+        PAYMENT_PENDING: 'PAYMENT_PENDING',
+        PAID: 'PAID',
+    },
     createPayment: jest.fn().mockResolvedValue({ id: 'payment-mock-id' }),
+    markBookingPaymentPaid: jest.fn().mockResolvedValue({}),
+    markBookingPaymentRefunded: jest.fn().mockResolvedValue({}),
     markPaymentPending: jest.fn().mockResolvedValue({}),
     markPaymentPaid: jest.fn().mockResolvedValue({}),
 }));
@@ -626,7 +639,6 @@ describe('Integration: Publish → Book → Driver Actions', () => {
         idCounter = 0;
         jest.clearAllMocks();
         process.env.BOOKING_PAYMENT_MODE = 'bypass';
-        process.env.PLATFORM_FEE_PERCENT = '0';
         process.env.VIEW_TOKEN_SECRET = 'test-secret-key-32chars-long!!!';
     });
 

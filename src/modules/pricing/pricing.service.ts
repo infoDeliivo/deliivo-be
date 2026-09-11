@@ -19,6 +19,8 @@ export const DEFAULT_BALTIC_PRICING_CONFIG = {
     maxRatePerKm: 0.12,
     minimumSeatPrice: 3,
     roundingStrategy: 'NEAREST_EURO',
+    serviceFeePercent: 2,
+    serviceFeeFlat: 0,
 } as const;
 
 export interface PricingConfigInput {
@@ -29,6 +31,8 @@ export interface PricingConfigInput {
     maxRatePerKm: number;
     minimumSeatPrice: number;
     roundingStrategy: string;
+    serviceFeePercent: number;
+    serviceFeeFlat: number;
     active?: boolean;
     validFrom?: Date;
     validTo?: Date | null;
@@ -90,10 +94,97 @@ export const validateAndSnapshotPricing = async (params: {
             maxAllowedPricePerSeat: calculation.maxAllowedPricePerSeat,
             selectedPricePerSeat: params.selectedPricePerSeat,
             roundingStrategy: config.roundingStrategy,
+            serviceFeePercent: config.serviceFeePercent,
+            serviceFeeFlat: config.serviceFeeFlat,
         },
     });
 
     return { valid: true, snapshotId: snapshot.id };
+};
+
+export interface ServiceFeeTerms {
+    serviceFeePercent: number;
+    serviceFeeFlat: number;
+    source: 'SNAPSHOT' | 'ACTIVE_CONFIG' | 'DEFAULT';
+}
+
+/**
+ * Fee terms for a published ride. Prefers the snapshot frozen at publish time so that changing the
+ * admin rate never reprices a ride whose price was already advertised to riders and drivers.
+ */
+export const resolveRideFeeTerms = async (rideId: string): Promise<ServiceFeeTerms> => {
+    const snapshot = await prisma.ridePricingSnapshot.findUnique({
+        where: { rideId },
+        select: { regionCode: true, serviceFeePercent: true, serviceFeeFlat: true },
+    });
+
+    if (snapshot) {
+        return {
+            serviceFeePercent: snapshot.serviceFeePercent,
+            serviceFeeFlat: snapshot.serviceFeeFlat,
+            source: 'SNAPSHOT',
+        };
+    }
+
+    // Snapshot creation is best-effort at publish time (skipped when route distance is unknown), so
+    // fall back to the live config for snapshot-less rides rather than charging nothing.
+    return resolveActiveFeeTerms();
+};
+
+/**
+ * Fee terms for many rides at once — one snapshot query plus one config read.
+ *
+ * Search prices every candidate ride, so resolving per ride would issue a query per result. Rides
+ * without a snapshot fall back to the live config, matching `resolveRideFeeTerms`.
+ */
+export const resolveFeeTermsForRides = async (
+    rideIds: string[]
+): Promise<Map<string, ServiceFeeTerms>> => {
+    const terms = new Map<string, ServiceFeeTerms>();
+    if (rideIds.length === 0) return terms;
+
+    const snapshots = await prisma.ridePricingSnapshot.findMany({
+        where: { rideId: { in: rideIds } },
+        select: { rideId: true, serviceFeePercent: true, serviceFeeFlat: true },
+    });
+
+    for (const snapshot of snapshots) {
+        terms.set(snapshot.rideId, {
+            serviceFeePercent: snapshot.serviceFeePercent,
+            serviceFeeFlat: snapshot.serviceFeeFlat,
+            source: 'SNAPSHOT',
+        });
+    }
+
+    if (terms.size < rideIds.length) {
+        const fallback = await resolveActiveFeeTerms();
+        for (const rideId of rideIds) {
+            if (!terms.has(rideId)) terms.set(rideId, fallback);
+        }
+    }
+
+    return terms;
+};
+
+/** Fee terms for the live config — used by the publish flow, where no ride exists yet. */
+export const resolveActiveFeeTerms = async (regionCode?: string): Promise<ServiceFeeTerms> => {
+    const config = await getActivePricingConfig(regionCode || DEFAULT_REGION);
+    if (config) {
+        return {
+            serviceFeePercent: config.serviceFeePercent,
+            serviceFeeFlat: config.serviceFeeFlat,
+            source: 'ACTIVE_CONFIG',
+        };
+    }
+
+    // Seed the row for next time, but fall back to the compiled-in defaults for the answer: this
+    // function promises a value, so it must not depend on the write round-tripping.
+    const ensured = await ensureDefaultPricingConfig().catch(() => null);
+    return {
+        serviceFeePercent: ensured?.serviceFeePercent ?? DEFAULT_BALTIC_PRICING_CONFIG.serviceFeePercent,
+        serviceFeeFlat: ensured?.serviceFeeFlat ?? DEFAULT_BALTIC_PRICING_CONFIG.serviceFeeFlat,
+        source: 'DEFAULT',
+    };
 };
 
 export const getActiveConfigs = async () => {
@@ -158,6 +249,8 @@ export const createPricingConfig = async (input: PricingConfigInput) => {
                 maxRatePerKm: input.maxRatePerKm,
                 minimumSeatPrice: input.minimumSeatPrice,
                 roundingStrategy: input.roundingStrategy,
+                serviceFeePercent: input.serviceFeePercent,
+                serviceFeeFlat: input.serviceFeeFlat,
                 active: shouldActivate,
                 validFrom,
                 validTo: shouldActivate ? null : (input.validTo ?? null),
@@ -207,6 +300,8 @@ export const updatePricingConfig = async (id: string, input: Partial<PricingConf
                 ...(input.maxRatePerKm !== undefined ? { maxRatePerKm: input.maxRatePerKm } : {}),
                 ...(input.minimumSeatPrice !== undefined ? { minimumSeatPrice: input.minimumSeatPrice } : {}),
                 ...(input.roundingStrategy !== undefined ? { roundingStrategy: input.roundingStrategy } : {}),
+                ...(input.serviceFeePercent !== undefined ? { serviceFeePercent: input.serviceFeePercent } : {}),
+                ...(input.serviceFeeFlat !== undefined ? { serviceFeeFlat: input.serviceFeeFlat } : {}),
                 ...(input.active !== undefined ? { active: input.active } : {}),
                 ...(input.validFrom !== undefined ? { validFrom: input.validFrom } : {}),
                 ...(input.validTo !== undefined ? { validTo: input.validTo } : {}),

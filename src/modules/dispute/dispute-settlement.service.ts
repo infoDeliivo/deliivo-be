@@ -2,7 +2,8 @@ import { BookingStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
 import { recordRefund } from '../ledger/ledger.service.js';
-import { PAYMENT_STATUSES } from '../payments/payment.service.js';
+import { resolveRefundSplit } from '../ride-booking/booking-payment-split.js';
+import { PAYMENT_STATUSES, netFareAmount } from '../payments/payment.service.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { emitToUsers } from '../../socket/index.js';
@@ -84,7 +85,8 @@ export const settleDispute = async (input: SettlementInput) => {
     let finalStatus: string = DISPUTE_STATUSES.ESCALATED;
     let resolutionText: string = input.resolution;
     let refundAmount = 0;
-    let payoutAmount = payment?.fareAmount ?? booking.segmentFare ?? booking.totalPrice;
+    let refundSplit = { fareRefundAmount: 0, feeRefundAmount: 0 };
+    let payoutAmount = payment ? netFareAmount(payment) : (booking.segmentFare ?? booking.totalPrice);
     const now = new Date();
 
     if (input.resolution === 'ESCALATE') {
@@ -94,7 +96,16 @@ export const settleDispute = async (input: SettlementInput) => {
             ? 100
             : clampRefundPercent(input.refundPercent, 50);
         refundAmount = round2((paymentAmount * refundPercent) / 100);
-        payoutAmount = Math.max(0, round2((payment?.fareAmount ?? paymentAmount) - refundAmount));
+        // The refund is a share of the gross, so only its fare portion may reduce the driver's fare.
+        // Subtracting the whole gross refund from a net fare over-penalised the driver by the fee share.
+        refundSplit = resolveRefundSplit(
+            { amountTotal: paymentAmount, fareAmount: payment?.fareAmount ?? paymentAmount },
+            refundAmount
+        );
+        payoutAmount = Math.max(
+            0,
+            round2((payment ? netFareAmount(payment) : paymentAmount) - refundSplit.fareRefundAmount)
+        );
         resolutionText = input.resolution === 'SPLIT'
             ? `SPLIT:${refundPercent}%_REFUND`
             : 'REFUND';
@@ -142,7 +153,19 @@ export const settleDispute = async (input: SettlementInput) => {
                     riderId,
                     driverId,
                     refundAmount,
+                    fareRefundAmount: refundSplit.fareRefundAmount,
+                    feeRefundAmount: refundSplit.feeRefundAmount,
                     currency: paymentCurrency,
+                });
+
+                // Record what went back rather than shrinking the charge: payout owes
+                // `fareAmount - refundedFareAmount`, and the gross stays available for reconciliation.
+                await prisma.payment.update({
+                    where: { id: payment.id },
+                    data: {
+                        refundedFareAmount: { increment: refundSplit.fareRefundAmount },
+                        refundedFeeAmount: { increment: refundSplit.feeRefundAmount },
+                    },
                 });
             }
         }
@@ -154,7 +177,6 @@ export const settleDispute = async (input: SettlementInput) => {
                     ? { status: PAYMENT_STATUSES.REFUNDED }
                     : {
                         status: payoutAmount > 0 ? PAYMENT_STATUSES.PAYOUT_ELIGIBLE : PAYMENT_STATUSES.REFUNDED,
-                        fareAmount: payoutAmount,
                         payoutEligibleAt: payoutAmount > 0 ? now : null,
                     },
             });

@@ -61,6 +61,31 @@ jest.mock('../notification/notification.service.js', () => ({
     createNotification: jest.fn().mockResolvedValue(undefined),
 }));
 
+const mockPricingService = {
+    getPricePreview: jest.fn(),
+    resolveActiveFeeTerms: jest.fn(),
+    validateAndSnapshotPricing: jest.fn().mockResolvedValue({ valid: true, snapshotId: 'snap-1' }),
+};
+
+jest.mock('../pricing/pricing.service.js', () => ({
+    __esModule: true,
+    DEFAULT_BALTIC_PRICING_CONFIG: {
+        id: 'default-baltic-distance-pricing',
+        regionCode: 'BALTIC',
+        currency: 'EUR',
+        minRatePerKm: 0.06,
+        recommendedRatePerKm: 0.08,
+        maxRatePerKm: 0.12,
+        minimumSeatPrice: 3,
+        roundingStrategy: 'NEAREST_EURO',
+        serviceFeePercent: 2,
+        serviceFeeFlat: 0,
+    },
+    getPricePreview: (...args: unknown[]) => mockPricingService.getPricePreview(...args),
+    resolveActiveFeeTerms: (...args: unknown[]) => mockPricingService.resolveActiveFeeTerms(...args),
+    validateAndSnapshotPricing: (...args: unknown[]) => mockPricingService.validateAndSnapshotPricing(...args),
+}));
+
 jest.mock('../maps/google.service.js', () => ({
     __esModule: true,
     googleService: mockGoogleService,
@@ -440,37 +465,301 @@ describe('publishRide', () => {
         }
     });
 
-    it('queries stopover suggestion points across the full route', async () => {
+    describe('getStopoversAlongRoute', () => {
+        // A ~222 km due-north route along longitude 20, from lat 0 to lat 2.
         const routePoints = Array.from({ length: 21 }, (_, index) => [index * 0.1, 20] as [number, number]);
-        mockRedis.get.mockResolvedValue(JSON.stringify({
+
+        const draftWithRoute = () => ({
             userId: 'driver-1',
             step: 7,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             originLat: 0,
             originLng: 20,
+            originPlaceId: 'place-origin',
+            destinationLat: 2,
+            destinationLng: 20,
+            destinationPlaceId: 'place-destination',
             routePolyline: polyline.encode(routePoints),
             routeDistanceMeters: 222000,
-        }));
-
-        const fetchMock = jest.fn().mockResolvedValue({
-            json: async () => ({ results: [] }),
+            basePricePerSeat: 20,
         });
-        const originalFetch = global.fetch;
-        global.fetch = fetchMock as any;
 
-        try {
+        // A locality centred on the route at the given latitude. `adminArea` names the
+        // containing administrative area: one named after the locality marks a town, any
+        // other name marks a village inside someone else's area.
+        const localityAt = (
+            lat: number,
+            name: string,
+            adminArea: string | null,
+            types = ['locality', 'political'],
+        ) => ({
+            locality: {
+                place_id: `place-${name.toLowerCase()}`,
+                formatted_address: `${name}, Estonia`,
+                address_components: [{ long_name: name, short_name: name, types }],
+                types,
+                geometry: { location: { lat, lng: 20 } },
+            },
+            adminAreaLevel2: adminArea,
+        });
+
+        /** A town: seat of its own parish. */
+        const townAt = (lat: number, name: string, types = ['locality', 'political']) =>
+            localityAt(lat, name, `${name} Parish`, types);
+
+        /** A village: sits inside another town's parish. */
+        const villageAt = (lat: number, name: string) => localityAt(lat, name, 'Tartu City');
+
+        it('samples the whole route when resolving towns', async () => {
+            mockRedis.get.mockResolvedValue(JSON.stringify(draftWithRoute()));
+            mockGoogleService.reverseGeocodeLocality.mockResolvedValue(null);
+
             await DraftRideService.getStopoversAlongRoute('driver-1');
 
-            expect(fetchMock).toHaveBeenCalledTimes(8);
-            const queriedLatitudes = fetchMock.mock.calls.map(([url]) => {
-                const location = new URL(url as string).searchParams.get('location') || '';
-                return Number(location.split(',')[0]);
-            });
+            expect(mockGoogleService.reverseGeocodeLocality).toHaveBeenCalledTimes(16);
+            const queriedLatitudes = mockGoogleService.reverseGeocodeLocality.mock.calls.map(([lat]) => lat as number);
             expect(Math.min(...queriedLatitudes)).toBeLessThan(0.3);
             expect(Math.max(...queriedLatitudes)).toBeGreaterThan(1.8);
-        } finally {
-            global.fetch = originalFetch;
-        }
+        });
+
+        it('returns towns the route passes through, in along-route order', async () => {
+            mockRedis.get.mockResolvedValue(JSON.stringify(draftWithRoute()));
+            mockGoogleService.reverseGeocodeLocality.mockImplementation(async (lat: number) => {
+                if (lat < 0.7) return townAt(0.5, 'Kose');
+                if (lat < 1.4) return townAt(1.0, 'Mao');
+                return townAt(1.5, 'Poltsamaa');
+            });
+
+            const result = await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            expect(result.suggestions.map((suggestion) => suggestion.name)).toEqual(['Kose', 'Mao', 'Poltsamaa']);
+            const distances = result.suggestions.map((suggestion) => suggestion.distanceFromOriginMeters);
+            expect(distances).toEqual([...distances].sort((a, b) => a - b));
+            // Price scales with along-route distance, never exceeding the base price.
+            const prices = result.suggestions.map((suggestion) => suggestion.pricePerSeat as number);
+            expect(prices).toEqual([...prices].sort((a, b) => a - b));
+            expect(Math.max(...prices)).toBeLessThanOrEqual(20);
+        });
+
+        it('promotes the town an administrative area is named after, even when the road bypasses it', async () => {
+            mockRedis.get.mockResolvedValue(JSON.stringify(draftWithRoute()));
+            // Samples land in villages; each village sits in "Kose Parish".
+            mockGoogleService.reverseGeocodeLocality.mockResolvedValue({
+                locality: {
+                    place_id: 'place-palvere',
+                    formatted_address: 'Palvere, Estonia',
+                    address_components: [{ long_name: 'Palvere', short_name: 'Palvere', types: ['locality'] }],
+                    types: ['locality', 'political'],
+                    geometry: { location: { lat: 1.0, lng: 20 } },
+                },
+                adminAreaLevel2: 'Kose Parish',
+                countryCode: 'EE',
+            });
+            // The parish seat is a real town 4 km off the road.
+            mockGoogleService.geocodeLocality.mockResolvedValue({
+                place_id: 'place-kose',
+                formatted_address: 'Kose, Estonia',
+                address_components: [{ long_name: 'Kose', short_name: 'Kose', types: ['locality'] }],
+                types: ['locality', 'political'],
+                geometry: { location: { lat: 1.2, lng: 20.06 } },
+            });
+
+            const result = await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            expect(mockGoogleService.geocodeLocality).toHaveBeenCalledWith('Kose', 'EE');
+            expect(result.suggestions.map((suggestion) => [suggestion.name, suggestion.isMajorTown])).toEqual([
+                ['Kose', true],
+                ['Palvere', false],
+            ]);
+            // Along-route distance comes from projecting the town onto the polyline.
+            const kose = result.suggestions[0];
+            expect(kose.distanceFromOriginMeters).toBeGreaterThan(0);
+        });
+
+        it('drops an administrative area with no eponymous town', async () => {
+            mockRedis.get.mockResolvedValue(JSON.stringify(draftWithRoute()));
+            mockGoogleService.reverseGeocodeLocality.mockResolvedValue({
+                locality: {
+                    place_id: 'place-koigi',
+                    formatted_address: 'Koigi, Estonia',
+                    address_components: [{ long_name: 'Koigi', short_name: 'Koigi', types: ['locality'] }],
+                    types: ['locality', 'political'],
+                    geometry: { location: { lat: 1.0, lng: 20 } },
+                },
+                adminAreaLevel2: 'Järva Parish',
+                countryCode: 'EE',
+            });
+            // "Järva" is a county name, not a town — geocodeLocality finds no locality.
+            mockGoogleService.geocodeLocality.mockResolvedValue(null);
+
+            const result = await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            expect(mockGoogleService.geocodeLocality).toHaveBeenCalledWith('Järva', 'EE');
+            expect(result.suggestions.map((suggestion) => suggestion.name)).toEqual(['Koigi']);
+        });
+
+        it('lists towns before villages, each in route order', async () => {
+            mockRedis.get.mockResolvedValue(JSON.stringify(draftWithRoute()));
+            mockGoogleService.reverseGeocodeLocality.mockImplementation(async (lat: number) => {
+                if (lat < 0.6) return villageAt(0.4, 'Earlyvillage');
+                if (lat < 1.1) return townAt(0.9, 'Latetown');
+                if (lat < 1.6) return villageAt(1.3, 'Latevillage');
+                return townAt(1.7, 'Lasttown');
+            });
+
+            const result = await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            expect(result.suggestions.map((suggestion) => suggestion.name)).toEqual([
+                'Latetown', 'Lasttown', 'Earlyvillage', 'Latevillage',
+            ]);
+            expect(result.suggestions.map((suggestion) => suggestion.isMajorTown)).toEqual([
+                true, true, false, false,
+            ]);
+        });
+
+        it('keeps arrival times tied to along-route distance, not list position', async () => {
+            mockRedis.get.mockResolvedValue(JSON.stringify({
+                ...draftWithRoute(),
+                departureTime: '10:00',
+                routeDurationSeconds: 7200,
+            }));
+            mockGoogleService.reverseGeocodeLocality.mockImplementation(async (lat: number) => (
+                lat < 1.0 ? villageAt(0.5, 'Earlyvillage') : townAt(1.5, 'Latetown')
+            ));
+
+            const result = await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            // Town is listed first but is further along the route, so it arrives later.
+            const [town, village] = result.suggestions;
+            expect(town.name).toBe('Latetown');
+            expect(town.estimatedArrivalTime! > village.estimatedArrivalTime!).toBe(true);
+        });
+
+        it('collapses consecutive samples inside one town into a single suggestion', async () => {
+            mockRedis.get.mockResolvedValue(JSON.stringify(draftWithRoute()));
+            mockGoogleService.reverseGeocodeLocality.mockResolvedValue(townAt(1.0, 'Mao'));
+
+            const result = await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            expect(result.suggestions).toHaveLength(1);
+            expect(result.suggestions[0].name).toBe('Mao');
+        });
+
+        it('excludes a town whose centre is outside the route corridor', async () => {
+            mockRedis.get.mockResolvedValue(JSON.stringify(draftWithRoute()));
+            // ~28 km east of the route at this latitude — the Rapla case.
+            mockGoogleService.reverseGeocodeLocality.mockResolvedValue({
+                locality: {
+                    place_id: 'place-offroute',
+                    formatted_address: 'Offroute, Estonia',
+                    address_components: [{ long_name: 'Offroute', short_name: 'Offroute', types: ['locality'] }],
+                    types: ['locality', 'political'],
+                    geometry: { location: { lat: 1.0, lng: 20.48 } },
+                },
+                adminAreaLevel2: 'Offroute Parish',
+            });
+
+            const result = await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            expect(result.suggestions).toHaveLength(0);
+        });
+
+        it('excludes non-town results and the route endpoints', async () => {
+            mockRedis.get.mockResolvedValue(JSON.stringify(draftWithRoute()));
+            mockGoogleService.reverseGeocodeLocality.mockImplementation(async (lat: number) => {
+                if (lat < 1.0) return townAt(0.5, 'Fuelstop', ['gas_station']);
+                const endpoint = townAt(1.5, 'Endpoint');
+                return { ...endpoint, locality: { ...endpoint.locality, place_id: 'place-destination' } };
+            });
+
+            const result = await DraftRideService.getStopoversAlongRoute('driver-1');
+
+            expect(result.suggestions).toHaveLength(0);
+        });
+    });
+});
+
+describe('getRecommendedPrice quote', () => {
+    const calculation = {
+        regionCode: 'BALTIC',
+        currency: 'EUR',
+        distanceKm: 150,
+        minRatePerKm: 0.06,
+        recommendedRatePerKm: 0.08,
+        maxRatePerKm: 0.12,
+        minimumSeatPrice: 3,
+        recommendedPricePerSeat: 12,
+        minAllowedPricePerSeat: 9,
+        maxAllowedPricePerSeat: 18,
+        roundingStrategy: 'NEAREST_EURO',
+        serviceFeePercent: 2,
+        serviceFeeFlat: 0,
+    };
+
+    const draft = {
+        driverId: 'driver-1',
+        currency: 'EUR',
+        routeDistanceMeters: 150000,
+        totalSeats: 3,
+        stopovers: [],
+    };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockRedis.get.mockResolvedValue(JSON.stringify(draft));
+        mockPricingService.getPricePreview.mockResolvedValue(calculation);
+        mockPricingService.resolveActiveFeeTerms.mockResolvedValue({
+            serviceFeePercent: 2,
+            serviceFeeFlat: 0,
+            source: 'ACTIVE_CONFIG',
+        });
+    });
+
+    it('returns every amount the publish screen displays, for the candidate price', async () => {
+        const result = await DraftRideService.getRecommendedPrice('driver-1', 12);
+
+        expect(result.quote.basePricePerSeat).toBe(12);
+        expect(result.quote.seats).toBe(3);
+        expect(result.quote.serviceFeePercent).toBe(2);
+        expect(result.quote.perSeat).toEqual({ driverNet: 12, serviceFee: 0.24, riderTotal: 12.24 });
+        expect(result.quote.fullRide).toEqual({ driverNet: 36, serviceFee: 0.72, riderTotal: 36.72 });
+    });
+
+    it('quotes the recommended price when the driver has not chosen one yet', async () => {
+        const result = await DraftRideService.getRecommendedPrice('driver-1');
+
+        expect(result.quote.basePricePerSeat).toBe(12);
+        expect(result.quote.perSeat.riderTotal).toBe(12.24);
+    });
+
+    it('never deducts the fee from the driver', async () => {
+        const result = await DraftRideService.getRecommendedPrice('driver-1', 14);
+
+        expect(result.quote.perSeat.driverNet).toBe(14);
+        expect(result.quote.perSeat.riderTotal).toBe(14.28);
+        expect(result.quote.perSeat.riderTotal).toBeGreaterThan(result.quote.perSeat.driverNet);
+    });
+
+    it('charges no fee when the rate is zero', async () => {
+        mockPricingService.resolveActiveFeeTerms.mockResolvedValue({
+            serviceFeePercent: 0,
+            serviceFeeFlat: 0,
+            source: 'ACTIVE_CONFIG',
+        });
+
+        const result = await DraftRideService.getRecommendedPrice('driver-1', 12);
+
+        expect(result.quote.perSeat.serviceFee).toBe(0);
+        expect(result.quote.perSeat.riderTotal).toBe(12);
+    });
+
+    it('falls back to a single seat when the draft has no capacity yet', async () => {
+        mockRedis.get.mockResolvedValue(JSON.stringify({ ...draft, totalSeats: undefined }));
+
+        const result = await DraftRideService.getRecommendedPrice('driver-1', 12);
+
+        expect(result.quote.seats).toBe(1);
+        expect(result.quote.fullRide).toEqual(result.quote.perSeat);
     });
 });

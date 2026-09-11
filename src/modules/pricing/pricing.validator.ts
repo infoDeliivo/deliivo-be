@@ -24,6 +24,9 @@ const pricingConfigBaseSchema = z.object({
     maxRatePerKm: z.number().positive(),
     minimumSeatPrice: z.number().positive(),
     roundingStrategy: z.enum(['NEAREST_EURO', 'NEAREST_HALF_EURO', 'DECIMAL']),
+    // Rider-paid service fee. Bounded so a mistyped value cannot reprice the platform; 0 is legal.
+    serviceFeePercent: z.number().min(0).max(50),
+    serviceFeeFlat: z.number().min(0).max(10),
     active: z.boolean().optional(),
     validFrom: z.coerce.date().optional(),
     validTo: z.coerce.date().nullable().optional(),

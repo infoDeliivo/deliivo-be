@@ -238,6 +238,35 @@ export interface SelectRouteInput {
 
 /* ================= PHASE 3: PRICING TYPES ================= */
 
+/**
+ * Every money figure the publish screen shows, computed on the backend.
+ *
+ * The frontend must not derive any of these: it previously multiplied a hardcoded 20% client-side,
+ * which drifted from what the backend actually charged. `perSeat` and `fullRide` are computed
+ * independently (the fee is charged once per booking, so a per-seat figure times seats can differ by
+ * a cent from the real charge) — do not multiply one into the other.
+ */
+export interface PriceQuote {
+    /** The candidate price this quote was computed for. */
+    basePricePerSeat: number;
+    seats: number;
+    currency: string;
+    /** Rate used, for display copy only. */
+    serviceFeePercent: number;
+    serviceFeeFlat: number;
+    /** A single-seat booking. */
+    perSeat: PriceQuoteAmounts;
+    /** One booking taking every seat. */
+    fullRide: PriceQuoteAmounts;
+}
+
+export interface PriceQuoteAmounts {
+    /** What the driver receives — the fee is charged on top, never deducted from this. */
+    driverNet: number;
+    serviceFee: number;
+    riderTotal: number;
+}
+
 export interface PriceRecommendation {
     recommendedPrice: number;
     minPrice: number;
@@ -255,6 +284,7 @@ export interface PriceRecommendation {
         maxRatePerKm?: number;
         pricingConfigFallback?: boolean;
     };
+    quote: PriceQuote;
 }
 
 /* ================= STOPPER POINT SUGGESTIONS ================= */

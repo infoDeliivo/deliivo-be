@@ -483,6 +483,11 @@ model RideBooking {
   seatsBooked Int   @default(1)
   totalPrice  Float
 
+  // Rider-paid service fee, frozen at booking time. totalPrice = (segmentFare * seatsBooked) + serviceFeeAmount.
+  // Nullable: bookings created before service fees existed have no recorded fee.
+  serviceFeeAmount  Float?
+  serviceFeePercent Float?
+
   status BookingStatus @default(PAYMENT_PENDING)
 
   stripePaymentIntentId   String?   @unique
@@ -747,8 +752,13 @@ model Payment {
   stripePaymentIntentId  String?   @unique
   amountTotal            Float
   currency               String
+  /// Gross amounts as charged. Immutable once written — refunds accumulate in the refunded* fields
+  /// below, so a partial refund never destroys what the rider originally paid.
   fareAmount             Float
   platformFeeAmount      Float     @default(0)
+  /// Refunded so far, split the same way as the charge. Payout owes fareAmount - refundedFareAmount.
+  refundedFareAmount     Float     @default(0)
+  refundedFeeAmount      Float     @default(0)
   status                 String    @default("CREATED") // CREATED, PAYMENT_PENDING, PAID, HELD_IN_ESCROW, PAYOUT_ELIGIBLE, TRANSFER_CREATED, PAYOUT_COMPLETED, REFUND_PENDING, REFUNDED, PAYMENT_FAILED
   failureReason          String?
   payoutEligibleAt       DateTime?
@@ -770,7 +780,7 @@ model LedgerEntry {
   bookingId     String?
   userId        String?
   accountType   String   // RIDER, DRIVER, PLATFORM, PROVIDER
-  entryType     String   // RIDER_PAYMENT_RECEIVED, DRIVER_EARNING_LIABILITY, PLATFORM_FEE_REVENUE, STRIPE_FEE_EXPENSE, REFUND_TO_RIDER, DRIVER_TRANSFER_CREATED, PAYOUT_FAILURE_REVERSAL
+  entryType     String   // RIDER_PAYMENT_RECEIVED, DRIVER_EARNING_LIABILITY, PLATFORM_FEE_REVENUE, STRIPE_FEE_EXPENSE, REFUND_TO_RIDER, DRIVER_TRANSFER_CREATED, PAYOUT_FAILURE_REVERSAL, PLATFORM_FEE_REVERSAL
   direction     String   // DEBIT, CREDIT
   amount        Float
   currency      String
@@ -996,6 +1006,8 @@ model PricingConfig {
   maxRatePerKm         Float
   minimumSeatPrice     Float     @default(3.00)
   roundingStrategy     String    @default("NEAREST_EURO") // NEAREST_EURO, NEAREST_HALF_EURO
+  serviceFeePercent    Float     @default(2) // charged to the rider ON TOP of the driver's fare
+  serviceFeeFlat       Float     @default(0) // optional fixed per-booking component, also rider-paid
   active               Boolean   @default(true)
   validFrom            DateTime  @default(now())
   validTo              DateTime?
@@ -1022,6 +1034,8 @@ model RidePricingSnapshot {
   maxAllowedPricePerSeat   Float
   selectedPricePerSeat     Float
   roundingStrategy         String
+  serviceFeePercent        Float    @default(0) // frozen at publish; 0 for rides published before fees existed
+  serviceFeeFlat           Float    @default(0)
   createdAt                DateTime @default(now())
 
   ride Ride @relation(fields: [rideId], references: [id])

@@ -27,6 +27,9 @@ export interface PriceBreakdown {
     serviceFee: number;
     totalPrice: number;
     currency: string;
+    /** Rate the fee was computed at, so clients can label it without doing arithmetic. */
+    serviceFeePercent: number;
+    serviceFeeFlat: number;
 }
 
 /* ================= CREATE BOOKING INPUT ================= */

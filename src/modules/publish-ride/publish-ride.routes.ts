@@ -14,6 +14,7 @@ import {
     updateDropoffsSchema,
     updateStopoversSchema,
     selectRouteSchema,
+    recommendedPriceQuerySchema,
 } from './publish-ride.validator.js';
 
 const router = Router();
@@ -107,6 +108,7 @@ router.put(
 // Step 9: Get recommended price
 router.get(
     '/draft/pricing/recommended',
+    validate({ query: recommendedPriceQuerySchema }),
     controller.getRecommendedPrice
 );
 

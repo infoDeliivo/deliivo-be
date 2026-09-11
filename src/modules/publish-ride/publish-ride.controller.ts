@@ -366,7 +366,8 @@ export const updateCapacity = async (req: AuthRequest, res: Response) => {
 /* ================= STEP 11: GET RECOMMENDED PRICE ================= */
 export const getRecommendedPrice = async (req: AuthRequest, res: Response) => {
     try {
-        const recommendation = await DraftRideService.getRecommendedPrice(req.user.id);
+        const { basePricePerSeat } = req.query as { basePricePerSeat?: number };
+        const recommendation = await DraftRideService.getRecommendedPrice(req.user.id, basePricePerSeat);
 
         return sendSuccess(res, {
             message: 'Price recommendation calculated',

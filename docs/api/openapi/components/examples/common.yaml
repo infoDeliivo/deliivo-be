@@ -584,10 +584,12 @@
           "basePricePerSeat": 25.00,
           "seatsBooked": 3,
           "subtotal": 75.00,
-          "luggageFee": 10.00,
-          "serviceFee": 0.00,
-          "totalPrice": 85.00,
-          "currency": "GBP"
+          "luggageFee": 0.00,
+          "serviceFee": 1.50,
+          "totalPrice": 76.50,
+          "currency": "GBP",
+          "serviceFeePercent": 2,
+          "serviceFeeFlat": 0
         },
         "ride": {
           "id": "ride-123",

@@ -15,6 +15,13 @@ const mockPrisma = {
     rideBooking: {
         groupBy: jest.fn(),
     },
+    ridePricingSnapshot: {
+        findMany: jest.fn().mockResolvedValue([]),
+    },
+    pricingConfig: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(null),
+    },
 };
 
 jest.mock('../../config/index.js', () => ({
@@ -225,6 +232,79 @@ describe('searchRidesAdvanced segment shaping', () => {
             basePricePerSeat: 10,
             isSegmentView: true,
         });
+    });
+
+
+    const rideWithSegments = (basePricePerSeat: number) => ({
+        id: 'ride-1',
+        driverId: 'driver-1',
+        originPlaceId: 'place-a',
+        originAddress: 'A',
+        originLat: 1,
+        originLng: 1,
+        destinationPlaceId: 'place-d',
+        destinationAddress: 'D',
+        destinationLat: 4,
+        destinationLng: 4,
+        routeDistanceMeters: 1000,
+        routeDurationSeconds: 600,
+        routePolyline: 'abcd',
+        departureDate: new Date('2026-03-30T00:00:00.000Z'),
+        departureTime: '10:00',
+        availableSeats: 3,
+        basePricePerSeat,
+        currency: 'EUR',
+        status: 'PUBLISHED',
+        bookings: [],
+        driver: { id: 'driver-1', name: 'Driver', avatarUrl: null },
+        waypoints: [],
+    });
+
+    it('returns the all-in price a rider pays, not just the driver fare', async () => {
+        mockPrisma.ride.findMany.mockResolvedValue([rideWithSegments(10)]);
+        mockPrisma.ridePricingSnapshot.findMany.mockResolvedValue([
+            { rideId: 'ride-1', serviceFeePercent: 2, serviceFeeFlat: 0 },
+        ]);
+
+        const result = await searchRidesAdvanced({
+            originLat: 1,
+            originLng: 1,
+            destinationLat: 4,
+            destinationLng: 4,
+            departureDate: new Date('2026-03-30T00:00:00.000Z'),
+            page: 1,
+            limit: 10,
+            radiusKm: 5,
+        });
+
+        expect(result.rides).toHaveLength(1);
+        expect(result.rides[0]).toMatchObject({
+            basePricePerSeat: 10,
+            riderTotalPerSeat: 10.2,
+            serviceFeePerSeat: 0.2,
+        });
+    });
+
+    it('excludes a ride whose all-in price exceeds maxPrice even though its fare does not', async () => {
+        mockPrisma.ride.findMany.mockResolvedValue([rideWithSegments(10)]);
+        mockPrisma.ridePricingSnapshot.findMany.mockResolvedValue([
+            { rideId: 'ride-1', serviceFeePercent: 2, serviceFeeFlat: 0 },
+        ]);
+
+        // A 10.00 fare is within budget, but the rider would be charged 10.20 at checkout.
+        const result = await searchRidesAdvanced({
+            originLat: 1,
+            originLng: 1,
+            destinationLat: 4,
+            destinationLng: 4,
+            departureDate: new Date('2026-03-30T00:00:00.000Z'),
+            maxPrice: 10,
+            page: 1,
+            limit: 10,
+            radiusKm: 5,
+        });
+
+        expect(result.rides).toHaveLength(0);
     });
 
     it('keeps full-ride origin, destination, and price for exact route matches', async () => {

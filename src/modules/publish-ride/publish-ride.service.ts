@@ -5,7 +5,11 @@ import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
 import { createNotification } from '../notification/notification.service.js';
-import { markBookingPaymentRefunded } from '../payments/payment.service.js';
+import {
+    markBookingPaymentRefunded,
+    netFareAmount,
+    netPlatformFeeAmount,
+} from '../payments/payment.service.js';
 import { formatBookingReference } from '../../utils/booking-reference.js';
 import { combineDepartureDateTimeInRideTimezone } from '../../utils/ride-timezone.js';
 import { isRideStartTooEarly } from '../../utils/ride-start-window.js';
@@ -78,6 +82,60 @@ const reconcileDriverRideListStatuses = async (driverId: string) => {
    ============================================================ */
 
 /* ================= GET USER RIDES ================= */
+/**
+ * The money a driver is shown for one booking, split on the backend.
+ *
+ * Under the fee-on-top model the rider's total and the driver's earning differ by the service fee,
+ * so both are sent explicitly — the client must never subtract one from the other. The Payment row
+ * wins when present: it is authoritative once charged. Amounts are shown net of anything already
+ * refunded, which is what the driver is actually owed. Bookings predating service fees have no
+ * recorded fee, which correctly reads as zero.
+ */
+const resolveDriverBookingAmounts = (
+    booking: {
+        totalPrice: number;
+        serviceFeeAmount?: number | null;
+        serviceFeePercent?: number | null;
+        payment?: {
+            amountTotal: number;
+            fareAmount: number;
+            platformFeeAmount: number;
+            refundedFareAmount: number;
+            refundedFeeAmount: number;
+            currency: string;
+        } | null;
+    },
+    rideCurrency: string
+): {
+    currency: string;
+    riderTotalAmount: number;
+    serviceFeeAmount: number;
+    driverNetAmount: number;
+    serviceFeePercent: number | null;
+} => {
+    const cents = (value: number) => Math.round(value * 100);
+
+    if (booking.payment) {
+        const refunded = cents(booking.payment.refundedFareAmount) + cents(booking.payment.refundedFeeAmount);
+        return {
+            currency: booking.payment.currency || rideCurrency,
+            riderTotalAmount: Math.max(0, cents(booking.payment.amountTotal) - refunded) / 100,
+            serviceFeeAmount: netPlatformFeeAmount(booking.payment),
+            driverNetAmount: netFareAmount(booking.payment),
+            serviceFeePercent: booking.serviceFeePercent ?? null,
+        };
+    }
+
+    const serviceFeeAmount = booking.serviceFeeAmount ?? 0;
+    return {
+        currency: rideCurrency,
+        riderTotalAmount: booking.totalPrice,
+        serviceFeeAmount,
+        driverNetAmount: (cents(booking.totalPrice) - cents(serviceFeeAmount)) / 100,
+        serviceFeePercent: booking.serviceFeePercent ?? null,
+    };
+};
+
 export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
     await reconcileDriverRideListStatuses(driverId);
 
@@ -146,6 +204,16 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                                 avatarUrl: true,
                             },
                         },
+                        payment: {
+                            select: {
+                                amountTotal: true,
+                                fareAmount: true,
+                                platformFeeAmount: true,
+                                refundedFareAmount: true,
+                                refundedFeeAmount: true,
+                                currency: true,
+                            },
+                        },
                     },
                 },
             },
@@ -160,7 +228,11 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
     const now = new Date();
     const enhancedRides = rides.map((ride: any) => {
         const enhancedBookings = ride.bookings.map((booking: any) => {
-            const enhanced: any = { ...booking, bookingReference: formatBookingReference(booking.id) };
+            const enhanced: any = {
+                ...booking,
+                bookingReference: formatBookingReference(booking.id),
+                ...resolveDriverBookingAmounts(booking, ride.currency),
+            };
 
             // Add decision deadline info for DRIVER_PENDING bookings
             if (booking.status === 'DRIVER_PENDING' && booking.driverDecisionDeadlineAt) {
@@ -297,6 +369,16 @@ export const getRideById = async (driverId: string, rideId: string) => {
                             avatarUrl: true,
                         },
                     },
+                    payment: {
+                        select: {
+                            amountTotal: true,
+                            fareAmount: true,
+                            platformFeeAmount: true,
+                            refundedFareAmount: true,
+                            refundedFeeAmount: true,
+                            currency: true,
+                        },
+                    },
                 },
             },
         },
@@ -323,7 +405,11 @@ export const getRideById = async (driverId: string, rideId: string) => {
     // Enhance bookings with decision deadline info and stopover times
     const now = new Date();
     const enhancedBookings = ride.bookings.map((booking: any) => {
-        const enhanced: any = { ...booking, bookingReference: formatBookingReference(booking.id) };
+        const enhanced: any = {
+            ...booking,
+            bookingReference: formatBookingReference(booking.id),
+            ...resolveDriverBookingAmounts(booking, ride.currency),
+        };
         const existingDriverRating = ratingByBookingId.get(booking.id);
 
         enhanced.hasDriverRatedPassenger = Boolean(existingDriverRating);

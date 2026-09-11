@@ -1,8 +1,15 @@
 import { prisma } from '../../config/index.js';
+import logger from '../../utils/logger.js';
 import { BookingStatus } from '@prisma/client';
 import { getStripeClient } from '../payments/stripe.service.js';
-import { recordTransfer } from '../ledger/ledger.service.js';
-import { PAYMENT_STATUSES, markTransferCreated, markPayoutCompleted } from '../payments/payment.service.js';
+import { recordTransfer, recordPayoutFailureReversal } from '../ledger/ledger.service.js';
+import {
+    PAYMENT_STATUSES,
+    markTransferCreated,
+    markPayoutCompleted,
+    netFareAmount,
+    netPlatformFeeAmount,
+} from '../payments/payment.service.js';
 import { processOutboxEvents } from '../payments/payment-outbox.worker.js';
 import { openDisputeWhereForPaymentEligibility } from '../dispute/dispute-settlement.service.js';
 import { OPEN_DISPUTE_STATUSES } from '../dispute/dispute.constants.js';
@@ -73,7 +80,10 @@ export const processDriverPayout = async (driverId: string) => {
     }
 
     const currency = payments[0].currency;
-    const totalAmount = payments.reduce((sum, p) => sum + p.fareAmount, 0);
+    // Pay the residual, not the gross: a partially refunded payment keeps its original fareAmount and
+    // records what went back to the rider in refundedFareAmount.
+    const totalAmount =
+        payments.reduce((sum, p) => sum + Math.round(netFareAmount(p) * 100), 0) / 100;
 
     if (process.env.STRIPE_CONNECT_MOCK_MODE !== 'true') {
         const driver = await prisma.user.findUnique({
@@ -101,8 +111,8 @@ export const processDriverPayout = async (driverId: string) => {
                 create: payments.map(p => ({
                     bookingId: p.bookingId,
                     paymentId: p.id,
-                    driverAmount: p.fareAmount,
-                    platformFee: p.platformFeeAmount,
+                    driverAmount: netFareAmount(p),
+                    platformFee: netPlatformFeeAmount(p),
                     status: 'PENDING',
                 })),
             },
@@ -119,7 +129,7 @@ export const processDriverPayout = async (driverId: string) => {
                 paymentId: payment.id,
                 bookingId: payment.bookingId,
                 driverId,
-                transferAmount: payment.fareAmount,
+                transferAmount: netFareAmount(payment),
                 currency: payment.currency,
             });
         }
@@ -166,7 +176,7 @@ export const processDriverPayout = async (driverId: string) => {
                 paymentId: payment.id,
                 bookingId: payment.bookingId,
                 driverId,
-                transferAmount: payment.fareAmount,
+                transferAmount: netFareAmount(payment),
                 currency: payment.currency,
             });
         }
@@ -189,16 +199,38 @@ export const processDriverPayout = async (driverId: string) => {
         });
 
         return { driverId, status: 'COMPLETED', batchId: batch.id, stripeTransferId: transfer.id, amount: totalAmount };
-    } catch (err: any) {
+    } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : 'UNKNOWN_TRANSFER_FAILURE';
+
         await prisma.payoutBatch.update({
             where: { id: batch.id },
-            data: { status: 'FAILED', failureReason: err.message },
+            data: { status: 'FAILED', failureReason: reason },
         });
         await prisma.payoutItem.updateMany({
             where: { payoutBatchId: batch.id },
             data: { status: 'FAILED' },
         });
-        return { driverId, status: 'FAILED', batchId: batch.id, reason: err.message };
+
+        // recordTransfer already discharged the driver's liability, so reopen it — otherwise the
+        // driver's derived balance shows them as paid for money that never left the platform.
+        for (const payment of payments) {
+            await recordPayoutFailureReversal({
+                paymentId: payment.id,
+                bookingId: payment.bookingId,
+                driverId,
+                reversedAmount: netFareAmount(payment),
+                currency: payment.currency,
+                reason,
+            }).catch((ledgerError: unknown) => {
+                logger.error(
+                    `Failed to write payout reversal for payment ${payment.id}: ${
+                        ledgerError instanceof Error ? ledgerError.message : 'unknown'
+                    }`
+                );
+            });
+        }
+
+        return { driverId, status: 'FAILED', batchId: batch.id, reason };
     }
 };
 
@@ -259,7 +291,7 @@ export const getEligiblePayoutCandidates = async () => {
         const driver = payment.booking.ride.driver;
         const existing = byDriver.get(driver.id);
         if (existing) {
-            existing.amountTotal += payment.fareAmount;
+            existing.amountTotal += netFareAmount(payment);
             existing.paymentsCount += 1;
             existing.payments.push(payment);
             continue;
@@ -271,7 +303,7 @@ export const getEligiblePayoutCandidates = async () => {
             stripeAccountId: driver.stripeAccountId,
             stripeOnboardingComplete: driver.stripeOnboardingComplete,
             currency: payment.currency,
-            amountTotal: payment.fareAmount,
+            amountTotal: netFareAmount(payment),
             paymentsCount: 1,
             payments: [payment],
         });
