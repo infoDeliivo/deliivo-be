@@ -693,12 +693,38 @@ function distanceFromRouteMeters(
   point: { lat: number; lng: number },
   encodedPolyline: string,
 ): number {
-  const path = decodePolyline(encodedPolyline);
-  let minimumDistance = Number.POSITIVE_INFINITY;
+  return distanceFromPathMeters(point, decodePolyline(encodedPolyline));
+}
+
+/**
+ * Shortest distance in meters from a point to an already-decoded route path.
+ * Prefer this over distanceFromRouteMeters in loops — it avoids re-decoding the polyline
+ * once per candidate.
+ */
+function distanceFromPathMeters(
+  point: { lat: number; lng: number },
+  path: { lat: number; lng: number }[],
+): number {
+  return projectOntoPath(point, path).offRouteMeters;
+}
+
+/**
+ * Project a point onto a decoded route path.
+ * Returns how far off the route it lies and how far along the route its closest point is —
+ * the along-route figure is what orders suggestions and prices them.
+ */
+function projectOntoPath(
+  point: { lat: number; lng: number },
+  path: { lat: number; lng: number }[],
+): { offRouteMeters: number; alongRouteMeters: number } {
+  let offRouteMeters = Number.POSITIVE_INFINITY;
+  let alongRouteMeters = 0;
+  let travelled = 0;
 
   for (let index = 0; index < path.length - 1; index += 1) {
     const start = path[index];
     const end = path[index + 1];
+    const segmentLength = haversineDistance(start, end);
     const meanLatitude = ((start.lat + end.lat + point.lat) / 3) * Math.PI / 180;
     const longitudeScale = Math.cos(meanLatitude);
     const segmentX = (end.lng - start.lng) * longitudeScale;
@@ -713,10 +739,17 @@ function distanceFromRouteMeters(
       lat: start.lat + ratio * (end.lat - start.lat),
       lng: start.lng + ratio * (end.lng - start.lng),
     };
-    minimumDistance = Math.min(minimumDistance, haversineDistance(point, projection));
+
+    const distance = haversineDistance(point, projection);
+    if (distance < offRouteMeters) {
+      offRouteMeters = distance;
+      alongRouteMeters = travelled + ratio * segmentLength;
+    }
+
+    travelled += segmentLength;
   }
 
-  return minimumDistance;
+  return { offRouteMeters, alongRouteMeters };
 }
 
 /**

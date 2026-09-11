@@ -78,17 +78,26 @@ const pointToSegmentDistance = (
     segStart: LatLng,
     segEnd: LatLng
 ): number => {
-    const segLength = calculateHaversineDistance(segStart, segEnd);
+    // Project in degree space with longitude scaled by cos(lat), so the projection
+    // parameter stays dimensionless. Dividing a degree-space dot product by a
+    // kilometre-space segment length (as this used to) collapses t to ~0 and degenerates
+    // the whole function into "distance to segStart".
+    const meanLatitudeRad = (((segStart.lat + segEnd.lat + point.lat) / 3) * Math.PI) / 180;
+    const longitudeScale = Math.cos(meanLatitudeRad);
 
-    if (segLength === 0) {
+    const segmentX = (segEnd.lng - segStart.lng) * longitudeScale;
+    const segmentY = segEnd.lat - segStart.lat;
+    const pointX = (point.lng - segStart.lng) * longitudeScale;
+    const pointY = point.lat - segStart.lat;
+
+    const segmentLengthSquared = segmentX ** 2 + segmentY ** 2;
+
+    if (segmentLengthSquared === 0) {
         return calculateHaversineDistance(point, segStart);
     }
 
-    // Project point onto line segment
     const t = Math.max(0, Math.min(1,
-        ((point.lat - segStart.lat) * (segEnd.lat - segStart.lat) +
-            (point.lng - segStart.lng) * (segEnd.lng - segStart.lng)) /
-        (segLength * segLength * 111.32 * 111.32) // Convert to km²
+        (pointX * segmentX + pointY * segmentY) / segmentLengthSquared
     ));
 
     const projection: LatLng = {
