@@ -10,6 +10,11 @@ const cacheKeys = {
     userBookings: (userId: string) => `user:${userId}:bookings`,
     ride: (id: string) => `ride:${id}`,
     rideDetailsPattern: (id: string) => `ride:details:${id}:*`,
+    // Search results are cached per viewer for a minute, and the viewer id is the last segment of
+    // the key (see search-ride.controller.ts). A rider who cancels drops out of the "already
+    // booked" exclusion, so their cached pages are stale the moment the cancel lands — without
+    // this they cannot find the ride again to re-book it for up to a minute.
+    viewerSearchPattern: (viewerId: string) => `search:v3:*:${viewerId}`,
 };
 
 /* ================= CREATE BOOKING ================= */
@@ -294,6 +299,7 @@ export const cancelBooking = async (req: AuthRequest, res: Response) => {
         await deleteCache(cacheKeys.userBookings(req.user.id));
         await deleteCache(cacheKeys.ride(result.rideId));
         await deleteCachePattern(cacheKeys.rideDetailsPattern(result.rideId));
+        await deleteCachePattern(cacheKeys.viewerSearchPattern(req.user.id));
 
         return sendSuccess(res, {
             message: 'Booking cancelled successfully',
@@ -390,6 +396,9 @@ export const withdrawBooking = async (req: AuthRequest, res: Response) => {
         await deleteCache(cacheKeys.booking(bookingId));
         await deleteCachePattern(cacheKeys.bookingPattern(bookingId));
         await deleteCache(cacheKeys.userBookings(req.user.id));
+        await deleteCache(cacheKeys.ride(result.rideId));
+        await deleteCachePattern(cacheKeys.rideDetailsPattern(result.rideId));
+        await deleteCachePattern(cacheKeys.viewerSearchPattern(req.user.id));
 
         return sendSuccess(res, {
             message: 'Booking request withdrawn successfully',

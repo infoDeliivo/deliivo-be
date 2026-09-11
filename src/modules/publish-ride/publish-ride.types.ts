@@ -198,6 +198,12 @@ export interface LocationInput {
     recommendedPrice?: number;
     minPrice?: number;
     maxPrice?: number;
+    /**
+     * Price the driver explicitly chose for this stop, clamped to [minPrice, maxPrice].
+     * Kept separate from recommendedPrice, which is recomputed from distance on every pricing
+     * update and would otherwise overwrite the driver's choice.
+     */
+    driverPricePerSeat?: number;
 }
 
 export interface UpdatePickupsInput {
@@ -285,6 +291,22 @@ export interface PriceRecommendation {
         pricingConfigFallback?: boolean;
     };
     quote: PriceQuote;
+    /** Per-stopover fares for the draft's current stopovers, sorted by distance from origin. */
+    stopoverPricing?: StopoverRecommendedPrice[];
+}
+
+export interface StopoverRecommendedPrice {
+    placeId: string;
+    address: string;
+    /** Rounded to one decimal for display; the fares below use the unrounded distance. */
+    distanceFromOriginKm: number;
+    /** Distance-derived fare for this stop at the base price being quoted. */
+    recommendedPrice: number;
+    minPrice: number;
+    maxPrice: number;
+    /** The driver's own choice for this stop, when they have set one. */
+    driverPricePerSeat?: number;
+    estimatedArrivalTime?: string;
 }
 
 /* ================= STOPPER POINT SUGGESTIONS ================= */

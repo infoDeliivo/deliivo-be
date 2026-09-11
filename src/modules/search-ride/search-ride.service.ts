@@ -1077,6 +1077,9 @@ export const getRideViewByToken = async (
     destinationLat: riderView.destinationLat,
     destinationLng: riderView.destinationLng,
     basePricePerSeat: riderView.basePricePerSeat,
+    routeDistanceMeters: riderView.routeDistanceMeters,
+    routeDurationSeconds: riderView.routeDurationSeconds,
+    departureTime: riderView.departureTime ?? ride.departureTime,
     bookingContext: riderView.bookingContext,
     segment: riderView.segment,
     segmentId: viewToken,
@@ -1103,10 +1106,14 @@ export const getRideViewByToken = async (
     destinationLat: riderView.destinationLat,
     destinationLng: riderView.destinationLng,
     routePolyline: ride.routePolyline,
-    routeDistanceMeters: ride.routeDistanceMeters,
-    routeDurationSeconds: ride.routeDurationSeconds,
+    // The rider only travels part of this route, so the segment's own length and duration are
+    // reported. Handing back the full-route figures made a Tartu-to-Paide leg of a longer ride
+    // read as the whole drive.
+    routeDistanceMeters: riderView.routeDistanceMeters,
+    routeDurationSeconds: riderView.routeDurationSeconds,
     departureDate: ride.departureDate,
-    departureTime: ride.departureTime,
+    // A rider boarding at a mid-route stop leaves later than the driver did.
+    departureTime: riderView.departureTime ?? ride.departureTime,
     totalSeats: ride.totalSeats,
     availableSeats: ride.availableSeats,
     basePricePerSeat: riderView.basePricePerSeat,
@@ -1501,6 +1508,9 @@ export const searchRidesAdvanced = async (
           destinationLat: riderView.destinationLat,
           destinationLng: riderView.destinationLng,
           basePricePerSeat: riderView.basePricePerSeat,
+          routeDistanceMeters: riderView.routeDistanceMeters,
+          routeDurationSeconds: riderView.routeDurationSeconds,
+          departureTime: riderView.departureTime ?? ride.departureTime,
           bookingContext: riderView.bookingContext,
           segment: riderView.segment,
           segmentId,
@@ -1557,11 +1567,14 @@ export const searchRidesAdvanced = async (
       destinationAddress: riderView?.destinationAddress ?? ride.destinationAddress,
       destinationLat: riderView?.destinationLat ?? ride.destinationLat,
       destinationLng: riderView?.destinationLng ?? ride.destinationLng,
-      routeDistanceMeters: ride.routeDistanceMeters,
-      routeDurationSeconds: ride.routeDurationSeconds,
+      // Matches the addresses above: when the rider is shown a leg of the ride, the length and
+      // duration describe that leg, not the driver's whole route.
+      routeDistanceMeters: riderView ? riderView.routeDistanceMeters : ride.routeDistanceMeters,
+      routeDurationSeconds: riderView ? riderView.routeDurationSeconds : ride.routeDurationSeconds,
       routePolyline: ride.routePolyline,
       departureDate: ride.departureDate,
-      departureTime: ride.departureTime,
+      // A rider boarding at a mid-route stop leaves later than the driver did.
+      departureTime: riderView?.departureTime ?? ride.departureTime,
       availableSeats: ride.availableSeats,
       basePricePerSeat: riderFacingPrice,
       riderTotalPerSeat: seatQuote.totalPrice,

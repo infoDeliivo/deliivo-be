@@ -19,7 +19,7 @@ export const DEFAULT_BALTIC_PRICING_CONFIG = {
     maxRatePerKm: 0.12,
     minimumSeatPrice: 3,
     roundingStrategy: 'NEAREST_EURO',
-    serviceFeePercent: 2,
+    serviceFeePercent: 20,
     serviceFeeFlat: 0,
 } as const;
 

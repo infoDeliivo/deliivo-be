@@ -122,6 +122,8 @@ type BookingWithRideDetails = {
     status: BookingStatus;
     pickupWaypointId: string | null;
     dropoffWaypointId: string | null;
+    cancelledAt?: Date | null;
+    cancelledByRole?: string | null;
     createdAt: Date;
     updatedAt: Date;
     stripePaymentIntentId: string | null;
@@ -809,6 +811,11 @@ const mapBookingResponse = (
         priceBreakdown: options?.priceBreakdown ?? reconstructPriceBreakdown(booking),
         status: booking.status,
         displayStatus,
+        // Who ended the booking. CANCELLED covers the rider's own cancel, the driver's cancel or
+        // rejection, and the automated ones, and the rider-facing UI has to tell them apart: only
+        // a rider's own cancellation reopens booking on that ride.
+        cancelledAt: booking.cancelledAt ?? null,
+        cancelledByRole: booking.cancelledByRole ?? null,
         pickupWaypointId: booking.pickupWaypointId,
         dropoffWaypointId: booking.dropoffWaypointId,
         notes: options?.notes ?? null,
@@ -2499,7 +2506,7 @@ export const withdrawBooking = async (
     passengerId: string,
     bookingId: string,
     reason?: string
-): Promise<{ bookingId: string; status: string; refundInitiated: boolean }> => {
+): Promise<{ bookingId: string; rideId: string; status: string; refundInitiated: boolean }> => {
     const booking = await prisma.rideBooking.findFirst({
         where: {
             id: bookingId,
@@ -2601,7 +2608,8 @@ export const withdrawBooking = async (
         },
     });
 
-    return { bookingId, status: 'CANCELLED', refundInitiated };
+    // rideId so the controller can drop the ride's caches, the same way cancelBooking does.
+    return { bookingId, rideId: booking.rideId, status: 'CANCELLED', refundInitiated };
 };
 
 /* ================= DRIVER RESPONSE METRICS ================= */

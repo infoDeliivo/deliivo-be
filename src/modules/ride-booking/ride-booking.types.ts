@@ -105,6 +105,9 @@ export interface BookingResponse {
     priceBreakdown?: PriceBreakdown;
     status: BookingStatus;
     displayStatus?: string;
+    cancelledAt?: Date | null;
+    /** 'PASSENGER' | 'DRIVER' | 'ADMIN' | 'SYSTEM' — who ended the booking. */
+    cancelledByRole?: string | null;
     pickupWaypointId: string | null;
     dropoffWaypointId: string | null;
     notes: string | null;

@@ -1,3 +1,5 @@
+import { decodePolyline, routeLengthKm, routeProgressKm } from './polyline.utils.js';
+
 export type SegmentPointRef = 'origin' | 'destination' | `waypoint:${string}`;
 
 export interface SegmentPoint {
@@ -34,6 +36,18 @@ export interface SegmentView {
     destinationLat: number;
     destinationLng: number;
     basePricePerSeat: number;
+    /**
+     * Length and duration of the segment the rider actually travels, not of the driver's whole
+     * route. Null when the ride has no usable route geometry to measure against — callers should
+     * omit the figures rather than fall back to the full-route ones.
+     */
+    routeDistanceMeters: number | null;
+    routeDurationSeconds: number | null;
+    /**
+     * When the rider is actually picked up. Differs from the ride's departure time whenever they
+     * board at a mid-route stop. Null when there is no geometry to place the pickup on.
+     */
+    departureTime: string | null;
     bookingContext: SegmentBookingContext;
     segment: SegmentDiagnostics;
 }
@@ -61,6 +75,10 @@ export interface SegmentRide {
     destinationLng: number;
     basePricePerSeat: number;
     waypoints: SegmentRideWaypoint[];
+    routePolyline?: string | null;
+    routeDistanceMeters?: number | null;
+    routeDurationSeconds?: number | null;
+    departureTime?: string | null;
 }
 
 /**
@@ -146,6 +164,99 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
     ];
 };
 
+/**
+ * Where two points sit along the driver's route, each as a fraction of its total length.
+ *
+ * Both ends are measured as progress along the polyline, so they reflect the road the rider is
+ * carried over rather than the straight line between them. Returns null when the route has no
+ * geometry, or when the two points project to the same place and no leg can be told apart from
+ * rounding noise.
+ */
+const routeSharesBetween = (
+    ride: SegmentRide,
+    pickup: SegmentPoint,
+    drop: SegmentPoint
+): { pickupShare: number; legShare: number } | null => {
+    if (!ride.routePolyline) return null;
+
+    const routePoints = decodePolyline(ride.routePolyline);
+    const totalKm = routeLengthKm(routePoints);
+    if (totalKm <= 0) return null;
+
+    const pickupKm = routeProgressKm(pickup, routePoints);
+    const dropKm = routeProgressKm(drop, routePoints);
+    if (pickupKm === null || dropKm === null) return null;
+
+    const legShare = (dropKm - pickupKm) / totalKm;
+    if (legShare <= 0) return null;
+
+    return {
+        pickupShare: Math.min(1, Math.max(0, pickupKm / totalKm)),
+        legShare: Math.min(1, legShare),
+    };
+};
+
+/** Move an HH:mm clock time forward by a number of seconds, wrapping past midnight. */
+const shiftClockTime = (time: string, seconds: number): string => {
+    const [hours, minutes] = time.split(':').map(Number);
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return time;
+
+    const shifted = (hours * 60 + minutes + Math.round(seconds / 60)) % (24 * 60);
+    const wrapped = (shifted + 24 * 60) % (24 * 60);
+
+    return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
+};
+
+const segmentRouteMetrics = (
+    ride: SegmentRide,
+    pickup: SegmentPoint,
+    drop: SegmentPoint
+): {
+    routeDistanceMeters: number | null;
+    routeDurationSeconds: number | null;
+    departureTime: string | null;
+} => {
+    const rideDepartureTime = ride.departureTime ?? null;
+
+    // The whole route's endpoints: nothing to trim, so the ride's own figures already describe it.
+    if (pickup.ref === 'origin' && drop.ref === 'destination') {
+        return {
+            routeDistanceMeters: ride.routeDistanceMeters ?? null,
+            routeDurationSeconds: ride.routeDurationSeconds ?? null,
+            departureTime: rideDepartureTime,
+        };
+    }
+
+    const shares = routeSharesBetween(ride, pickup, drop);
+    if (shares === null) {
+        return { routeDistanceMeters: null, routeDurationSeconds: null, departureTime: null };
+    }
+
+    // Scale the provider's own totals by the share, rather than reporting the polyline's length:
+    // the polyline is a simplified trace and runs a little short of the real road distance.
+    const routeDurationSeconds =
+        ride.routeDurationSeconds != null
+            ? Math.round(ride.routeDurationSeconds * shares.legShare)
+            : null;
+
+    // The rider boards partway along, so their departure is the driver's plus the drive up to the
+    // pickup. Derived from the same geometry as the distance, not from the waypoint arrival times
+    // publishing writes, which space stops evenly by list position instead of by distance.
+    const departureTime =
+        rideDepartureTime && ride.routeDurationSeconds != null
+            ? shiftClockTime(rideDepartureTime, ride.routeDurationSeconds * shares.pickupShare)
+            : rideDepartureTime;
+
+    return {
+        routeDistanceMeters:
+            ride.routeDistanceMeters != null
+                ? Math.round(ride.routeDistanceMeters * shares.legShare)
+                : null,
+        routeDurationSeconds,
+        departureTime,
+    };
+};
+
 const findPointByRef = (
     points: SegmentPoint[],
     ref: SegmentPointRef | null | undefined
@@ -208,6 +319,7 @@ export const resolveSegmentView = (
         destinationLat: drop.lat,
         destinationLng: drop.lng,
         basePricePerSeat: segmentFare,
+        ...segmentRouteMetrics(ride, pickup, drop),
         bookingContext: {
             rideId: ride.id,
             pickupWaypointId: pickup.waypointId,

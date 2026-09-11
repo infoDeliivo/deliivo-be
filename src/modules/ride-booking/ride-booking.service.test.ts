@@ -844,3 +844,84 @@ describe('createBooking re-entry on an unpaid booking', () => {
         expect(mockedCreateBookingPaymentIntent).not.toHaveBeenCalled();
     });
 });
+
+describe('createBooking after the rider cancelled', () => {
+    // The rider's earlier booking on this ride, ended by their own cancellation. It stays as a
+    // CANCELLED row — nothing deletes it — so every lookup on the re-book path has to step over it.
+    const cancelledBooking = {
+        id: 'booking-cancelled',
+        rideId: 'ride-1',
+        passengerId: 'passenger-1',
+        status: 'CANCELLED',
+        cancelledByRole: 'PASSENGER',
+        stripePaymentIntentId: 'pi_old',
+        ride: { status: 'PUBLISHED' },
+    };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        process.env.BOOKING_PAYMENT_MODE = 'stripe';
+
+        mockedCreateBookingPaymentIntent.mockResolvedValue({
+            paymentIntentId: 'pi_new',
+            clientSecret: 'pi_new_secret',
+            currency: 'GBP',
+        });
+        mockedCreatePayment.mockResolvedValue({ id: 'payment-mock-id' });
+    });
+
+    it('books the ride again and leaves the cancelled booking alone', async () => {
+        const tx = buildTx();
+        useTx(tx);
+
+        // Honour the status filter the way the database would. The duplicate guard asks for
+        // ACTIVE_BOOKING_STATUSES and the unpaid re-entry lookup for PAYMENT_PENDING; a cancelled
+        // row matches neither, which is exactly what lets the re-book through.
+        tx.rideBooking.findFirst.mockImplementation(async (args: any) => {
+            const status = args?.where?.status;
+            const wanted = status?.in ?? (status ? [status] : []);
+            return wanted.includes(cancelledBooking.status) ? cancelledBooking : null;
+        });
+
+        const booking = await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(booking.resumed).toBeUndefined();
+        expect(tx.rideBooking.create).toHaveBeenCalled();
+        expect(mockedCreateBookingPaymentIntent).toHaveBeenCalled();
+
+        // History, not something to revive: the cancelled row keeps its status and its own refund
+        // state, and the rider's new seat is a brand new booking with a brand new intent.
+        expect(tx.rideBooking.update).not.toHaveBeenCalledWith(
+            expect.objectContaining({ where: { id: 'booking-cancelled' } })
+        );
+        expect(mockedCancelPaymentIntent).not.toHaveBeenCalledWith('pi_old');
+    });
+
+    it('still refuses a second active booking on the same ride', async () => {
+        const tx = buildTx();
+        useTx(tx);
+        tx.rideBooking.findFirst.mockImplementation(async (args: any) => {
+            const status = args?.where?.status;
+            const wanted = status?.in ?? (status ? [status] : []);
+            return wanted.includes('CONFIRMED')
+                ? { ...cancelledBooking, id: 'booking-live', status: 'CONFIRMED' }
+                : null;
+        });
+
+        await expect(
+            createBooking('passenger-1', {
+                rideId: 'ride-1',
+                seatsBooked: 1,
+                pickupWaypointId: 'wp-b',
+                dropoffWaypointId: 'wp-c',
+            })
+        ).rejects.toThrow('BOOKING_ALREADY_EXISTS');
+
+        expect(tx.rideBooking.create).not.toHaveBeenCalled();
+    });
+});

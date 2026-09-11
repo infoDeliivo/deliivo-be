@@ -1015,7 +1015,7 @@ model PricingConfig {
   maxRatePerKm         Float
   minimumSeatPrice     Float     @default(3.00)
   roundingStrategy     String    @default("NEAREST_EURO") // NEAREST_EURO, NEAREST_HALF_EURO
-  serviceFeePercent    Float     @default(2) // charged to the rider ON TOP of the driver's fare
+  serviceFeePercent    Float     @default(20) // charged to the rider ON TOP of the driver's fare
   serviceFeeFlat       Float     @default(0) // optional fixed per-booking component, also rider-paid
   active               Boolean   @default(true)
   validFrom            DateTime  @default(now())

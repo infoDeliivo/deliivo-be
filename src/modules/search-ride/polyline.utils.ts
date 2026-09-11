@@ -71,13 +71,16 @@ export const isPointOnRoute = (
 };
 
 /**
- * Calculate perpendicular distance from point to line segment
+ * Project a point onto a line segment.
+ *
+ * Returns how far along the segment the projection falls (0 at segStart, 1 at segEnd) together
+ * with the distance from the original point to that projection.
  */
-const pointToSegmentDistance = (
+const projectOntoSegment = (
     point: LatLng,
     segStart: LatLng,
     segEnd: LatLng
-): number => {
+): { distance: number; fraction: number } => {
     // Project in degree space with longitude scaled by cos(lat), so the projection
     // parameter stays dimensionless. Dividing a degree-space dot product by a
     // kilometre-space segment length (as this used to) collapses t to ~0 and degenerates
@@ -93,7 +96,7 @@ const pointToSegmentDistance = (
     const segmentLengthSquared = segmentX ** 2 + segmentY ** 2;
 
     if (segmentLengthSquared === 0) {
-        return calculateHaversineDistance(point, segStart);
+        return { distance: calculateHaversineDistance(point, segStart), fraction: 0 };
     }
 
     const t = Math.max(0, Math.min(1,
@@ -105,7 +108,71 @@ const pointToSegmentDistance = (
         lng: segStart.lng + t * (segEnd.lng - segStart.lng),
     };
 
-    return calculateHaversineDistance(point, projection);
+    return { distance: calculateHaversineDistance(point, projection), fraction: t };
+};
+
+/**
+ * Calculate perpendicular distance from point to line segment
+ */
+const pointToSegmentDistance = (
+    point: LatLng,
+    segStart: LatLng,
+    segEnd: LatLng
+): number => projectOntoSegment(point, segStart, segEnd).distance;
+
+/* ================= PROGRESS ALONG ROUTE ================= */
+/**
+ * How far along a route a point sits, in kilometres from the route's start.
+ *
+ * Walks the polyline, projects the point onto every segment and keeps the closest one, so a
+ * meeting point a little off the road still lands at the right place along the route. This is
+ * along-route distance, not straight-line distance from the origin — the two differ by a lot on
+ * anything but a straight road, which is why a segment's length cannot be measured with haversine.
+ *
+ * Returns null when the route has no usable geometry.
+ */
+export const routeProgressKm = (
+    point: LatLng,
+    routePoints: LatLng[]
+): number | null => {
+    if (routePoints.length === 0) return null;
+    if (routePoints.length === 1) return 0;
+
+    let travelled = 0;
+    let closestDistance = Infinity;
+    let progressAtClosest = 0;
+
+    for (let i = 0; i < routePoints.length - 1; i++) {
+        const segStart = routePoints[i];
+        const segEnd = routePoints[i + 1];
+        const segmentLength = calculateHaversineDistance(segStart, segEnd);
+        const { distance, fraction } = projectOntoSegment(point, segStart, segEnd);
+
+        if (distance < closestDistance) {
+            closestDistance = distance;
+            progressAtClosest = travelled + segmentLength * fraction;
+        }
+
+        travelled += segmentLength;
+    }
+
+    return progressAtClosest;
+};
+
+/**
+ * Total length of a decoded route, in kilometres.
+ *
+ * Used as the denominator for routeProgressKm, so both sides of the ratio are measured the same
+ * way: the polyline's own length, not the road distance the maps provider reported.
+ */
+export const routeLengthKm = (routePoints: LatLng[]): number => {
+    let total = 0;
+
+    for (let i = 0; i < routePoints.length - 1; i++) {
+        total += calculateHaversineDistance(routePoints[i], routePoints[i + 1]);
+    }
+
+    return total;
 };
 
 /* ================= FIND NEAREST POINT ON ROUTE ================= */

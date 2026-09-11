@@ -20,17 +20,12 @@ import {
     DEFAULT_BALTIC_PRICING_CONFIG,
 } from './pricing.service.js';
 
+// Built from the compiled-in default so the two cannot drift: this fixture stands in for the row
+// ensureDefaultPricingConfig seeds, which is written from that constant. Tests that care about a
+// particular rate pass it as an override.
 const activeConfig = (overrides: Record<string, unknown> = {}) => ({
+    ...DEFAULT_BALTIC_PRICING_CONFIG,
     id: 'cfg-1',
-    regionCode: 'BALTIC',
-    currency: 'EUR',
-    minRatePerKm: 0.06,
-    recommendedRatePerKm: 0.08,
-    maxRatePerKm: 0.12,
-    minimumSeatPrice: 3,
-    roundingStrategy: 'NEAREST_EURO',
-    serviceFeePercent: 2,
-    serviceFeeFlat: 0,
     active: true,
     validFrom: new Date('2024-01-01'),
     validTo: null,

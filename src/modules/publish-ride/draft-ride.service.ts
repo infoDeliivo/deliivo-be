@@ -24,7 +24,9 @@ import {
   RouteLocationMode,
   StopoverPointGroup,
   RouteLocationSuggestionsResult,
+  StopoverRecommendedPrice,
 } from './publish-ride.types.js';
+import { calculateStopoverFare, clampToRange } from './stopover-pricing.utils.js';
 import { calculateWaypointArrivalTimes, arrivalTimeAtRouteFraction } from './waypoint-time.utils.js';
 import { assertDriverCanPublish } from './driver-eligibility.service.js';
 import { DEFAULT_BALTIC_PRICING_CONFIG, getPricePreview, resolveActiveFeeTerms, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
@@ -1323,16 +1325,7 @@ const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = DEFAULT_BALTIC_PRICIN
 export const getRecommendedPrice = async (
   driverId: string,
   candidateBasePricePerSeat?: number,
-): Promise<
-  PriceRecommendation & {
-    stopoverPricing?: {
-      placeId: string;
-      address: string;
-      distanceFromOriginKm: number;
-      recommendedPrice: number;
-    }[];
-  }
-> => {
+): Promise<PriceRecommendation> => {
   const draft = await getDraft(driverId);
 
   if (!draft.routeDistanceMeters) {
@@ -1359,16 +1352,16 @@ export const getRecommendedPrice = async (
   const recommendedPrice = calculation.recommendedPricePerSeat;
   const maxPrice = calculation.maxAllowedPricePerSeat;
 
+  // The price the driver is actually looking at: their own candidate once they have typed one,
+  // otherwise the recommendation. Everything below — the quote and the per-stopover fares — is
+  // priced off this single value, so the preview cannot disagree with what updatePricing saves.
+  const quotedBasePrice =
+    candidateBasePricePerSeat !== undefined && candidateBasePricePerSeat > 0
+      ? candidateBasePricePerSeat
+      : recommendedPrice;
+
   // Calculate per-stopper pricing and arrival times if stopovers exist
-  let stopoverPricing:
-    | {
-        placeId: string;
-        address: string;
-        distanceFromOriginKm: number;
-        recommendedPrice: number;
-        estimatedArrivalTime?: string;
-      }[]
-    | undefined;
+  let stopoverPricing: StopoverRecommendedPrice[] | undefined;
 
   if (draft.stopovers && draft.stopovers.length > 0 && draft.originLat && draft.originLng) {
     // Calculate arrival times if departure time is set
@@ -1387,15 +1380,23 @@ export const getRecommendedPrice = async (
         { lat: draft.originLat!, lng: draft.originLng! },
         { lat: stopover.lat, lng: stopover.lng },
       );
-      const distFromOriginKm = Math.round((distFromOrigin / 1000) * 10) / 10;
-      const ratio = distFromOriginKm / distanceKm;
-      const stopPrice = Math.round(recommendedPrice * ratio * 100) / 100;
+      const distFromOriginKm = distFromOrigin / 1000;
+      const fare = calculateStopoverFare(quotedBasePrice, distFromOriginKm, distanceKm);
 
       return {
         placeId: stopover.placeId,
         address: stopover.address,
-        distanceFromOriginKm: distFromOriginKm,
-        recommendedPrice: stopPrice,
+        // Rounded for display only — the fares above are priced off the unrounded distance.
+        distanceFromOriginKm: Math.round(distFromOriginKm * 10) / 10,
+        recommendedPrice: fare.recommendedPrice,
+        minPrice: fare.minPrice,
+        maxPrice: fare.maxPrice,
+        // Re-clamped against the range for the price currently being quoted: the driver may have
+        // set this stop's fare and then moved the base price, which shifts the whole range.
+        driverPricePerSeat:
+          stopover.driverPricePerSeat !== undefined
+            ? clampToRange(stopover.driverPricePerSeat, fare.minPrice, fare.maxPrice)
+            : undefined,
         estimatedArrivalTime: arrivalTimes.length > 0 ? arrivalTimes[index + 1] : undefined,
       };
     });
@@ -1409,10 +1410,6 @@ export const getRecommendedPrice = async (
   // Every amount the publish screen shows is computed here, with the same function that prices the
   // rider's real booking, so the driver-facing promise cannot drift from what the rider is charged.
   const feeTerms = await resolveActiveFeeTerms(calculation.regionCode);
-  const quotedBasePrice =
-    candidateBasePricePerSeat !== undefined && candidateBasePricePerSeat > 0
-      ? candidateBasePricePerSeat
-      : recommendedPrice;
   const seats = draft.totalSeats && draft.totalSeats > 0 ? draft.totalSeats : 1;
 
   const priceFor = (seatsBooked: number) =>
@@ -1494,19 +1491,26 @@ export const updatePricing = async (
         { lat: stopover.lat, lng: stopover.lng },
       );
       const distFromOriginKm = distFromOrigin / 1000;
-      const distanceRatio = distFromOriginKm / totalDistanceKm;
 
-      // Calculate prices based on base price and distance ratio
-      const stopoverBasePrice = input.basePricePerSeat * distanceRatio;
-      const recommendedPrice = Math.round(stopoverBasePrice * 100) / 100;
-      const minPrice = Math.round(stopoverBasePrice * 0.8 * 100) / 100;
-      const maxPrice = Math.round(stopoverBasePrice * 1.67 * 100) / 100; // 250/150 = 1.67
+      // Same helper the recommended-price preview uses, so the driver is saving the exact fares
+      // they were shown on the price step.
+      const fare = calculateStopoverFare(input.basePricePerSeat, distFromOriginKm, totalDistanceKm);
+
+      // The driver's own fare for this stop wins over the distance-derived one, held inside the
+      // range so a stop can never be priced above the full ride or below the floor. Omitting the
+      // stop from stopoverPricing keeps whatever they set before; sending it clears or replaces it.
+      const chosen = input.stopoverPricing?.find((item) => item.placeId === stopover.placeId);
+      const driverPricePerSeat =
+        chosen !== undefined
+          ? clampToRange(chosen.pricePerSeat, fare.minPrice, fare.maxPrice)
+          : stopover.driverPricePerSeat !== undefined
+            ? clampToRange(stopover.driverPricePerSeat, fare.minPrice, fare.maxPrice)
+            : undefined;
 
       return {
         ...stopover,
-        recommendedPrice,
-        minPrice,
-        maxPrice,
+        ...fare,
+        driverPricePerSeat,
       };
     });
   }
@@ -1857,7 +1861,8 @@ export const publishRide = async (driverId: string) => {
       lng: s.lng,
       waypointType: 'STOPOVER' as const,
       orderIndex: i + 50,
-      pricePerSeat: s.recommendedPrice ?? null, // Use embedded recommendedPrice
+      // The driver's own fare for this stop, falling back to the distance-derived one.
+      pricePerSeat: s.driverPricePerSeat ?? s.recommendedPrice ?? null,
     }));
 
     // Sort all waypoints by orderIndex

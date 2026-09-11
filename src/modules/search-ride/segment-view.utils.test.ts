@@ -1,3 +1,5 @@
+import polyline from '@mapbox/polyline';
+
 import { buildSegmentPoints, resolveSegmentView } from './segment-view.utils.js';
 
 describe('resolveSegmentView', () => {
@@ -317,5 +319,78 @@ describe('resolveSegmentView', () => {
             pickupWaypointId: 'wp-pickup',
             dropoffWaypointId: 'wp-dropoff',
         });
+    });
+});
+
+describe('segment route metrics', () => {
+    // A straight run from (0,0) to (0,4), with stops at every whole degree along it, so a leg's
+    // share of the route is obvious by inspection.
+    const straightRide = {
+        id: 'ride-2',
+        originPlaceId: 'place-a',
+        originAddress: 'A',
+        originLat: 0,
+        originLng: 0,
+        destinationPlaceId: 'place-d',
+        destinationAddress: 'D',
+        destinationLat: 0,
+        destinationLng: 4,
+        basePricePerSeat: 40,
+        routePolyline: polyline.encode([[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]]),
+        routeDistanceMeters: 400_000,
+        routeDurationSeconds: 14_400,
+        departureTime: '08:00',
+        waypoints: [
+            {
+                id: 'wp-b',
+                placeId: 'place-b',
+                address: 'B',
+                lat: 0,
+                lng: 1,
+                waypointType: 'STOPOVER',
+                orderIndex: 50,
+                pricePerSeat: 10,
+            },
+            {
+                id: 'wp-c',
+                placeId: 'place-c',
+                address: 'C',
+                lat: 0,
+                lng: 3,
+                waypointType: 'STOPOVER',
+                orderIndex: 51,
+                pricePerSeat: 30,
+            },
+        ],
+    };
+
+    it('reports the leg the rider travels, not the whole route', () => {
+        const points = buildSegmentPoints(straightRide);
+        const result = resolveSegmentView(straightRide, points, 'waypoint:wp-b', 'waypoint:wp-c');
+
+        // B -> C is half of a four-degree route.
+        expect(result?.routeDistanceMeters).toBe(200_000);
+        expect(result?.routeDurationSeconds).toBe(7_200);
+        // B is a quarter of the way along a four-hour drive that leaves at 08:00.
+        expect(result?.departureTime).toBe('09:00');
+    });
+
+    it('keeps the ride figures when the rider travels end to end', () => {
+        const points = buildSegmentPoints(straightRide);
+        const result = resolveSegmentView(straightRide, points, 'origin', 'destination');
+
+        expect(result?.routeDistanceMeters).toBe(400_000);
+        expect(result?.routeDurationSeconds).toBe(14_400);
+        expect(result?.departureTime).toBe('08:00');
+    });
+
+    it('reports nothing rather than the full route when the ride has no geometry', () => {
+        const withoutPolyline = { ...straightRide, routePolyline: null };
+        const points = buildSegmentPoints(withoutPolyline);
+        const result = resolveSegmentView(withoutPolyline, points, 'waypoint:wp-b', 'waypoint:wp-c');
+
+        expect(result?.routeDistanceMeters).toBeNull();
+        expect(result?.routeDurationSeconds).toBeNull();
+        expect(result?.departureTime).toBeNull();
     });
 });

@@ -173,56 +173,63 @@ describe('publishRide', () => {
         await expect(DraftRideService.publishRide('driver-1')).rejects.toThrow('MEETING_POINTS_REQUIRED');
     });
 
-    it('does not persist caller-supplied stopover prices in distance-based pricing mode', async () => {
-        const draft = {
-            userId: 'driver-1',
-            step: 10,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            basePricePerSeat: 30,
-        };
+    // A draft whose single stopover sits a known fraction along the route, so the distance-derived
+    // fare and its range are predictable without restating the haversine maths in the assertions.
+    const draftWithStopover = (stopoverExtras: Record<string, unknown> = {}) => ({
+        userId: 'driver-1',
+        step: 12,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        basePricePerSeat: 30,
+        originLat: 10,
+        originLng: 20,
+        routeDistanceMeters: 200_000,
+        stopovers: [
+            // Roughly halfway along the route, so the fare lands near half the base price.
+            { placeId: 'stop-a', address: 'Stop A', lat: 10, lng: 20.9089, ...stopoverExtras },
+        ],
+    });
 
-        mockRedis.get.mockResolvedValue(JSON.stringify(draft));
+    const savedStopover = () => {
+        const savedDraft = JSON.parse(mockRedis.setex.mock.calls[0][2] as string);
+        return savedDraft.stopovers[0];
+    };
+
+    it('persists a driver-chosen stopover fare over the distance-derived one', async () => {
+        mockRedis.get.mockResolvedValue(JSON.stringify(draftWithStopover()));
 
         await DraftRideService.updatePricing('driver-1', {
             basePricePerSeat: 40,
-            stopoverPricing: [
-                { placeId: 'stop-a', pricePerSeat: 12.5 },
-                { placeId: 'stop-b', pricePerSeat: 20 },
-            ],
+            stopoverPricing: [{ placeId: 'stop-a', pricePerSeat: 18 }],
         });
 
-        expect(mockRedis.setex).toHaveBeenCalledTimes(1);
-        const savedDraft = JSON.parse(mockRedis.setex.mock.calls[0][2] as string);
-        expect(savedDraft.stopoverPricingByPlaceId).toBeUndefined();
-        expect(savedDraft.basePricePerSeat).toBe(40);
+        const stopover = savedStopover();
+        expect(stopover.driverPricePerSeat).toBe(18);
+        // The distance-derived fare stays alongside it, so the range can be recomputed later.
+        expect(stopover.recommendedPrice).toBeGreaterThan(0);
+        expect(stopover.minPrice).toBeLessThan(stopover.recommendedPrice);
+        expect(stopover.maxPrice).toBeGreaterThan(stopover.recommendedPrice);
     });
 
-    it('preserves existing stopover pricing when updatePricing omits stopoverPricing', async () => {
-        const draft = {
-            userId: 'driver-1',
-            step: 12,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            basePricePerSeat: 30,
-            stopoverPricingByPlaceId: {
-                'stop-a': 12.5,
-                'stop-b': 20,
-            },
-        };
-
-        mockRedis.get.mockResolvedValue(JSON.stringify(draft));
+    it('clamps a driver-chosen stopover fare to the allowed range', async () => {
+        mockRedis.get.mockResolvedValue(JSON.stringify(draftWithStopover()));
 
         await DraftRideService.updatePricing('driver-1', {
-            basePricePerSeat: 45,
+            basePricePerSeat: 40,
+            stopoverPricing: [{ placeId: 'stop-a', pricePerSeat: 9999 }],
         });
 
-        expect(mockRedis.setex).toHaveBeenCalledTimes(1);
+        const stopover = savedStopover();
+        expect(stopover.driverPricePerSeat).toBe(stopover.maxPrice);
+    });
+
+    it('keeps an existing driver-chosen stopover fare when updatePricing omits stopoverPricing', async () => {
+        mockRedis.get.mockResolvedValue(JSON.stringify(draftWithStopover({ driverPricePerSeat: 20 })));
+
+        await DraftRideService.updatePricing('driver-1', { basePricePerSeat: 45 });
+
         const savedDraft = JSON.parse(mockRedis.setex.mock.calls[0][2] as string);
-        expect(savedDraft.stopoverPricingByPlaceId).toEqual({
-            'stop-a': 12.5,
-            'stop-b': 20,
-        });
+        expect(savedDraft.stopovers[0].driverPricePerSeat).toBe(20);
         expect(savedDraft.basePricePerSeat).toBe(45);
     });
 
