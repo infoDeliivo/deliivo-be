@@ -39,6 +39,8 @@ const mockFuelPriceService = {
 
 const mockGoogleService = {
     placeDetails: jest.fn(),
+    reverseGeocodeLocality: jest.fn(),
+    geocodeLocality: jest.fn(),
 };
 
 jest.mock('../../cache/redis.js', () => ({
@@ -105,6 +107,7 @@ describe('publishRide', () => {
         mockGoogleService.placeDetails.mockResolvedValue({
             address_components: [{ short_name: 'EE', types: ['country'] }],
         });
+        mockGoogleService.geocodeLocality.mockResolvedValue(null);
     });
 
     it('rejects a draft origin outside Estonia, Latvia, and Lithuania', async () => {

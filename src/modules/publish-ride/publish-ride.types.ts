@@ -298,6 +298,9 @@ export interface StopoverSuggestion {
     distanceFromOriginKm: number;
     distanceFromOriginMeters: number;
     types: string[];        // Google Places types (e.g. "locality", "point_of_interest")
+    // True when the place is the seat of its own administrative area (a town/parish centre)
+    // rather than a village inside someone else's. Towns are listed before villages.
+    isMajorTown?: boolean;
     pricePerSeat?: number;  // Auto-calculated based on distance + base price
     estimatedArrivalTime?: string;  // HH:MM format - calculated if departure time is set
 }
