@@ -63,18 +63,51 @@ export interface SegmentRide {
     waypoints: SegmentRideWaypoint[];
 }
 
-const interpolateStopoverPrice = (
-    index: number,
-    totalStopovers: number,
-    basePricePerSeat: number
-): number => {
-    const ratio = (index + 1) / (totalStopovers + 1);
-    return Math.round(basePricePerSeat * ratio * 100) / 100;
+/**
+ * Fills in the cumulative price of every point that has none, between the priced points around it.
+ *
+ * Only some waypoints carry a price: `updatePricing` embeds one on stopovers it can measure against
+ * the route, and publishing writes 0 on origin-side meeting points and the base fare on
+ * destination-side ones. Everything else arrives null and has to be placed somewhere sensible.
+ *
+ * The price is taken from the nearest priced point on each side — origin (0) and destination (the
+ * full fare) always anchor the ends — and spread evenly across the gap. Spreading over the whole
+ * waypoint list instead, as this used to, let the mandatory meeting points consume interpolation
+ * slots: one pickup and one dropoff around two unpriced stopovers put the first at 2/5 of the fare
+ * rather than 1/3, so a rider was quoted for more of the ride than the segment covers.
+ */
+const fillMissingCumulativePrices = (prices: (number | null)[]): number[] => {
+    const filled = [...prices];
+
+    for (let index = 0; index < filled.length; index++) {
+        if (filled[index] !== null) continue;
+
+        let previous = index - 1;
+        while (previous >= 0 && filled[previous] === null) previous--;
+
+        let next = index + 1;
+        while (next < filled.length && prices[next] === null) next++;
+
+        // The origin and destination are always priced, so both anchors exist.
+        const previousPrice = filled[previous] as number;
+        const nextPrice = prices[next] as number;
+        const step = (nextPrice - previousPrice) / (next - previous);
+
+        filled[index] = Math.round((previousPrice + step * (index - previous)) * 100) / 100;
+    }
+
+    return filled as number[];
 };
 
 export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
     const segmentWaypoints = [...ride.waypoints]
         .sort((a, b) => a.orderIndex - b.orderIndex);
+
+    const cumulativePrices = fillMissingCumulativePrices([
+        0,
+        ...segmentWaypoints.map((waypoint) => waypoint.pricePerSeat ?? null),
+        ride.basePricePerSeat,
+    ]);
 
     return [
         {
@@ -85,7 +118,7 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
             address: ride.originAddress,
             lat: ride.originLat,
             lng: ride.originLng,
-            cumulativePrice: 0,
+            cumulativePrice: cumulativePrices[0],
             position: 0,
         },
         ...segmentWaypoints.map((waypoint, index) => ({
@@ -96,8 +129,7 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
             address: waypoint.address,
             lat: waypoint.lat,
             lng: waypoint.lng,
-            cumulativePrice: waypoint.pricePerSeat
-                ?? interpolateStopoverPrice(index, segmentWaypoints.length, ride.basePricePerSeat),
+            cumulativePrice: cumulativePrices[index + 1],
             position: index + 1,
         })),
         {
@@ -108,7 +140,7 @@ export const buildSegmentPoints = (ride: SegmentRide): SegmentPoint[] => {
             address: ride.destinationAddress,
             lat: ride.destinationLat,
             lng: ride.destinationLng,
-            cumulativePrice: ride.basePricePerSeat,
+            cumulativePrice: cumulativePrices[segmentWaypoints.length + 1],
             position: segmentWaypoints.length + 1,
         },
     ];

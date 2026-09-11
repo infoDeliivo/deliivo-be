@@ -641,14 +641,25 @@ const buildCompleteDraft = (overrides: Record<string, any> = {}) => ({
     backSeatOnly: false,
     femaleOnly: false,
     notes: null,
+    // `recommendedPrice` is where a stopover's price lives: updatePricing measures each stopover
+    // against the route and embeds it on the draft, and publishing copies it to the waypoint. The
+    // draft is written straight to Redis here, so the prices are embedded the same way by hand.
     stopovers: [
-        { placeId: 'place-gatwick', address: 'Gatwick Airport', lat: 51.148, lng: -0.190 },
-        { placeId: 'place-crawley', address: 'Crawley Town', lat: 51.109, lng: -0.187 },
+        {
+            placeId: 'place-gatwick',
+            address: 'Gatwick Airport',
+            lat: 51.148,
+            lng: -0.190,
+            recommendedPrice: 12,
+        },
+        {
+            placeId: 'place-crawley',
+            address: 'Crawley Town',
+            lat: 51.109,
+            lng: -0.187,
+            recommendedPrice: 22,
+        },
     ],
-    stopoverPricingByPlaceId: {
-        'place-gatwick': 12,
-        'place-crawley': 22,
-    },
     // Publishing requires at least one meeting point at each end.
     pickups: [{ placeId: 'place-origin-pickup', address: 'London Victoria', lat: 51.495, lng: -0.144 }],
     dropoffs: [{ placeId: 'place-dest-dropoff', address: 'Brighton Station', lat: 50.829, lng: -0.141 }],
@@ -874,14 +885,18 @@ describe('Integration: Publish → Book → Driver Actions', () => {
         it('interpolates prices when stopovers have no explicit pricing', async () => {
             // No stopover pricing — should use interpolation
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({
-                stopoverPricingByPlaceId: {},
+                stopovers: [
+                    { placeId: 'place-gatwick', address: 'Gatwick Airport', lat: 51.148, lng: -0.190 },
+                    { placeId: 'place-crawley', address: 'Crawley Town', lat: 51.109, lng: -0.187 },
+                ],
             }));
             await DraftRideService.publishRide('driver-1');
 
             const rideId = rides[0].id;
             const gatwickWp = waypoints.find(w => w.placeId === 'place-gatwick')!;
 
-            // Interpolated: gatwick = 30 * (1/3) = 10, crawley = 30 * (2/3) = 20
+            // Interpolated between the origin and the destination, not across the meeting points:
+            // gatwick = 30 * (1/3) = 10, crawley = 30 * (2/3) = 20
             // Origin → Gatwick = 10
             const booking = await createBooking('passenger-1', {
                 rideId,
@@ -1316,8 +1331,10 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             expect(booking.pickupAddress).toBe('Gatwick Airport');
             expect(booking.dropoffAddress).toBe('Crawley Town');
             expect(booking.segmentFare).toBe(10); // 22 - 12
-            expect(booking.pickupPosition).toBe(1);
-            expect(booking.dropoffPosition).toBe(2);
+            // Positions count every point on the route: origin(0), the pickup meeting point(1),
+            // Gatwick(2), Crawley(3), the dropoff meeting point(4), destination(5).
+            expect(booking.pickupPosition).toBe(2);
+            expect(booking.dropoffPosition).toBe(3);
         });
 
         it('stores the pickup and dropoff meeting-point positions for a full-route booking', async () => {
@@ -1347,7 +1364,6 @@ describe('Integration: Publish → Book → Driver Actions', () => {
         it('publishes with meeting-point edges only and full-route booking works', async () => {
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({
                 stopovers: [],
-                stopoverPricingByPlaceId: {},
             }));
             await DraftRideService.publishRide('driver-1');
 

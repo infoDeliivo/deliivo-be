@@ -104,6 +104,97 @@ describe('resolveSegmentView', () => {
         expect(result?.basePricePerSeat).toBe(10);
     });
 
+    it('interpolates unpriced stopovers between their priced neighbours, not across meeting points', () => {
+        // Publishing requires a meeting point at each end, so the waypoint list normally carries a
+        // PICKUP at the origin and a DROPOFF at the destination. Spreading the interpolation over
+        // those too gave every unpriced stopover a share of the ride it does not cover: with one
+        // pickup and one dropoff present, B came out at 30 * 2/5 = 12 instead of 30 * 1/3 = 10.
+        const rideWithMeetingPoints = {
+            ...ride,
+            waypoints: [
+                {
+                    id: 'wp-pickup',
+                    placeId: 'place-p',
+                    address: 'Pickup',
+                    lat: 1,
+                    lng: 1,
+                    waypointType: 'PICKUP',
+                    orderIndex: 0,
+                    pricePerSeat: 0,
+                },
+                {
+                    id: 'wp-b',
+                    placeId: 'place-b',
+                    address: 'B',
+                    lat: 2,
+                    lng: 2,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 50,
+                    pricePerSeat: null,
+                },
+                {
+                    id: 'wp-c',
+                    placeId: 'place-c',
+                    address: 'C',
+                    lat: 3,
+                    lng: 3,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 51,
+                    pricePerSeat: null,
+                },
+                {
+                    id: 'wp-dropoff',
+                    placeId: 'place-d2',
+                    address: 'Dropoff',
+                    lat: 4,
+                    lng: 4,
+                    waypointType: 'DROPOFF',
+                    orderIndex: 100,
+                    pricePerSeat: 30,
+                },
+            ],
+        };
+
+        const points = buildSegmentPoints(rideWithMeetingPoints);
+
+        expect(points[2].cumulativePrice).toBe(10);
+        expect(points[3].cumulativePrice).toBe(20);
+    });
+
+    it('interpolates between whatever prices are known, so a priced stopover anchors its neighbours', () => {
+        const rideWithOnePricedStopover = {
+            ...ride,
+            waypoints: [
+                {
+                    id: 'wp-b',
+                    placeId: 'place-b',
+                    address: 'B',
+                    lat: 2,
+                    lng: 2,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 50,
+                    pricePerSeat: null,
+                },
+                {
+                    id: 'wp-c',
+                    placeId: 'place-c',
+                    address: 'C',
+                    lat: 3,
+                    lng: 3,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 51,
+                    pricePerSeat: 24,
+                },
+            ],
+        };
+
+        const points = buildSegmentPoints(rideWithOnePricedStopover);
+
+        // B sits halfway between the origin (0) and C (24), not at a share of the whole fare.
+        expect(points[1].cumulativePrice).toBe(12);
+        expect(points[2].cumulativePrice).toBe(24);
+    });
+
     it('interpolates single stopover without price as midpoint', () => {
         const rideWithOneMissingPrice = {
             ...ride,
