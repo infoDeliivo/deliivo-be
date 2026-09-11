@@ -17,8 +17,9 @@ import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../re
 
 const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
 const UNSTARTED_RIDE_STATUSES = [RideStatus.PUBLISHED, RideStatus.SCHEDULED, RideStatus.READY_TO_START];
+// PAYMENT_PENDING is excluded: an unpaid booking holds no seat and gives the driver no
+// obligation, so it must not keep a ride from expiring or make its cancellation costly.
 const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
-    BookingStatus.PAYMENT_PENDING,
     BookingStatus.DRIVER_PENDING,
     BookingStatus.CONFIRMED,
     BookingStatus.WAITING_FOR_PICKUP,
@@ -175,7 +176,8 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                     where: {
                         status: {
                             in: [
-                                'PAYMENT_PENDING',
+                                // No PAYMENT_PENDING: an unpaid booking is not a
+                                // passenger on this ride yet.
                                 'DRIVER_PENDING',
                                 'CONFIRMED',
                                 'WAITING_FOR_PICKUP',
@@ -340,7 +342,7 @@ export const getRideById = async (driverId: string, rideId: string) => {
                 where: {
                 status: {
                     in: [
-                        'PAYMENT_PENDING',
+                        // No PAYMENT_PENDING: an unpaid booking is not a passenger yet.
                         'DRIVER_PENDING',
                         'CONFIRMED',
                         'WAITING_FOR_PICKUP',

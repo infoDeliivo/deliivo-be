@@ -118,5 +118,15 @@
         }
       }
     }
+  },
+  "ServiceUnavailable": {
+    "description": "An upstream dependency is unavailable, so the request could not be completed. Safe to retry.",
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "../schemas/common.yaml#/ApiErrorEnvelope"
+        }
+      }
+    }
   }
 }

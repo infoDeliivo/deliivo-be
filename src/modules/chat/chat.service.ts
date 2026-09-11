@@ -35,8 +35,9 @@ const getMessagePreview = (type: string, text?: string | null): string => {
  * One user must be the passenger and the other must be the driver of the ride.
  * Chat stays writable during ride-day booking states and closes when the ride closes.
  */
+// PAYMENT_PENDING is excluded: an unpaid booking is not a relationship with the driver
+// yet, and it no longer holds a seat, so it must not open a channel to them.
 const CHAT_PRE_START_BOOKING_STATUSES: BookingStatus[] = [
-    BookingStatus.PAYMENT_PENDING,
     BookingStatus.DRIVER_PENDING,
     BookingStatus.CONFIRMED,
 ];

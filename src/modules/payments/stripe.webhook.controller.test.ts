@@ -6,9 +6,28 @@ const mockPrisma = {
     rideBooking: {
         updateMany: jest.fn(),
         findUnique: jest.fn(),
+        // Read back inside the reservation transaction to work out which seats to take.
+        findUniqueOrThrow: jest.fn(),
     },
+    // Seats are taken at payment time now, so the reservation write has to succeed here.
+    ride: {
+        updateMany: jest.fn(),
+    },
+    // Seats are reserved inside a transaction now, so the callback has to actually run —
+    // an unimplemented jest.fn() silently skips every write the webhook makes. Assigned below,
+    // where mockPrisma is in scope.
     $transaction: jest.fn(),
 };
+
+// The same fallback-wrapped client the code under test sees, so a transaction callback can reach
+// models this mock does not list explicitly.
+const mockPrismaClient = require('../../test-utils/prisma-mock.js').withPrismaFallback(mockPrisma);
+
+mockPrisma.$transaction.mockImplementation(async (arg: unknown): Promise<unknown> => {
+    if (typeof arg === 'function') return (arg as (tx: unknown) => unknown)(mockPrismaClient);
+    if (Array.isArray(arg)) return Promise.all(arg);
+    return arg;
+});
 
 const mockCreateNotification = jest.fn();
 const mockConstructStripeEvent = jest.fn();
@@ -16,12 +35,14 @@ const mockConstructStripeEvent = jest.fn();
 jest.mock('../../config/index.js', () => ({
     __esModule: true,
     // withPrismaFallback: unlisted models/methods resolve empty instead of throwing.
-    prisma: require('../../test-utils/prisma-mock.js').withPrismaFallback(mockPrisma),
+    prisma: mockPrismaClient,
 }));
 
 jest.mock('./stripe.service.js', () => ({
     __esModule: true,
     constructStripeEvent: (...args: unknown[]) => mockConstructStripeEvent(...args),
+    // Reached only when a ride fills up between payment and reservation.
+    refundPaymentIntent: jest.fn().mockResolvedValue({ id: 're_mock' }),
 }));
 
 jest.mock('../notification/notification.service.js', () => ({
@@ -65,6 +86,14 @@ describe('handleStripeWebhook', () => {
         mockPrisma.stripeWebhookEvent.findUnique.mockResolvedValue(null);
         mockPrisma.stripeWebhookEvent.create.mockResolvedValue({});
         mockPrisma.rideBooking.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.ride.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.rideBooking.findUniqueOrThrow.mockResolvedValue({
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupPosition: null,
+            dropoffPosition: null,
+            ride: { totalSeats: 4 },
+        });
         mockPrisma.rideBooking.findUnique.mockResolvedValue({
             id: 'booking-1',
             rideId: 'ride-1',

@@ -6,7 +6,7 @@ import { markBookingPaymentRefunded } from '../payments/payment.service.js';
 import { generateBookingOtp, hashOtp, isOtpValid } from '../ride-booking/booking-otp.utils.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
-import { releaseSegmentSeats } from '../ride-booking/segment-capacity.utils.js';
+import { releaseBookingSeats } from '../ride-booking/segment-capacity.utils.js';
 import { emitToUsers } from '../../socket/index.js';
 import { awardBookingCompletionRewards } from '../rewards/rewards.service.js';
 
@@ -241,7 +241,8 @@ export const rejectBooking = async (driverId: string, bookingId: string, reason:
             },
         });
 
-        await releaseSegmentSeats(tx as any, {
+        await releaseBookingSeats(tx, {
+            bookingId: current.id,
             rideId: current.rideId,
             seatsBooked: current.seatsBooked,
             pickupPosition: current.pickupPosition,
@@ -360,7 +361,8 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string, rea
             },
         });
 
-        await releaseSegmentSeats(tx as any, {
+        await releaseBookingSeats(tx, {
+            bookingId: current.id,
             rideId: current.rideId,
             seatsBooked: current.seatsBooked,
             pickupPosition: current.pickupPosition,

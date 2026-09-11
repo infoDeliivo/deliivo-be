@@ -44,6 +44,7 @@ jest.mock('../ride-booking/booking-otp.utils.js', () => ({
 jest.mock('../ride-booking/segment-capacity.utils.js', () => ({
     __esModule: true,
     releaseSegmentSeats: jest.fn().mockResolvedValue(undefined),
+    releaseBookingSeats: jest.fn().mockResolvedValue(true),
 }));
 
 import { BookingStatus } from '@prisma/client';

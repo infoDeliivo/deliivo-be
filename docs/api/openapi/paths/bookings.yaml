@@ -309,7 +309,7 @@
     "/api/v1/bookings/{id}/payment/confirm": {
       "post": {
         "operationId": "bookingsPostByIdPaymentConfirm",
-        "summary": "POST bookings/:id/payment/confirm",
+        "summary": "POST bookings/:id/payment/confirm - Confirm a booking payment",
         "tags": [
           "Bookings"
         ],
@@ -320,7 +320,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Success",
+            "description": "Payment confirmed; the booking has advanced to DRIVER_PENDING.",
             "content": {
               "application/json": {
                 "schema": {
@@ -351,6 +351,62 @@
           },
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
+          },
+          "503": {
+            "$ref": "../components/responses/errors.yaml#/ServiceUnavailable"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "description": "Verifies the booking's payment against Stripe and advances the booking to DRIVER_PENDING once the PaymentIntent has succeeded.\n\nThis endpoint validates: it returns 200 only when the payment is confirmed. Any other state is a 4xx whose `error` field carries the reason code, so a pending payment can never be mistaken for a booked ride.\n\n400 `error` codes:\n- `PAYMENT_REQUIRES_ACTION` - the intent needs 3DS/bank authentication.\n- `PAYMENT_METHOD_REQUIRED` - payment was not completed; another method is needed.\n- `PAYMENT_NOT_CONFIRMED` - the payment has not been submitted yet.\n- `PAYMENT_PROCESSING` - the payment is still clearing.\n- `PAYMENT_CANCELLED` - the intent was cancelled; the booking is failed and its seats released.\n- `PAYMENT_NOT_INITIALIZED` - no PaymentIntent exists for this booking.\n- `BOOKING_NOT_PAYABLE` - the booking is cancelled or already failed.\n\n503 `error` code `PAYMENT_VERIFICATION_UNAVAILABLE` means Stripe could not be reached; the booking is unchanged and the call can be retried.\n\nCalling this on an already-paid booking is a no-op success."
+      }
+    },
+    "/api/v1/bookings/{id}/payment/resume": {
+      "post": {
+        "operationId": "bookingsPostByIdPaymentResume",
+        "summary": "POST bookings/:id/payment/resume - Get back into checkout",
+        "description": "Returns a usable Stripe `clientSecret` for a booking that was never paid for, so a rider who closed the app mid-checkout can finish paying.\n\nThe secret is otherwise only issued when the booking is created, which left an unpaid booking with no payable route.\n\nAn unpaid booking holds no seats, so nothing is reserved until the payment confirms \u2014 the ride can fill up in the meantime, in which case the payment is refunded automatically and the booking ends as `RIDE_FULL_REFUNDED`.\n\nCalling this on a booking that is already paid for returns it unchanged.\n\n400 `error` codes: `PAYMENT_NOT_INITIALIZED` (no PaymentIntent exists), `BOOKING_NOT_PAYABLE` (cancelled or failed), `PAYMENT_CANCELLED` (the intent is dead; the booking is closed out and the ride can be booked again). 503 `PAYMENT_VERIFICATION_UNAVAILABLE` means Stripe could not be reached.",
+        "tags": [
+          "Bookings"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payment is ready to be completed; `payment.clientSecret` is set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "../components/examples/common.yaml#/BookingSuccess"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          },
+          "503": {
+            "$ref": "../components/responses/errors.yaml#/ServiceUnavailable"
           }
         },
         "parameters": [
@@ -390,7 +446,7 @@
                         "bookingId": "booking-uuid",
                         "rideId": "ride-uuid",
                         "refundPercent": 100,
-                        "refundAmount": 20.00,
+                        "refundAmount": 20.0,
                         "refundInitiated": true
                       }
                     }
@@ -403,7 +459,7 @@
                         "bookingId": "booking-uuid",
                         "rideId": "ride-uuid",
                         "refundPercent": 80,
-                        "refundAmount": 16.00,
+                        "refundAmount": 16.0,
                         "refundInitiated": true
                       }
                     }

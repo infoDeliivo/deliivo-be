@@ -1,3 +1,8 @@
+// createBooking resolves the booking twice: once outside the transaction (to know the
+// amount before the PaymentIntent is created) and once inside it. Both reads must see
+// the same rows, so the non-transactional mocks delegate to the current tx fixture.
+let currentTx: ReturnType<typeof buildTx>;
+
 const mockPrisma = {
     $transaction: jest.fn(),
     user: {
@@ -8,8 +13,15 @@ const mockPrisma = {
             dob: new Date('1990-01-01T00:00:00.000Z'),
         }),
     },
+    ride: {
+        findFirst: (...args: unknown[]) => currentTx.ride.findFirst(...args),
+    },
+    userBlock: {
+        findFirst: (...args: unknown[]) => currentTx.userBlock.findFirst(...args),
+    },
     rideBooking: {
         update: jest.fn(),
+        findFirst: (...args: unknown[]) => currentTx.rideBooking.findFirst(...args),
     },
     paymentMethod: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -22,19 +34,39 @@ jest.mock('../../config/index.js', () => ({
     prisma: require('../../test-utils/prisma-mock.js').withPrismaFallback(mockPrisma),
 }));
 
+const mockResolveRideFeeTerms = jest.fn().mockResolvedValue({
+    serviceFeePercent: 0,
+    serviceFeeFlat: 0,
+    source: 'ACTIVE_CONFIG',
+});
+
+jest.mock('../pricing/pricing.service.js', () => ({
+    __esModule: true,
+    resolveRideFeeTerms: (...args: unknown[]) => mockResolveRideFeeTerms(...args),
+}));
+
 jest.mock('../payments/stripe.service.js', () => ({
     __esModule: true,
     createBookingPaymentIntent: jest.fn(),
+    cancelPaymentIntent: jest.fn().mockResolvedValue({}),
     refundPaymentIntent: jest.fn(),
+    getStripeClient: () => ({ paymentIntents: { retrieve: mockRetrieveIntent } }),
 }));
 
 jest.mock('../payments/payment.service.js', () => ({
     __esModule: true,
+    PAYMENT_STATUSES: {
+        CREATED: 'CREATED',
+        PAYMENT_PENDING: 'PAYMENT_PENDING',
+        PAID: 'PAID',
+    },
     createPayment: jest.fn().mockResolvedValue({ id: 'payment-mock-id' }),
-    markPaymentPending: jest.fn().mockResolvedValue({}),
+    markBookingPaymentPaid: jest.fn().mockResolvedValue({}),
+    markBookingPaymentRefunded: jest.fn().mockResolvedValue({}),
     markPaymentPaid: jest.fn().mockResolvedValue({}),
 }));
 
+const mockRetrieveIntent = jest.fn();
 const mockCreateNotification = jest.fn();
 
 jest.mock('../notification/notification.service.js', () => ({
@@ -45,18 +77,33 @@ jest.mock('../notification/notification.service.js', () => ({
 jest.mock('../../queue/deadline.queue.js', () => ({
     __esModule: true,
     enqueueDeadlineCheck: jest.fn().mockResolvedValue(undefined),
+    enqueuePaymentExpiryCheck: jest.fn().mockResolvedValue(undefined),
+    reschedulePaymentExpiryCheck: jest.fn().mockResolvedValue(undefined),
+    bookingPaymentWindowMs: () => 15 * 60 * 1000,
+    expireUnpaidBooking: jest.fn().mockResolvedValue(false),
 }));
 
 jest.mock('./segment-capacity.utils.js', () => ({
     __esModule: true,
     releaseSegmentSeats: jest.fn().mockResolvedValue(undefined),
+    releaseBookingSeats: jest.fn().mockResolvedValue(true),
 }));
 
+import { Prisma } from '@prisma/client';
 import { createBooking } from './ride-booking.service';
-import { createBookingPaymentIntent } from '../payments/stripe.service.js';
+import { cancelPaymentIntent, createBookingPaymentIntent } from '../payments/stripe.service.js';
+import { createPayment } from '../payments/payment.service.js';
 
 const mockedCreateBookingPaymentIntent = createBookingPaymentIntent as jest.Mock;
+const mockedCancelPaymentIntent = cancelPaymentIntent as jest.Mock;
+const mockedCreatePayment = createPayment as jest.Mock;
 const mockedCreateNotification = mockCreateNotification;
+
+/** Point both the transactional and non-transactional prisma mocks at one fixture. */
+const useTx = (tx: ReturnType<typeof buildTx>) => {
+    currentTx = tx;
+    mockPrisma.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback(tx));
+};
 
 const buildTx = () => {
     const futureDepartureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -122,9 +169,9 @@ const buildTx = () => {
         rideBooking: {
             findFirst: jest.fn().mockResolvedValue(null),
             create: jest.fn().mockImplementation(async ({ data }) => ({
-                id: 'booking-1',
-                ...data,
                 stripePaymentIntentId: null,
+                ...data,
+                id: data.id ?? 'booking-1',
                 paymentAmount: data.paymentAmount ?? null,
                 paymentCurrency: data.paymentCurrency,
                 paymentCapturedAt: data.paymentCapturedAt ?? null,
@@ -155,8 +202,12 @@ const buildTx = () => {
 describe('createBooking segment pricing + payment intent', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockResolveRideFeeTerms.mockResolvedValue({
+            serviceFeePercent: 0,
+            serviceFeeFlat: 0,
+            source: 'ACTIVE_CONFIG',
+        });
         process.env.BOOKING_PAYMENT_MODE = 'stripe';
-        process.env.PLATFORM_FEE_PERCENT = '0';
 
         mockedCreateBookingPaymentIntent.mockResolvedValue({
             paymentIntentId: 'pi_123',
@@ -226,7 +277,7 @@ describe('createBooking segment pricing + payment intent', () => {
 
     it('charges B -> C as the difference between cumulative waypoint prices and returns payment info', async () => {
         const tx = buildTx();
-        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+        useTx(tx);
 
         const booking = await createBooking('passenger-1', {
             rideId: 'ride-1',
@@ -242,7 +293,7 @@ describe('createBooking segment pricing + payment intent', () => {
 
     it('charges C -> D as destination minus stopover cumulative price', async () => {
         const tx = buildTx();
-        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+        useTx(tx);
 
         const booking = await createBooking('passenger-1', {
             rideId: 'ride-1',
@@ -256,7 +307,7 @@ describe('createBooking segment pricing + payment intent', () => {
 
     it('rejects reversed or unresolved segment selections', async () => {
         const tx = buildTx();
-        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+        useTx(tx);
 
         await expect(
             createBooking('passenger-1', {
@@ -287,7 +338,7 @@ describe('createBooking segment pricing + payment intent', () => {
                 ...(baseRide?.waypoints ?? []),
             ],
         });
-        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+        useTx(tx);
 
         await expect(
             createBooking('passenger-1', {
@@ -316,7 +367,7 @@ describe('createBooking segment pricing + payment intent', () => {
                 },
             ],
         });
-        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+        useTx(tx);
 
         await expect(
             createBooking('passenger-1', {
@@ -356,7 +407,7 @@ describe('createBooking segment pricing + payment intent', () => {
                 },
             ],
         });
-        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+        useTx(tx);
 
         const booking = await createBooking('passenger-1', {
             rideId: 'ride-1',
@@ -382,7 +433,7 @@ describe('createBooking segment pricing + payment intent', () => {
         process.env.BOOKING_PAYMENT_MODE = 'bypass';
 
         const tx = buildTx();
-        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+        useTx(tx);
 
         const booking = await createBooking('passenger-1', {
             rideId: 'ride-1',
@@ -401,7 +452,7 @@ describe('createBooking segment pricing + payment intent', () => {
                 title: 'New ride request',
                 body: 'Rider wants B to C',
                 data: expect.objectContaining({
-                    bookingId: 'booking-1',
+                    bookingId: booking.id,
                     rideId: 'ride-1',
                     passengerName: 'Rider',
                     passengerAvatarUrl: '',
@@ -410,9 +461,386 @@ describe('createBooking segment pricing + payment intent', () => {
                     seatsBooked: '1',
                     totalPrice: '10',
                     currency: 'GBP',
-                    deepLink: 'app://driver/booking-request/booking-1',
+                    deepLink: `app://driver/booking-request/${booking.id}`,
                 }),
             })
         );
+    });
+});
+
+describe('createBooking atomicity', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockResolveRideFeeTerms.mockResolvedValue({
+            serviceFeePercent: 0,
+            serviceFeeFlat: 0,
+            source: 'ACTIVE_CONFIG',
+        });
+        process.env.BOOKING_PAYMENT_MODE = 'stripe';
+
+        mockedCreateBookingPaymentIntent.mockResolvedValue({
+            paymentIntentId: 'pi_123',
+            clientSecret: 'pi_123_secret_456',
+            currency: 'GBP',
+        });
+        mockedCancelPaymentIntent.mockResolvedValue({});
+        mockedCreatePayment.mockResolvedValue({ id: 'payment-mock-id' });
+    });
+
+    it('creates the PaymentIntent before writing the booking row', async () => {
+        const tx = buildTx();
+        useTx(tx);
+
+        await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(mockedCreateBookingPaymentIntent.mock.invocationCallOrder[0])
+            .toBeLessThan(tx.rideBooking.create.mock.invocationCallOrder[0]);
+    });
+
+    it('writes the intent id on the booking row itself, with no follow-up update', async () => {
+        const tx = buildTx();
+        useTx(tx);
+
+        await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(tx.rideBooking.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({
+                status: 'PAYMENT_PENDING',
+                stripePaymentIntentId: 'pi_123',
+                paymentAmount: 10,
+                paymentCurrency: 'GBP',
+            }),
+        }));
+        expect(mockPrisma.rideBooking.update).not.toHaveBeenCalled();
+    });
+
+    it('writes the Payment row inside the booking transaction', async () => {
+        const tx = buildTx();
+        useTx(tx);
+
+        const booking = await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(mockedCreatePayment).toHaveBeenCalledWith(expect.objectContaining({
+            tx,
+            status: 'PAYMENT_PENDING',
+            bookingId: booking.id,
+            stripePaymentIntentId: 'pi_123',
+            amountTotal: 10,
+        }));
+    });
+
+    it('charges the service fee on top and leaves the driver the full fare', async () => {
+        mockResolveRideFeeTerms.mockResolvedValue({
+            serviceFeePercent: 2,
+            serviceFeeFlat: 0,
+            source: 'ACTIVE_CONFIG',
+        });
+        const tx = buildTx();
+        useTx(tx);
+
+        const booking = await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        // Segment B -> C is a 10.00 fare; the rider pays 10.20 and the driver still earns 10.00.
+        expect(booking.totalPrice).toBe(10.2);
+        expect(mockedCreatePayment).toHaveBeenCalledWith(expect.objectContaining({
+            amountTotal: 10.2,
+            fareAmount: 10,
+            platformFeeAmount: 0.2,
+        }));
+
+        const [{ fareAmount, platformFeeAmount, amountTotal }] = mockedCreatePayment.mock.calls[0] as [
+            { fareAmount: number; platformFeeAmount: number; amountTotal: number }
+        ];
+        expect(Math.round(fareAmount * 100) + Math.round(platformFeeAmount * 100))
+            .toBe(Math.round(amountTotal * 100));
+    });
+
+    it('persists the fee it charged on the booking row', async () => {
+        mockResolveRideFeeTerms.mockResolvedValue({
+            serviceFeePercent: 2,
+            serviceFeeFlat: 0,
+            source: 'ACTIVE_CONFIG',
+        });
+        const tx = buildTx();
+        useTx(tx);
+
+        await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(tx.rideBooking.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({
+                serviceFeeAmount: 0.2,
+                serviceFeePercent: 2,
+            }),
+        }));
+    });
+
+    it('resolves the fee once per booking, not per plan resolution', async () => {
+        const tx = buildTx();
+        useTx(tx);
+
+        await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        // createBooking resolves the plan twice (pre-flight + in-transaction) but the rate must be
+        // read a single time, outside the transaction.
+        expect(mockResolveRideFeeTerms).toHaveBeenCalledTimes(1);
+        expect(mockResolveRideFeeTerms).toHaveBeenCalledWith('ride-1');
+    });
+
+    it('cancels the PaymentIntent when the booking transaction rolls back', async () => {
+        const tx = buildTx();
+        useTx(tx);
+        tx.rideBooking.create.mockRejectedValue(new Error('DB_DOWN'));
+
+        await expect(
+            createBooking('passenger-1', {
+                rideId: 'ride-1',
+                seatsBooked: 1,
+                pickupWaypointId: 'wp-b',
+                dropoffWaypointId: 'wp-c',
+            })
+        ).rejects.toThrow('DB_DOWN');
+
+        expect(mockedCancelPaymentIntent).toHaveBeenCalledWith('pi_123');
+    });
+
+    it('maps a unique-constraint race to BOOKING_ALREADY_EXISTS and releases the intent', async () => {
+        const tx = buildTx();
+        useTx(tx);
+        tx.rideBooking.create.mockRejectedValue(
+            new Prisma.PrismaClientKnownRequestError('duplicate', {
+                code: 'P2002',
+                clientVersion: 'test',
+            })
+        );
+
+        await expect(
+            createBooking('passenger-1', {
+                rideId: 'ride-1',
+                seatsBooked: 1,
+                pickupWaypointId: 'wp-b',
+                dropoffWaypointId: 'wp-c',
+            })
+        ).rejects.toThrow('BOOKING_ALREADY_EXISTS');
+
+        expect(mockedCancelPaymentIntent).toHaveBeenCalledWith('pi_123');
+    });
+
+    it('never charges an amount the rider did not see', async () => {
+        const tx = buildTx();
+        useTx(tx);
+        const baseRide = await tx.ride.findFirst();
+
+        // Pre-flight sees the published fare; the in-transaction read sees a higher one.
+        tx.ride.findFirst
+            .mockResolvedValueOnce(baseRide)
+            .mockResolvedValue({
+                ...baseRide,
+                waypoints: (baseRide?.waypoints ?? []).map((wp: { id: string; pricePerSeat: number | null }) =>
+                    wp.id === 'wp-c' ? { ...wp, pricePerSeat: 25 } : wp
+                ),
+            });
+
+        await expect(
+            createBooking('passenger-1', {
+                rideId: 'ride-1',
+                seatsBooked: 1,
+                pickupWaypointId: 'wp-b',
+                dropoffWaypointId: 'wp-c',
+            })
+        ).rejects.toThrow('BOOKING_PRICE_CHANGED');
+
+        expect(tx.rideBooking.create).not.toHaveBeenCalled();
+        expect(mockedCancelPaymentIntent).toHaveBeenCalledWith('pi_123');
+    });
+
+    it('holds no seats for an unpaid booking', async () => {
+        const tx = buildTx();
+        useTx(tx);
+
+        await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        // Capacity is untouched until the payment confirms, so an abandoned checkout
+        // cannot lock a seat away from a rider who is ready to pay.
+        expect(tx.rideSegmentCapacity.updateMany).not.toHaveBeenCalled();
+        expect(tx.ride.updateMany).not.toHaveBeenCalled();
+        expect(tx.ride.update).not.toHaveBeenCalled();
+        expect(tx.rideBooking.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ seatsReservedAt: undefined }),
+        }));
+    });
+
+    it('still reserves seats at booking time in bypass mode, where payment is settled', async () => {
+        process.env.BOOKING_PAYMENT_MODE = 'bypass';
+
+        const tx = buildTx();
+        useTx(tx);
+
+        await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(tx.rideSegmentCapacity.updateMany).toHaveBeenCalled();
+        expect(tx.rideBooking.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ seatsReservedAt: expect.any(Date) }),
+        }));
+    });
+
+    it('rolls back rather than overselling a bypass-mode booking', async () => {
+        process.env.BOOKING_PAYMENT_MODE = 'bypass';
+
+        const tx = buildTx();
+        useTx(tx);
+
+        const freeEdges = [
+            { rideId: 'ride-1', fromPosition: 0, toPosition: 1, occupiedSeats: 2 },
+            { rideId: 'ride-1', fromPosition: 1, toPosition: 2, occupiedSeats: 2 },
+        ];
+        // Pre-check sees room for one more seat; the re-read after the increment shows
+        // the ride is over capacity because another booking landed in between.
+        tx.rideSegmentCapacity.findMany
+            .mockResolvedValueOnce(freeEdges)
+            .mockResolvedValue([
+                { rideId: 'ride-1', fromPosition: 0, toPosition: 1, occupiedSeats: 4 },
+            ]);
+
+        await expect(
+            createBooking('passenger-1', {
+                rideId: 'ride-1',
+                seatsBooked: 1,
+                pickupWaypointId: 'wp-b',
+                dropoffWaypointId: 'wp-c',
+            })
+        ).rejects.toThrow('INSUFFICIENT_SEATS');
+
+        expect(tx.rideBooking.create).not.toHaveBeenCalled();
+    });
+});
+
+describe('createBooking re-entry on an unpaid booking', () => {
+    const unpaidBooking = {
+        id: 'booking-unpaid',
+        stripePaymentIntentId: 'pi_old',
+        ride: { status: 'PUBLISHED' },
+    };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        process.env.BOOKING_PAYMENT_MODE = 'stripe';
+
+        mockedCreateBookingPaymentIntent.mockResolvedValue({
+            paymentIntentId: 'pi_123',
+            clientSecret: 'pi_123_secret_456',
+            currency: 'GBP',
+        });
+        mockedCancelPaymentIntent.mockResolvedValue({});
+        mockedCreatePayment.mockResolvedValue({ id: 'payment-mock-id' });
+    });
+
+    it('hands back the same booking with a client secret while its payment is still payable', async () => {
+        const tx = buildTx();
+        useTx(tx);
+        tx.rideBooking.findFirst.mockResolvedValue(unpaidBooking);
+        mockRetrieveIntent.mockResolvedValue({
+            id: 'pi_old',
+            status: 'requires_payment_method',
+            currency: 'gbp',
+            client_secret: 'pi_old_secret',
+        });
+
+        const booking = await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(booking.resumed).toBe(true);
+        expect(booking.payment?.clientSecret).toBe('pi_old_secret');
+        expect(booking.payment?.paymentIntentId).toBe('pi_old');
+        // No second booking and no second intent — that is what would double-charge.
+        expect(tx.rideBooking.create).not.toHaveBeenCalled();
+        expect(mockedCreateBookingPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it('replaces the unpaid booking when its payment is dead', async () => {
+        const tx = buildTx();
+        useTx(tx);
+        tx.rideBooking.findFirst
+            .mockResolvedValueOnce(unpaidBooking)
+            .mockResolvedValue(null);
+        mockRetrieveIntent.mockResolvedValue({
+            id: 'pi_old',
+            status: 'canceled',
+            currency: 'gbp',
+            client_secret: null,
+        });
+
+        const booking = await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 1,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(booking.resumed).toBeUndefined();
+        expect(tx.rideBooking.create).toHaveBeenCalled();
+        expect(mockedCreateBookingPaymentIntent).toHaveBeenCalled();
+    });
+
+    it('refuses to create anything while Stripe cannot be reached', async () => {
+        const tx = buildTx();
+        useTx(tx);
+        tx.rideBooking.findFirst.mockResolvedValue(unpaidBooking);
+        mockRetrieveIntent.mockRejectedValue(new Error('stripe unreachable'));
+
+        await expect(
+            createBooking('passenger-1', {
+                rideId: 'ride-1',
+                seatsBooked: 1,
+                pickupWaypointId: 'wp-b',
+                dropoffWaypointId: 'wp-c',
+            })
+        ).rejects.toThrow('PAYMENT_VERIFICATION_UNAVAILABLE');
+
+        expect(tx.rideBooking.create).not.toHaveBeenCalled();
+        expect(mockedCreateBookingPaymentIntent).not.toHaveBeenCalled();
     });
 });

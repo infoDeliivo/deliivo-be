@@ -154,8 +154,9 @@ export const exportUserData = async (userId: string) => {
 };
 
 /* ====================== ACCOUNT DELETION ====================== */
+// PAYMENT_PENDING is excluded: nothing was captured and no seat is held, so there is
+// nothing to cancel or refund on the way out.
 const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
-    BookingStatus.PAYMENT_PENDING,
     BookingStatus.DRIVER_PENDING,
     BookingStatus.CONFIRMED,
     BookingStatus.IN_PROGRESS,

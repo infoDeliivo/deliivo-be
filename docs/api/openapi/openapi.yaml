@@ -226,6 +226,9 @@
     "/api/v1/bookings/{id}/payment/confirm": {
       "$ref": "./paths/bookings.yaml#/paths/~1api~1v1~1bookings~1{id}~1payment~1confirm"
     },
+    "/api/v1/bookings/{id}/payment/resume": {
+      "$ref": "./paths/bookings.yaml#/paths/~1api~1v1~1bookings~1{id}~1payment~1resume"
+    },
     "/api/v1/bookings/{id}/cancel": {
       "$ref": "./paths/bookings.yaml#/paths/~1api~1v1~1bookings~1{id}~1cancel"
     },

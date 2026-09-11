@@ -22,8 +22,10 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
         await deleteCachePattern(cacheKeys.rideDetailsPattern(req.body.rideId));
 
         return sendSuccess(res, {
-            status: HttpStatus.CREATED,
-            message: 'Booking created, payment required',
+            status: booking.resumed ? HttpStatus.OK : HttpStatus.CREATED,
+            message: booking.resumed
+                ? 'You already have an unpaid booking for this ride; finish paying for it'
+                : 'Booking created, payment required',
             data: booking,
         });
     } catch (error: any) {
@@ -103,6 +105,14 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 status = HttpStatus.INTERNAL_ERROR;
                 message = 'Could not initialize payment intent';
                 break;
+            case 'BOOKING_PRICE_CHANGED':
+                status = HttpStatus.CONFLICT;
+                message = 'The fare for this ride changed. Review the price and book again';
+                break;
+            case 'PAYMENT_VERIFICATION_UNAVAILABLE':
+                status = HttpStatus.SERVICE_UNAVAILABLE;
+                message = 'Could not check your existing payment right now. Try again in a moment';
+                break;
         }
 
         if (status === HttpStatus.INTERNAL_ERROR && process.env.NODE_ENV !== 'production') {
@@ -115,10 +125,88 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
 };
 
 /* ================= CHECK PAYMENT STATUS ================= */
-export const confirmBookingPaymentStatus = async (req: AuthRequest, res: Response) => {
+/**
+ * Payment-confirmation failures. Each is a real, actionable state — the endpoint
+ * must never answer 200 for a booking whose payment has not gone through.
+ */
+const PAYMENT_CONFIRM_ERRORS: Record<string, { status: HttpStatus; message: string }> = {
+    PAYMENT_REQUIRES_ACTION: {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Payment needs to be authenticated. Complete the verification with your bank and try again.',
+    },
+    PAYMENT_METHOD_REQUIRED: {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Payment was not completed. Add or select another payment method and try again.',
+    },
+    PAYMENT_NOT_CONFIRMED: {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Payment has not been submitted yet. Complete the payment to confirm your booking.',
+    },
+    PAYMENT_PROCESSING: {
+        status: HttpStatus.BAD_REQUEST,
+        message: "Payment is still processing. We'll confirm your booking as soon as it clears.",
+    },
+    PAYMENT_CANCELLED: {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Payment was cancelled. Book this ride again to continue.',
+    },
+    PAYMENT_NOT_INITIALIZED: {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'No payment was started for this booking. Book this ride again to continue.',
+    },
+    BOOKING_NOT_PAYABLE: {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'This booking can no longer be paid for.',
+    },
+    PAYMENT_VERIFICATION_UNAVAILABLE: {
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        message: 'Could not verify the payment right now. Try again in a moment.',
+    },
+};
+
+export const resumeBookingPayment = async (req: AuthRequest, res: Response) => {
+    const bookingId = req.params.id as string;
+
     try {
-        const bookingId = req.params.id as string;
-        const booking = await BookingService.getBookingPaymentStatus(req.user.id, bookingId);
+        const booking = await BookingService.resumeBookingPayment(req.user.id, bookingId);
+
+        if (!booking) {
+            return sendError(res, {
+                status: HttpStatus.NOT_FOUND,
+                message: 'Booking not found',
+            });
+        }
+
+        return sendSuccess(res, {
+            message: 'Payment ready to be completed',
+            data: booking,
+        });
+    } catch (error: unknown) {
+        const code = error instanceof Error ? error.message : '';
+        const mapped = PAYMENT_CONFIRM_ERRORS[code];
+
+        if (mapped) {
+            await deleteCache(cacheKeys.booking(bookingId));
+
+            return sendError(res, {
+                status: mapped.status,
+                message: mapped.message,
+                error: code,
+            });
+        }
+
+        return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: 'Failed to resume booking payment',
+        });
+    }
+};
+
+export const confirmBookingPaymentStatus = async (req: AuthRequest, res: Response) => {
+    const bookingId = req.params.id as string;
+
+    try {
+        const booking = await BookingService.confirmBookingPayment(req.user.id, bookingId);
 
         if (!booking) {
             return sendError(res, {
@@ -130,13 +218,27 @@ export const confirmBookingPaymentStatus = async (req: AuthRequest, res: Respons
         await deleteCache(cacheKeys.booking(bookingId));
 
         return sendSuccess(res, {
-            message: 'Booking payment status fetched successfully',
+            message: 'Booking payment confirmed successfully',
             data: booking,
         });
-    } catch {
+    } catch (error: unknown) {
+        const code = error instanceof Error ? error.message : '';
+        const mapped = PAYMENT_CONFIRM_ERRORS[code];
+
+        if (mapped) {
+            // The booking state may have changed (e.g. cancelled intent), so drop the cache.
+            await deleteCache(cacheKeys.booking(bookingId));
+
+            return sendError(res, {
+                status: mapped.status,
+                message: mapped.message,
+                error: code,
+            });
+        }
+
         return sendError(res, {
             status: HttpStatus.INTERNAL_ERROR,
-            message: 'Failed to fetch booking payment status',
+            message: 'Failed to confirm booking payment',
         });
     }
 };

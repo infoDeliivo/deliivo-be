@@ -327,6 +327,9 @@ enum BookingStatus {
   DRIVER_DROPPED
   IN_PROGRESS
   PAYMENT_FAILED
+  // Payment succeeded but the ride had filled up by then, so the rider was refunded.
+  // Distinct from PAYMENT_FAILED, where no money ever moved.
+  RIDE_FULL_REFUNDED
   CANCELLED
   COMPLETED
   NO_SHOW
@@ -489,6 +492,12 @@ model RideBooking {
   serviceFeePercent Float?
 
   status BookingStatus @default(PAYMENT_PENDING)
+
+  // Set when this booking's seats were actually taken out of ride capacity. Null means
+  // no seats are held, so a release path must not hand any back — releaseSegmentSeats
+  // is not idempotent and would otherwise inflate availableSeats and oversell the ride.
+  // In stripe mode seats are reserved when the payment confirms, not at booking time.
+  seatsReservedAt DateTime?
 
   stripePaymentIntentId   String?   @unique
   stripeChargeId          String?

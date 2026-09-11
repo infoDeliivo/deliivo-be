@@ -91,6 +91,11 @@ export interface BookingSegmentRideInfo extends BookingRideInfo {
 /* ================= BOOKING RESPONSE ================= */
 export interface BookingResponse {
     id: string;
+    /**
+     * True when this is an existing unpaid booking handed back for the rider to finish
+     * paying, rather than a newly created one. The API answers 200 instead of 201 for it.
+     */
+    resumed?: boolean;
     bookingReference: string;
     rideId: string;
     passengerId: string;

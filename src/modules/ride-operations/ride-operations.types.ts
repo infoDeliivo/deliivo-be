@@ -21,12 +21,15 @@ export const TERMINAL_BOOKING_STATES: BookingStatus[] = [
     BookingStatus.NO_SHOW,
     BookingStatus.DRIVER_MISSED_PICKUP,
     BookingStatus.PAYMENT_FAILED,
+    // The rider paid but the ride filled up first, so they were refunded. Nothing follows it.
+    BookingStatus.RIDE_FULL_REFUNDED,
     BookingStatus.DISPUTED,
 ];
 
-// Booking states that block ride completion
+// Booking states that block ride completion.
+// PAYMENT_PENDING is excluded: an unpaid booking holds no seat and no driver obligation,
+// so it must not keep a finished ride open.
 export const NON_TERMINAL_BOOKING_STATES: BookingStatus[] = [
-    BookingStatus.PAYMENT_PENDING,
     BookingStatus.DRIVER_PENDING,
     BookingStatus.CONFIRMED,
     BookingStatus.WAITING_FOR_PICKUP,

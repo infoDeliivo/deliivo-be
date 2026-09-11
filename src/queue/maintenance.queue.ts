@@ -11,7 +11,7 @@ import redis from '../cache/redis.js';
 import { PENDING_UPLOAD_PREFIX } from '../modules/uploads/uploads.constants.js';
 import { prisma } from '../config/index.js';
 import { createNotification } from '../modules/notification/notification.service.js';
-import { releaseSegmentSeats } from '../modules/ride-booking/segment-capacity.utils.js';
+import { releaseBookingSeats } from '../modules/ride-booking/segment-capacity.utils.js';
 
 const QUEUE_NAME = 'maintenance';
 const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
@@ -146,6 +146,19 @@ scheduleMaintenanceJob(
     }
 );
 
+// Unpaid-booking sweep: the delayed payment-expiry job lives in Redis, so a restart or a
+// flush can lose it. This is the net underneath — same handler, so the two cannot drift.
+scheduleMaintenanceJob(
+    'unpaid-booking-sweep',
+    {},
+    {
+        repeat: { pattern: '*/5 * * * *' }, // every 5 minutes
+        jobId: 'unpaid-booking-sweep',
+        removeOnComplete: true,
+        removeOnFail: 50,
+    }
+);
+
 const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date => {
     const [hoursRaw, minutesRaw] = departureTime.split(':');
     const hours = Number(hoursRaw);
@@ -180,8 +193,9 @@ const getExpectedRideEnd = (departureAt: Date, routeDurationSeconds: number | nu
     return new Date(departureAt.getTime() + routeDurationSeconds * 1000);
 };
 
+// PAYMENT_PENDING is excluded: an unpaid booking holds no seat, so it must not keep an
+// overdue ride alive or earn its rider a cancellation notice for a ride they never paid for.
 const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
-    BookingStatus.PAYMENT_PENDING,
     BookingStatus.DRIVER_PENDING,
     BookingStatus.CONFIRMED,
     BookingStatus.WAITING_FOR_PICKUP,
@@ -311,7 +325,8 @@ const closeOverdueUnstartedRide = async (
                 },
             });
 
-            await releaseSegmentSeats(tx as any, {
+            await releaseBookingSeats(tx, {
+                bookingId: booking.id,
                 rideId: ride.id,
                 seatsBooked: booking.seatsBooked,
                 pickupPosition: booking.pickupPosition,
@@ -666,11 +681,54 @@ export const runAbandonedUploadReport = async () => {
     return { total, byTarget, sample };
 };
 
+/**
+ * Expires bookings whose payment window has passed.
+ *
+ * Grace of one window on top of the deadline, so this only ever picks up bookings whose
+ * own delayed job failed to run — it is a backstop, not the primary path.
+ */
+export const runUnpaidBookingSweep = async (): Promise<{ checked: number; expired: number }> => {
+    const { bookingPaymentWindowMs, expireUnpaidBooking } = await import('./deadline.queue.js');
+    const cutoff = new Date(Date.now() - bookingPaymentWindowMs() * 2);
+
+    const stale = await prisma.rideBooking.findMany({
+        where: {
+            status: BookingStatus.PAYMENT_PENDING,
+            createdAt: { lt: cutoff },
+            // Resuming checkout restarts the window and touches the row, so a rider who came back
+            // is not swept on the strength of when the booking was first created.
+            updatedAt: { lt: cutoff },
+        },
+        select: { id: true },
+        take: 200,
+    });
+
+    let expired = 0;
+    for (const booking of stale) {
+        try {
+            if (await expireUnpaidBooking(booking.id)) expired++;
+        } catch (error) {
+            logError('Unpaid-booking sweep failed for one booking', error, { bookingId: booking.id });
+        }
+    }
+
+    if (stale.length > 0) {
+        logInfo('Unpaid-booking sweep complete', { checked: stale.length, expired });
+    }
+
+    return { checked: stale.length, expired };
+};
+
 export const maintenanceWorker = new Worker(
     QUEUE_NAME,
     async (job: any) => {
         if (job.name === 'ride-overdue-check') {
             await runRideOverdueCheck();
+            return;
+        }
+
+        if (job.name === 'unpaid-booking-sweep') {
+            await runUnpaidBookingSweep();
             return;
         }
 

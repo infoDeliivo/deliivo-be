@@ -77,8 +77,13 @@ export const createPayment = async (params: {
     platformFeeAmount: number;
     currency: string;
     stripePaymentIntentId?: string;
+    /** Initial status. Defaults to CREATED; pass PAYMENT_PENDING to skip the extra transition write. */
+    status?: PaymentStatus;
+    /** Transaction client, so the payment row can be written atomically with the booking. */
+    tx?: Prisma.TransactionClient;
 }) => {
-    return prisma.payment.create({
+    const client = params.tx ?? prisma;
+    return client.payment.create({
         data: {
             bookingId: params.bookingId,
             rideId: params.rideId,
@@ -88,7 +93,7 @@ export const createPayment = async (params: {
             platformFeeAmount: params.platformFeeAmount,
             currency: params.currency,
             stripePaymentIntentId: params.stripePaymentIntentId ?? null,
-            status: PAYMENT_STATUSES.CREATED,
+            status: params.status ?? PAYMENT_STATUSES.CREATED,
         },
     });
 };

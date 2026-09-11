@@ -70,6 +70,7 @@ type InMemoryBooking = {
     paymentAmount: number | null;
     paymentCurrency: string | null;
     paymentCapturedAt: Date | null;
+    seatsReservedAt: Date | null;
     driverDecisionDeadlineAt: Date | null;
     driverDecisionAt: Date | null;
     deadlineExtendedAt: Date | null;
@@ -300,6 +301,8 @@ const buildPrismaMock = () => {
                     paymentAmount: data.paymentAmount ?? null,
                     paymentCurrency: data.paymentCurrency ?? null,
                     paymentCapturedAt: data.paymentCapturedAt ?? null,
+                    // Mirrors the real column: set when this booking's seats are held.
+                    seatsReservedAt: data.seatsReservedAt ?? null,
                     driverDecisionDeadlineAt: data.driverDecisionDeadlineAt ?? null,
                     driverDecisionAt: null,
                     deadlineExtendedAt: null,
@@ -327,6 +330,23 @@ const buildPrismaMock = () => {
                     booking.ride = { ...ride, waypoints: waypoints.filter(w => w.rideId === ride.id).sort((a, b) => a.orderIndex - b.orderIndex) };
                 }
                 return booking;
+            }),
+            updateMany: jest.fn(async ({ where, data }: any) => {
+                const matches = bookings.filter(b => {
+                    if (where.id && b.id !== where.id) return false;
+                    if (where.status?.in && !where.status.in.includes(b.status)) return false;
+                    if (where.status && typeof where.status === 'string' && b.status !== where.status) return false;
+                    if (where.seatsReservedAt?.not === null && b.seatsReservedAt === null) return false;
+                    return true;
+                });
+
+                for (const b of matches) {
+                    for (const [key, val] of Object.entries(data)) {
+                        (b as any)[key] = val;
+                    }
+                }
+
+                return { count: matches.length };
             }),
             findFirst: jest.fn(async ({ where }: any) => {
                 return bookings.find(b => {
@@ -499,12 +519,18 @@ jest.mock('../notification/notification.service.js', () => ({
 jest.mock('../payments/stripe.service.js', () => ({
     __esModule: true,
     createBookingPaymentIntent: (...args: unknown[]) => mockCreateBookingPaymentIntent(...args),
+    cancelPaymentIntent: jest.fn().mockResolvedValue({}),
     refundPaymentIntent: (...args: unknown[]) => mockRefundPaymentIntent(...args),
+    getStripeClient: jest.fn(),
 }));
 
 jest.mock('../../queue/deadline.queue.js', () => ({
     __esModule: true,
     enqueueDeadlineCheck: (...args: unknown[]) => mockEnqueueDeadlineCheck(...args),
+    enqueuePaymentExpiryCheck: jest.fn().mockResolvedValue(undefined),
+    reschedulePaymentExpiryCheck: jest.fn().mockResolvedValue(undefined),
+    bookingPaymentWindowMs: () => 15 * 60 * 1000,
+    expireUnpaidBooking: jest.fn().mockResolvedValue(false),
 }));
 
 jest.mock('../../services/fuel-price.service.js', () => ({

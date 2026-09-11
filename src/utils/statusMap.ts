@@ -10,4 +10,5 @@ export const statusMap: Record<HttpStatus, number> = {
   NOT_FOUND: 404,
   CONFLICT: 409,
   INTERNAL_ERROR: 500,
+  SERVICE_UNAVAILABLE: 503,
 };

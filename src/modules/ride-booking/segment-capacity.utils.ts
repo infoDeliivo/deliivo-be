@@ -5,18 +5,9 @@
  * and updating the denormalized `ride.availableSeats` field.
  */
 
-type PrismaTransaction = {
-    rideSegmentCapacity: {
-        findMany: (args: any) => Promise<any[]>;
-        updateMany: (args: any) => Promise<any>;
-    };
-    ride: {
-        update: (args: any) => Promise<any>;
-        updateMany: (args: any) => Promise<any>;
-    };
-};
+import { Prisma } from '@prisma/client';
 
-interface ReleaseSeatsInput {
+export interface ReleaseSeatsInput {
     rideId: string;
     seatsBooked: number;
     pickupPosition?: number | null;
@@ -29,7 +20,7 @@ interface ReleaseSeatsInput {
  * Uses per-segment capacity if available, otherwise falls back to global increment.
  */
 export const releaseSegmentSeats = async (
-    tx: PrismaTransaction,
+    tx: Prisma.TransactionClient,
     input: ReleaseSeatsInput
 ): Promise<void> => {
     const { rideId, seatsBooked, pickupPosition, dropoffPosition, totalSeats } = input;
@@ -57,7 +48,7 @@ export const releaseSegmentSeats = async (
             // Recalculate denormalized availableSeats
             const allEdges = await tx.rideSegmentCapacity.findMany({ where: { rideId } });
             const maxOccupied = allEdges.length > 0
-                ? Math.max(...allEdges.map((e: any) => e.occupiedSeats))
+                ? Math.max(...allEdges.map((e) => e.occupiedSeats))
                 : 0;
             await tx.ride.update({
                 where: { id: rideId },
@@ -72,4 +63,34 @@ export const releaseSegmentSeats = async (
         where: { id: rideId },
         data: { availableSeats: { increment: seatsBooked } },
     });
+};
+
+export interface ReleaseBookingSeatsInput extends ReleaseSeatsInput {
+    bookingId: string;
+}
+
+/**
+ * Release a booking's seats exactly once.
+ *
+ * `releaseSegmentSeats` is not idempotent, and not every booking holds seats: in stripe
+ * mode seats are taken when the payment confirms, so an unpaid booking has none. Both
+ * hazards are handled by claiming `seatsReservedAt` first — the row is the lock, so two
+ * concurrent releases (webhook, expiry job, rider cancelling) cannot both give seats
+ * back, and a booking that never reserved any is a no-op.
+ *
+ * Returns whether seats were actually released.
+ */
+export const releaseBookingSeats = async (
+    tx: Prisma.TransactionClient,
+    input: ReleaseBookingSeatsInput
+): Promise<boolean> => {
+    const claimed = await tx.rideBooking.updateMany({
+        where: { id: input.bookingId, seatsReservedAt: { not: null } },
+        data: { seatsReservedAt: null },
+    });
+
+    if (claimed.count === 0) return false;
+
+    await releaseSegmentSeats(tx, input);
+    return true;
 };
