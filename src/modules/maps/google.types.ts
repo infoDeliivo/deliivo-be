@@ -50,3 +50,31 @@ export interface MultiRouteRequest {
   departureTime?: string; // ISO string
   computeAlternativeRoutes?: boolean; // true to get multiple routes
 }
+
+export interface GeocodeAddressComponent {
+  long_name: string;
+  short_name: string;
+  types: string[];
+}
+
+export interface GeocodeResult {
+  place_id: string;
+  formatted_address: string;
+  address_components: GeocodeAddressComponent[];
+  types: string[];
+  geometry: {
+    location: { lat: number; lng: number };
+  };
+}
+
+export interface GeocodeResponse {
+  status: string;
+  results?: GeocodeResult[];
+}
+
+export interface ReverseGeocodedLocality {
+  locality: GeocodeResult;
+  /** Containing administrative area; named after its seat town (e.g. "Põltsamaa Parish"). */
+  adminAreaLevel2: string | null;
+  countryCode: string | null;
+}

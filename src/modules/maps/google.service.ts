@@ -1,6 +1,6 @@
 // google.service.ts
 import { googleHttp } from './google.http.js';
-import { RouteRequest, RoadsRequest, GeolocationRequest, MultiRouteRequest } from './google.types.js';
+import { RouteRequest, RoadsRequest, GeolocationRequest, MultiRouteRequest, GeocodeResult, ReverseGeocodedLocality } from './google.types.js';
 import { clusterStops } from './google.cluster.js';
 import redis from '../../cache/redis.js';
 import polyline from '@mapbox/polyline';
@@ -153,6 +153,120 @@ export const googleService = {
 
     // Cache results for 10 minutes
     await redis.set(cacheKey, JSON.stringify(result), 'EX', 600);
+
+    return result;
+  },
+
+  /**
+   * Reverse geocode a coordinate to the town it sits in, with Redis caching.
+   * Coordinates are rounded to 4 decimals (~11 m) so nearby samples share a cache entry.
+   * Returns null when the coordinate resolves to no town (open countryside, water).
+   *
+   * `adminAreaLevel2` is the containing administrative area. A town is the seat of its own
+   * area ("Põltsamaa" in "Põltsamaa Parish"), a village sits in someone else's ("Vorbuse"
+   * in "Tartu City") — the only town-vs-village signal Google exposes for a locality.
+   */
+  async reverseGeocodeLocality(
+    lat: number,
+    lng: number,
+  ): Promise<ReverseGeocodedLocality | null> {
+    if (isMockMode()) {
+      // Nearest mock city, so dev/test never reaches live Google from the publish flow.
+      const nearest = MOCK_PLACES.reduce((best, place) => {
+        const distance = (place.lat - lat) ** 2 + (place.lng - lng) ** 2;
+        return distance < best.distance ? { place, distance } : best;
+      }, { place: MOCK_PLACES[0], distance: Number.POSITIVE_INFINITY });
+
+      const mockName = nearest.place.description.split(',')[0];
+
+      return {
+        locality: {
+          place_id: nearest.place.place_id,
+          formatted_address: nearest.place.description,
+          address_components: [
+            { long_name: mockName, short_name: mockName, types: ['locality', 'political'] },
+          ],
+          types: ['locality', 'political'],
+          geometry: { location: { lat: nearest.place.lat, lng: nearest.place.lng } },
+        },
+        // Mock cities are all real towns, so they are their own administrative seat.
+        adminAreaLevel2: mockName,
+        countryCode: (nearest.place as any).countryCode || 'EE',
+      };
+    }
+
+    const cacheKey = `reverseGeocodeLocality:v2:${lat.toFixed(4)},${lng.toFixed(4)}`;
+
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached) as ReverseGeocodedLocality | null;
+
+    const response = await googleHttp.reverseGeocode({ lat, lng });
+    const results = response?.results || [];
+
+    const locality = results.find((candidate) =>
+      candidate.types?.some((type) => type === 'locality' || type === 'postal_town'),
+    ) || null;
+
+    // The county/parish sits on the components of whichever result carries it.
+    const adminAreaLevel2 = results
+      .flatMap((candidate) => candidate.address_components || [])
+      .find((component) => component.types.includes('administrative_area_level_2'))
+      ?.long_name || null;
+
+    const countryCode = results
+      .flatMap((candidate) => candidate.address_components || [])
+      .find((component) => component.types.includes('country'))
+      ?.short_name || null;
+
+    const resolved = locality ? { locality, adminAreaLevel2, countryCode } : null;
+
+    // Localities of a fixed coordinate are stable — cache for a day.
+    await redis.set(cacheKey, JSON.stringify(resolved), 'EX', 86400);
+
+    return resolved;
+  },
+
+  /**
+   * Forward geocode a place name to a town, with Redis caching.
+   * Returns null unless the top result really is a locality — asking for "Järva" (a parish
+   * with no eponymous town) yields a county, which must not become a stopover.
+   */
+  async geocodeLocality(name: string, countryCode?: string | null): Promise<GeocodeResult | null> {
+    if (!name.trim()) return null;
+
+    if (isMockMode()) {
+      const place = MOCK_PLACES.find((candidate) =>
+        candidate.description.split(',')[0].toLowerCase() === name.trim().toLowerCase(),
+      );
+      if (!place) return null;
+
+      return {
+        place_id: place.place_id,
+        formatted_address: place.description,
+        address_components: [
+          { long_name: name, short_name: name, types: ['locality', 'political'] },
+        ],
+        types: ['locality', 'political'],
+        geometry: { location: { lat: place.lat, lng: place.lng } },
+      };
+    }
+
+    const cacheKey = `geocodeLocality:v1:${countryCode || 'any'}:${name.trim().toLowerCase()}`;
+
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached) as GeocodeResult | null;
+
+    const response = await googleHttp.geocodeAddress({
+      address: name,
+      countryCode: countryCode || undefined,
+    });
+
+    const result = (response?.results || []).find((candidate) =>
+      candidate.types?.some((type) => type === 'locality' || type === 'postal_town'),
+    ) || null;
+
+    // Town centres do not move — cache for a day.
+    await redis.set(cacheKey, JSON.stringify(result), 'EX', 86400);
 
     return result;
   },

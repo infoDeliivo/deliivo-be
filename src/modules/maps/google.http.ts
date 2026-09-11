@@ -1,5 +1,6 @@
 import { axiosClient } from '../../lib/axios/axios.client.js';
 import { ApiResponse } from '../../lib/axios/types.js';
+import { GeocodeResponse } from './google.types.js';
 
 export const googleHttp = {
   /**
@@ -54,6 +55,50 @@ export const googleHttp = {
         place_id: placeId,
         key: process.env.GOOGLE_MAPS_API_KEY,
         fields: 'name,formatted_address,geometry,address_components',
+      },
+    });
+  },
+
+  /**
+   * Reverse geocode a coordinate.
+   * Used to resolve which localities a route polyline actually passes through.
+   * Pass no resultType to get the full result set: restricting to `locality` drops the
+   * administrative_area_level_2 component that distinguishes a town from a village.
+   * Resolves with the raw Google body — axiosClient.request has no ApiResponse envelope.
+   */
+  reverseGeocode(payload: {
+    lat: number;
+    lng: number;
+    resultType?: string;
+  }): Promise<GeocodeResponse> {
+    return axiosClient.request<GeocodeResponse>({
+      method: 'GET',
+      baseURL: 'https://maps.googleapis.com',
+      url: '/maps/api/geocode/json',
+      params: {
+        latlng: `${payload.lat},${payload.lng}`,
+        ...(payload.resultType ? { result_type: payload.resultType } : {}),
+        key: process.env.GOOGLE_MAPS_API_KEY,
+      },
+    });
+  },
+
+  /**
+   * Forward geocode a place name, optionally restricted to a country.
+   * Resolves with the raw Google body — axiosClient.request has no ApiResponse envelope.
+   */
+  geocodeAddress(payload: {
+    address: string;
+    countryCode?: string;
+  }): Promise<GeocodeResponse> {
+    return axiosClient.request<GeocodeResponse>({
+      method: 'GET',
+      baseURL: 'https://maps.googleapis.com',
+      url: '/maps/api/geocode/json',
+      params: {
+        address: payload.address,
+        ...(payload.countryCode ? { components: `country:${payload.countryCode}` } : {}),
+        key: process.env.GOOGLE_MAPS_API_KEY,
       },
     });
   },
