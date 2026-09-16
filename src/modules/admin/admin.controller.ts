@@ -177,6 +177,23 @@ export const getMonitoringTrends = async (_req: AuthRequest, res: Response) => {
 };
 
 /* ================= RIDE HISTORY ================= */
+export const listRideOverrides = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.listRideOverrides({
+            page: req.query.page ? Number(req.query.page) : undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            actorId: req.query.actorId as string | undefined,
+            rideId: req.query.rideId as string | undefined,
+            bookingId: req.query.bookingId as string | undefined,
+            from: req.query.from as string | undefined,
+            to: req.query.to as string | undefined,
+        });
+        return sendSuccess(res, { message: 'Forced ride actions fetched', data: result });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch forced ride actions' });
+    }
+};
+
 export const listRides = async (req: AuthRequest, res: Response) => {
     try {
         const result = await AdminService.listRides({

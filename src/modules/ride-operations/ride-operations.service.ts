@@ -1,4 +1,4 @@
-import { BookingStatus, RideStatus } from '@prisma/client';
+import { BookingStatus, Prisma, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
 import logger from '../../utils/logger.js';
@@ -20,10 +20,14 @@ import {
     ConfirmDropoffInput,
 } from './ride-operations.types.js';
 import { haversineDistance } from './geofence.utils.js';
+import {
+    createForceContext,
+    assertForceAllowedOnRide,
+    type ForceContext,
+} from './force-override.js';
+import { handleForcedAction } from './force-override.effects.js';
 import { emitToRide, emitToUsers } from '../../socket/index.js';
 import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
-
-const isManualOverrideEnabled = () => process.env.ALLOW_RIDE_MANUAL_OVERRIDE === 'true';
 
 // ============================================================
 //  HELPERS
@@ -36,7 +40,7 @@ const assertRideTransition = (currentStatus: RideStatus, targetStatus: RideStatu
     }
 };
 
-const recordEvent = async (
+export const recordEvent = async (
     rideId: string,
     bookingId: string | null,
     eventType: string,
@@ -46,6 +50,7 @@ const recordEvent = async (
     options?: {
         metadataJson?: Record<string, unknown>;
         validationStatus?: 'VALID' | 'WARNING' | 'SUSPICIOUS';
+        force?: ForceContext;
     }
 ) => {
     // Idempotency: if actionId already exists, skip
@@ -67,14 +72,10 @@ const recordEvent = async (
             clientTimestamp: new Date(input.clientTimestamp),
             metadataJson: {
                 ...(options?.metadataJson ?? {}),
-                ...(input.overrideReason
-                    ? {
-                        manualOverride: true,
-                        overrideReason: input.overrideReason,
-                    }
-                    : {}),
-            } as any,
-            validationStatus: options?.validationStatus ?? 'VALID',
+                ...(options?.force?.metadata() ?? {}),
+            } as Prisma.InputJsonValue,
+            // A forced step is always suspicious: it reached the admin review queue by design.
+            validationStatus: options?.force?.forced ? 'SUSPICIOUS' : (options?.validationStatus ?? 'VALID'),
         },
     });
 };
@@ -347,9 +348,13 @@ export const driverArrived = async (driverId: string, input: DriverArrivedInput)
     if (booking.ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
     if (booking.ride.status !== RideStatus.IN_PROGRESS) throw new Error('RIDE_NOT_IN_PROGRESS');
 
-    if (booking.status !== BookingStatus.WAITING_FOR_PICKUP) {
-        throw new Error('BOOKING_NOT_WAITING_FOR_PICKUP');
-    }
+    const force = createForceContext(input);
+    assertForceAllowedOnRide(force, booking.ride.status);
+
+    force.assertOrForce(
+        booking.status !== BookingStatus.WAITING_FOR_PICKUP,
+        'BOOKING_NOT_WAITING_FOR_PICKUP'
+    );
 
     const pickupPoint = resolvePickupPoint(booking);
     const distanceMeters = input.lat != null && input.lng != null
@@ -357,7 +362,7 @@ export const driverArrived = async (driverId: string, input: DriverArrivedInput)
         : null;
     const geofenceValid = distanceMeters == null ? true : distanceMeters <= GEOFENCE_RADIUS_METERS;
     const validationStatus = geofenceValid ? 'VALID' : 'WARNING';
-    const manualOverride = isManualOverrideEnabled() && Boolean(input.overrideReason?.trim());
+    if (!geofenceValid) force.noteSkip('GEOFENCE_OUT_OF_RANGE');
 
     const now = new Date();
 
@@ -404,17 +409,25 @@ export const driverArrived = async (driverId: string, input: DriverArrivedInput)
         input,
         {
             validationStatus,
+            force,
             metadataJson: {
                 pickupPoint,
                 pickupRadiusMeters: GEOFENCE_RADIUS_METERS,
                 distanceMeters,
                 geofenceValid,
                 actor: 'driver',
-                manualOverride,
-                overrideReason: input.overrideReason ?? null,
             },
         }
     );
+
+    await handleForcedAction({
+        context: force,
+        action: 'DRIVER_ARRIVED',
+        rideId: booking.rideId,
+        bookingId: booking.id,
+        passengerId: booking.passengerId,
+        actorId: driverId,
+    });
 
     // Notify passenger
     await createNotification({
@@ -449,6 +462,7 @@ export const driverArrived = async (driverId: string, input: DriverArrivedInput)
         distanceMeters,
         pickupPoint,
         waitTimerStartedAt: now,
+        ...force.summary(),
         location: arrivedLocation ? {
             rideId: arrivedLocation.rideId,
             lat: arrivedLocation.lat,
@@ -540,7 +554,12 @@ export const riderArrivedAtPickup = async (passengerId: string, bookingId: strin
 //  VERIFY PICKUP OTP (operational — extends existing flow)
 // ============================================================
 
-export const verifyPickupAndBoard = async (driverId: string, bookingId: string, otp: string, input: RideEventInput) => {
+export const verifyPickupAndBoard = async (
+    driverId: string,
+    bookingId: string,
+    otp: string | undefined,
+    input: RideEventInput
+) => {
     const booking = await prisma.rideBooking.findUnique({
         where: { id: bookingId },
         include: { ride: true },
@@ -549,25 +568,32 @@ export const verifyPickupAndBoard = async (driverId: string, bookingId: string, 
     if (!booking) throw new Error('BOOKING_NOT_FOUND');
     if (booking.ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
 
-    if (booking.status !== BookingStatus.DRIVER_ARRIVED && booking.status !== BookingStatus.WAITING_FOR_PICKUP) {
-        throw new Error('BOOKING_NOT_READY_FOR_OTP');
-    }
+    const force = createForceContext(input);
+    assertForceAllowedOnRide(force, booking.ride.status);
 
-    if (!booking.pickupOtpHash && !(isManualOverrideEnabled() && input.overrideReason?.trim())) throw new Error('PICKUP_OTP_NOT_AVAILABLE');
-    if (booking.pickupOtpExpiresAt && booking.pickupOtpExpiresAt < new Date() && !(isManualOverrideEnabled() && input.overrideReason?.trim())) {
-        throw new Error('PICKUP_OTP_EXPIRED');
-    }
-    if (booking.otpAttemptCount >= 5) throw new Error('OTP_ATTEMPT_LIMIT_EXCEEDED');
+    force.assertOrForce(
+        booking.status !== BookingStatus.DRIVER_ARRIVED && booking.status !== BookingStatus.WAITING_FOR_PICKUP,
+        'BOOKING_NOT_READY_FOR_OTP'
+    );
 
-    const isValid = booking.pickupOtpHash ? isOtpValid(otp, booking.pickupOtpHash) : false;
+    force.assertOrForce(!booking.pickupOtpHash, 'PICKUP_OTP_NOT_AVAILABLE');
+    force.assertOrForce(
+        Boolean(booking.pickupOtpExpiresAt && booking.pickupOtpExpiresAt < new Date()),
+        'PICKUP_OTP_EXPIRED'
+    );
+    force.assertOrForce(booking.otpAttemptCount >= 5, 'OTP_ATTEMPT_LIMIT_EXCEEDED');
 
-    if (!isValid && !(isManualOverrideEnabled() && input.overrideReason?.trim())) {
+    const isValid = booking.pickupOtpHash && otp ? isOtpValid(otp, booking.pickupOtpHash) : false;
+
+    if (!isValid && !force.forced) {
+        // Only a genuine failed guess burns an attempt; a forced boarding is not a guess.
         await prisma.rideBooking.update({
             where: { id: bookingId },
             data: { otpAttemptCount: { increment: 1 } },
         });
         throw new Error('INVALID_PICKUP_OTP');
     }
+    force.assertOrForce(!isValid, 'INVALID_PICKUP_OTP');
 
     const now = new Date();
 
@@ -582,11 +608,19 @@ export const verifyPickupAndBoard = async (driverId: string, bookingId: string, 
 
     await recordEvent(booking.rideId, bookingId, 'PICKUP_OTP_VERIFIED', 'DRIVER', driverId, input, {
         validationStatus: isValid ? 'VALID' : 'WARNING',
+        force,
         metadataJson: {
-            manualOverride: !isValid || Boolean(input.overrideReason?.trim()),
-            overrideReason: input.overrideReason ?? null,
             otpValidated: isValid,
         },
+    });
+
+    await handleForcedAction({
+        context: force,
+        action: 'PICKUP_OTP_VERIFIED',
+        rideId: booking.rideId,
+        bookingId,
+        passengerId: booking.passengerId,
+        actorId: driverId,
     });
 
     await createNotification({
@@ -617,6 +651,7 @@ export const verifyPickupAndBoard = async (driverId: string, bookingId: string, 
         rideId: booking.rideId,
         status: BookingStatus.ONBOARD,
         onboardedAt: now,
+        ...force.summary(),
     };
 };
 
@@ -633,9 +668,13 @@ export const markNoShow = async (driverId: string, input: MarkNoShowInput) => {
     if (!booking) throw new Error('BOOKING_NOT_FOUND');
     if (booking.ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
 
-    if (booking.status !== BookingStatus.DRIVER_ARRIVED && booking.status !== BookingStatus.WAITING_FOR_PICKUP) {
-        throw new Error('BOOKING_NOT_AT_PICKUP');
-    }
+    const force = createForceContext(input);
+    assertForceAllowedOnRide(force, booking.ride.status);
+
+    force.assertOrForce(
+        booking.status !== BookingStatus.DRIVER_ARRIVED && booking.status !== BookingStatus.WAITING_FOR_PICKUP,
+        'BOOKING_NOT_AT_PICKUP'
+    );
 
     // Validate wait time: driver must have waited at least WAIT_TIME_MINUTES.
     // Local simulations can bypass this so the full lifecycle is testable from one session.
@@ -643,9 +682,7 @@ export const markNoShow = async (driverId: string, input: MarkNoShowInput) => {
     if (!allowRideSimulation && booking.waitTimerStartedAt) {
         const waitedMs = Date.now() - booking.waitTimerStartedAt.getTime();
         const waitedMinutes = waitedMs / 60_000;
-        if (waitedMinutes < WAIT_TIME_MINUTES) {
-            throw new Error('WAIT_TIME_NOT_ELAPSED');
-        }
+        force.assertOrForce(waitedMinutes < WAIT_TIME_MINUTES, 'WAIT_TIME_NOT_ELAPSED');
     }
 
     const now = new Date();
@@ -658,7 +695,16 @@ export const markNoShow = async (driverId: string, input: MarkNoShowInput) => {
         },
     });
 
-    await recordEvent(booking.rideId, input.bookingId, 'NO_SHOW_MARKED', 'DRIVER', driverId, input);
+    await recordEvent(booking.rideId, input.bookingId, 'NO_SHOW_MARKED', 'DRIVER', driverId, input, { force });
+
+    await handleForcedAction({
+        context: force,
+        action: 'NO_SHOW_MARKED',
+        rideId: booking.rideId,
+        bookingId: booking.id,
+        passengerId: booking.passengerId,
+        actorId: driverId,
+    });
 
     // Notify passenger
     await createNotification({
@@ -689,6 +735,7 @@ export const markNoShow = async (driverId: string, input: MarkNoShowInput) => {
         rideId: booking.rideId,
         status: BookingStatus.NO_SHOW,
         noShowMarkedAt: now,
+        ...force.summary(),
     };
 };
 
@@ -707,11 +754,13 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
     if (!booking) throw new Error('BOOKING_NOT_FOUND');
     if (booking.ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
 
-    if (booking.status !== BookingStatus.ONBOARD && booking.status !== BookingStatus.IN_PROGRESS) {
-        if (!(isManualOverrideEnabled() && input.overrideReason?.trim())) {
-            throw new Error('BOOKING_NOT_ONBOARD');
-        }
-    }
+    const force = createForceContext(input);
+    assertForceAllowedOnRide(force, booking.ride.status);
+
+    force.assertOrForce(
+        booking.status !== BookingStatus.ONBOARD && booking.status !== BookingStatus.IN_PROGRESS,
+        'BOOKING_NOT_ONBOARD'
+    );
 
     // Geofence check (warning only)
     const dropoffPoint = resolveDropoffPoint(booking);
@@ -719,6 +768,7 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
         ? Math.round(Math.max(0, haversineDistance(input.lat, input.lng, dropoffPoint.lat, dropoffPoint.lng)))
         : null;
     const geofenceValid = distanceMeters == null ? true : distanceMeters <= GEOFENCE_RADIUS_METERS;
+    if (!geofenceValid) force.noteSkip('GEOFENCE_OUT_OF_RANGE');
 
     const now = new Date();
 
@@ -757,14 +807,22 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
 
     await recordEvent(booking.rideId, input.bookingId, 'DROPOFF_CONFIRMED_DRIVER', 'DRIVER', driverId, input, {
         validationStatus: geofenceValid ? 'VALID' : 'WARNING',
+        force,
         metadataJson: {
             dropoffPoint,
             distanceMeters,
             geofenceValid,
             actor: 'driver',
-            manualOverride: Boolean(input.overrideReason?.trim()),
-            overrideReason: input.overrideReason ?? null,
         },
+    });
+
+    await handleForcedAction({
+        context: force,
+        action: 'DROPOFF_CONFIRMED_DRIVER',
+        rideId: booking.rideId,
+        bookingId: booking.id,
+        passengerId: booking.passengerId,
+        actorId: driverId,
     });
 
     // Notify rider to confirm
@@ -799,6 +857,7 @@ export const confirmDropoff = async (driverId: string, input: ConfirmDropoffInpu
         geofenceValid,
         distanceMeters,
         dropoffPoint,
+        ...force.summary(),
         location: dropoffLocation ? {
             rideId: dropoffLocation.rideId,
             lat: dropoffLocation.lat,
@@ -820,11 +879,11 @@ export const riderConfirmDropoff = async (passengerId: string, bookingId: string
 
     if (!booking) throw new Error('BOOKING_NOT_FOUND');
     if (booking.passengerId !== passengerId) throw new Error('FORBIDDEN_PASSENGER');
-    if (booking.status !== BookingStatus.DROP_PENDING) {
-        if (!(isManualOverrideEnabled() && input.overrideReason?.trim())) {
-            throw new Error('BOOKING_NOT_DROP_PENDING');
-        }
-    }
+
+    const force = createForceContext(input);
+    assertForceAllowedOnRide(force, booking.ride.status);
+
+    force.assertOrForce(booking.status !== BookingStatus.DROP_PENDING, 'BOOKING_NOT_DROP_PENDING');
 
     const now = new Date();
 
@@ -838,11 +897,15 @@ export const riderConfirmDropoff = async (passengerId: string, bookingId: string
     });
     await awardBookingCompletionRewards(bookingId);
 
-    await recordEvent(booking.rideId, bookingId, 'DROPOFF_CONFIRMED_RIDER', 'RIDER', passengerId, input, {
-        metadataJson: {
-            manualOverride: Boolean(input.overrideReason?.trim()),
-            overrideReason: input.overrideReason ?? null,
-        },
+    await recordEvent(booking.rideId, bookingId, 'DROPOFF_CONFIRMED_RIDER', 'RIDER', passengerId, input, { force });
+
+    await handleForcedAction({
+        context: force,
+        action: 'DROPOFF_CONFIRMED_RIDER',
+        rideId: booking.rideId,
+        bookingId,
+        passengerId: booking.ride.driverId,
+        actorId: passengerId,
     });
 
     await createNotification({
@@ -873,6 +936,7 @@ export const riderConfirmDropoff = async (passengerId: string, bookingId: string
         rideId: booking.rideId,
         status: BookingStatus.COMPLETED,
         completedAt: now,
+        ...force.summary(),
     };
 };
 
@@ -920,7 +984,7 @@ export const finishRide = async (driverId: string, rideId: string, input: RideEv
         where: { id: rideId },
         include: {
             bookings: {
-                select: { id: true, status: true },
+                select: { id: true, status: true, passengerId: true },
             },
         },
     });
@@ -929,14 +993,15 @@ export const finishRide = async (driverId: string, rideId: string, input: RideEv
     if (ride.driverId !== driverId) throw new Error('FORBIDDEN_DRIVER');
     if (ride.status !== RideStatus.IN_PROGRESS) throw new Error('RIDE_NOT_IN_PROGRESS');
 
+    const force = createForceContext(input);
+    assertForceAllowedOnRide(force, ride.status);
+
     // Check if any bookings are still non-terminal
     const nonTerminalBookings = ride.bookings.filter(
         b => NON_TERMINAL_BOOKING_STATES.includes(b.status)
     );
 
-    if (nonTerminalBookings.length > 0 && !(isManualOverrideEnabled() && input.overrideReason?.trim())) {
-        throw new Error('BOOKINGS_NOT_ALL_TERMINAL');
-    }
+    force.assertOrForce(nonTerminalBookings.length > 0, 'BOOKINGS_NOT_ALL_TERMINAL');
 
     const now = new Date();
 
@@ -949,7 +1014,26 @@ export const finishRide = async (driverId: string, rideId: string, input: RideEv
     });
     await awardRideCompletionRewards(rideId);
 
-    await recordEvent(rideId, null, 'RIDE_FINISHED', 'DRIVER', driverId, input);
+    await recordEvent(rideId, null, 'RIDE_FINISHED', 'DRIVER', driverId, input, {
+        force,
+        // Forcing does not close these bookings — their refunds and payouts are
+        // settled elsewhere — so name them for the admin who picks this up.
+        metadataJson: nonTerminalBookings.length > 0
+            ? { danglingBookings: nonTerminalBookings.map((b) => ({ bookingId: b.id, status: b.status })) }
+            : {},
+    });
+
+    // Each rider left mid-flight gets warned and their booking flagged for review.
+    for (const dangling of force.forced ? nonTerminalBookings : []) {
+        await handleForcedAction({
+            context: force,
+            action: 'RIDE_FINISHED',
+            rideId,
+            bookingId: dangling.id,
+            passengerId: dangling.passengerId,
+            actorId: driverId,
+        });
+    }
 
     const rideUpdatedPayload = {
         rideId,
@@ -967,6 +1051,7 @@ export const finishRide = async (driverId: string, rideId: string, input: RideEv
         rideId: updatedRide.id,
         status: updatedRide.status,
         actualEndTime: updatedRide.actualEndTime,
+        ...force.summary(),
     };
 };
 
@@ -1160,7 +1245,7 @@ export const getLatestLocation = async (rideId: string) => {
 
 export const syncOfflineActions = async (
     actorId: string,
-    actions: Array<{ actionId: string; eventType: string; rideId: string; bookingId?: string; lat?: number; lng?: number; clientTimestamp: string; overrideReason?: string }>
+    actions: Array<{ actionId: string; eventType: string; rideId: string; bookingId?: string; lat?: number; lng?: number; clientTimestamp: string; force?: boolean; overrideReason?: string }>
 ) => {
     const results: Array<{ actionId: string; status: 'processed' | 'duplicate' | 'error'; error?: string }> = [];
 
@@ -1203,11 +1288,14 @@ export const syncOfflineActions = async (
 
             const overrideReason = action.overrideReason || 'Manual recovery requested';
 
+            // Replaying a queued action always forces: the guards it would hit
+            // describe the present, not the moment the driver actually acted.
             const eventInput: RideEventInput = {
                 actionId: action.actionId,
                 clientTimestamp: action.clientTimestamp,
                 lat: action.lat,
                 lng: action.lng,
+                force: true,
                 overrideReason,
             };
             let autoRepaired = false;
@@ -1224,7 +1312,7 @@ export const syncOfflineActions = async (
                     await driverArrived(actorId, { ...eventInput, bookingId: action.bookingId });
                     autoRepaired = true;
                 } else if (action.eventType === 'MANUAL_PICKUP_APPROVAL' && actorType === 'DRIVER' && action.bookingId) {
-                    await verifyPickupAndBoard(actorId, action.bookingId, '000000', eventInput);
+                    await verifyPickupAndBoard(actorId, action.bookingId, undefined, eventInput);
                     autoRepaired = true;
                 } else if (action.eventType === 'MANUAL_CONFIRM_DROPOFF' && actorType === 'DRIVER' && action.bookingId) {
                     await confirmDropoff(actorId, { ...eventInput, bookingId: action.bookingId });

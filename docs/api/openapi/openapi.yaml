@@ -21,16 +21,16 @@
       "description": "Auth endpoints"
     },
     {
-      "name": "DL Verification",
-      "description": "Veriff Driving License Verification endpoints"
-    },
-    {
       "name": "Bookings",
       "description": "Bookings endpoints"
     },
     {
       "name": "Chat",
       "description": "Chat endpoints"
+    },
+    {
+      "name": "DL Verification",
+      "description": "Veriff Driving License Verification endpoints"
     },
     {
       "name": "Driver Bookings",
@@ -55,6 +55,10 @@
     {
       "name": "Ratings",
       "description": "Trip completion ratings"
+    },
+    {
+      "name": "Ride Operations",
+      "description": "In-ride driver and rider steps: arrival, OTP boarding, no-show, drop-off, finish. Each accepts force + overrideReason while the ride is in progress."
     },
     {
       "name": "Search Rides",
@@ -360,6 +364,51 @@
     },
     "/api/v1/dl-verification/document": {
       "$ref": "./paths/dl-verification.yaml#/paths/~1api~1v1~1dl-verification~1document"
+    },
+    "/api/v1/rides/{rideId}/start": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1rides~1{rideId}~1start"
+    },
+    "/api/v1/rides/{rideId}/finish": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1rides~1{rideId}~1finish"
+    },
+    "/api/v1/rides/{rideId}/locations": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1rides~1{rideId}~1locations"
+    },
+    "/api/v1/rides/{rideId}/latest-location": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1rides~1{rideId}~1latest-location"
+    },
+    "/api/v1/rides/offline-sync": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1rides~1offline-sync"
+    },
+    "/api/v1/bookings/{id}/driver-arrived": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1bookings~1{id}~1driver-arrived"
+    },
+    "/api/v1/bookings/{id}/rider-arrived": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1bookings~1{id}~1rider-arrived"
+    },
+    "/api/v1/bookings/{id}/verify-pickup-otp": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1bookings~1{id}~1verify-pickup-otp"
+    },
+    "/api/v1/bookings/{id}/mark-no-show": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1bookings~1{id}~1mark-no-show"
+    },
+    "/api/v1/bookings/{id}/confirm-dropoff": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1bookings~1{id}~1confirm-dropoff"
+    },
+    "/api/v1/bookings/{id}/rider-confirm-dropoff": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1bookings~1{id}~1rider-confirm-dropoff"
+    },
+    "/api/v1/bookings/{id}/report-missed-pickup": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1bookings~1{id}~1report-missed-pickup"
+    },
+    "/api/v1/bookings/{id}/dev-simulate-pickup": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1bookings~1{id}~1dev-simulate-pickup"
+    },
+    "/api/v1/bookings/{id}/dev-simulate-dropoff": {
+      "$ref": "./paths/ride-operations.yaml#/paths/~1api~1v1~1bookings~1{id}~1dev-simulate-dropoff"
+    },
+    "/api/v1/admin/ride-overrides": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1ride-overrides"
     }
   },
   "components": {

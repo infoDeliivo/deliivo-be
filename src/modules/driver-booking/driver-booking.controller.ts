@@ -3,6 +3,7 @@ import { deleteCache, deleteCachePattern } from '../../services/cache.service.js
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
 import * as DriverBookingService from './driver-booking.service.js';
+import { FORCE_REQUIRES_RIDE_IN_PROGRESS } from '../ride-operations/force-override.js';
 
 const cacheKeys = {
     booking: (id: string) => `booking:${id}`,
@@ -47,6 +48,8 @@ const mapDriverActionError = (error: Error) => {
             return { status: HttpStatus.BAD_REQUEST, message: 'OTP is invalid' };
         case 'OTP_ATTEMPT_LIMIT_EXCEEDED':
             return { status: HttpStatus.CONFLICT, message: 'Maximum OTP attempts exceeded' };
+        case FORCE_REQUIRES_RIDE_IN_PROGRESS:
+            return { status: HttpStatus.CONFLICT, message: 'Actions can only be forced while the ride is in progress' };
         default:
             return { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to process driver booking action' };
     }
@@ -108,8 +111,8 @@ export const cancelAfterAccept = async (req: AuthRequest, res: Response) => {
 export const verifyPickupOtp = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        const { otp } = req.body as { otp: string };
-        const result = await DriverBookingService.verifyPickupOtp(req.user.id, bookingId, otp);
+        const { otp, force, overrideReason } = req.body as { otp?: string; force?: boolean; overrideReason?: string };
+        const result = await DriverBookingService.verifyPickupOtp(req.user.id, bookingId, otp, { force, overrideReason });
         await invalidateBookingCaches(result.bookingId, result.rideId, result.passengerId);
 
         return sendSuccess(res, {
@@ -125,8 +128,8 @@ export const verifyPickupOtp = async (req: AuthRequest, res: Response) => {
 export const verifyDropOtp = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        const { otp } = req.body as { otp: string };
-        const result = await DriverBookingService.verifyDropOtp(req.user.id, bookingId, otp);
+        const { otp, force, overrideReason } = req.body as { otp?: string; force?: boolean; overrideReason?: string };
+        const result = await DriverBookingService.verifyDropOtp(req.user.id, bookingId, otp, { force, overrideReason });
         await invalidateBookingCaches(result.bookingId, result.rideId, result.passengerId);
 
         return sendSuccess(res, {

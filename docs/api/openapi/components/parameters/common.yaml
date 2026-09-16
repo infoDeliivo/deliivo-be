@@ -68,5 +68,15 @@
     "schema": {
       "type": "string"
     }
+  },
+  "RideIdPath": {
+    "name": "rideId",
+    "in": "path",
+    "required": true,
+    "description": "Ride identifier.",
+    "schema": {
+      "type": "string",
+      "format": "uuid"
+    }
   }
 }

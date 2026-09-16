@@ -5,6 +5,7 @@ import { emitToRide } from '../../socket/index.js';
 import { deleteCache, deleteCachePattern } from '../../services/cache.service.js';
 import * as RideOpsService from './ride-operations.service.js';
 import { rideTooEarlyMessage } from '../../utils/ride-start-window.js';
+import { FORCE_REQUIRES_RIDE_IN_PROGRESS } from './force-override.js';
 
 const cacheKeys = {
     bookingPattern: (id: string) => `booking:${id}:*`,
@@ -67,6 +68,8 @@ const mapRideOpsError = (error: Error) => {
             return { status: HttpStatus.BAD_REQUEST, message: 'Pickup OTP is invalid' };
         case 'OTP_ATTEMPT_LIMIT_EXCEEDED':
             return { status: HttpStatus.CONFLICT, message: 'Maximum OTP attempts exceeded' };
+        case FORCE_REQUIRES_RIDE_IN_PROGRESS:
+            return { status: HttpStatus.CONFLICT, message: 'Actions can only be forced while the ride is in progress' };
         default:
             return { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to process ride operation' };
     }
@@ -161,7 +164,7 @@ export const riderArrivedAtPickup = async (req: AuthRequest, res: Response) => {
 export const verifyPickupOtp = async (req: AuthRequest, res: Response) => {
     try {
         const bookingId = req.params.id as string;
-        const { otp } = req.body as { otp: string };
+        const { otp } = req.body as { otp?: string };
         const result = await RideOpsService.verifyPickupAndBoard(req.user.id, bookingId, otp, req.body);
         await invalidateBookingRideCaches(result.bookingId, result.rideId);
         return sendSuccess(res, { message: 'Pickup verified, passenger onboard', data: result });

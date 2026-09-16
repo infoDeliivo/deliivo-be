@@ -65,3 +65,13 @@ export const adminVerificationEmailSchema = z.object({
 });
 
 export type AdminVerificationEmailInput = z.infer<typeof adminVerificationEmailSchema>;
+
+export const rideOverrideQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    actorId: z.string().uuid('actorId must be a UUID').optional(),
+    rideId: z.string().uuid('rideId must be a UUID').optional(),
+    bookingId: z.string().uuid('bookingId must be a UUID').optional(),
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+});

@@ -47,13 +47,28 @@ jest.mock('../ride-booking/segment-capacity.utils.js', () => ({
     releaseBookingSeats: jest.fn().mockResolvedValue(true),
 }));
 
-import { BookingStatus } from '@prisma/client';
+const mockRecordEvent = jest.fn();
+const mockHandleForcedAction = jest.fn();
+
+jest.mock('../ride-operations/ride-operations.service.js', () => ({
+    __esModule: true,
+    recordEvent: (...args: unknown[]) => mockRecordEvent(...args),
+}));
+
+jest.mock('../ride-operations/force-override.effects.js', () => ({
+    __esModule: true,
+    handleForcedAction: (...args: unknown[]) => mockHandleForcedAction(...args),
+}));
+
+import { BookingStatus, RideStatus } from '@prisma/client';
 import {
     acceptBooking,
     rejectBooking,
     cancelAfterAccept,
     verifyPickupOtp,
+    verifyDropOtp,
 } from './driver-booking.service.js';
+import { FORCE_REQUIRES_RIDE_IN_PROGRESS } from '../ride-operations/force-override.js';
 
 describe('driver booking service', () => {
     beforeEach(() => {
@@ -345,5 +360,105 @@ describe('driver booking service', () => {
 
         expect(mockRefundPaymentIntent).not.toHaveBeenCalled();
         expect(tx.driverPenaltyEvent.create).toHaveBeenCalled();
+    });
+
+    describe('forced OTP verification', () => {
+        const FORCED = { force: true, overrideReason: 'Rider phone was dead' };
+
+        const liveBooking = (overrides: Record<string, unknown> = {}) => ({
+            id: 'booking-f',
+            rideId: 'ride-f',
+            passengerId: 'passenger-f',
+            pickupWaypointId: null,
+            dropoffWaypointId: null,
+            status: BookingStatus.CONFIRMED,
+            pickupOtpHash: 'hash-111111',
+            pickupOtpExpiresAt: new Date(Date.now() + 60_000),
+            dropOtpHash: 'hash-222222',
+            dropOtpExpiresAt: new Date(Date.now() + 60_000),
+            otpAttemptCount: 0,
+            passenger: { id: 'passenger-f', name: 'Rider', avatarUrl: null },
+            ride: {
+                id: 'ride-f',
+                driverId: 'driver-f',
+                status: RideStatus.IN_PROGRESS,
+                originAddress: 'A',
+                destinationAddress: 'B',
+                departureDate: new Date('2026-09-01T00:00:00.000Z'),
+                departureTime: '09:00',
+                waypoints: [],
+            },
+            ...overrides,
+        });
+
+        it('boards on a wrong pickup OTP when forced, without burning an attempt', async () => {
+            mockPrisma.rideBooking.findUnique.mockResolvedValue(liveBooking());
+            mockIsOtpValid.mockReturnValue(false);
+            mockPrisma.rideBooking.update.mockResolvedValue({
+                id: 'booking-f', rideId: 'ride-f', passengerId: 'passenger-f', status: BookingStatus.IN_PROGRESS,
+            });
+
+            const result = await verifyPickupOtp('driver-f', 'booking-f', undefined, FORCED);
+
+            expect(result.status).toBe(BookingStatus.IN_PROGRESS);
+            expect(result.skippedChecks).toContain('INVALID_PICKUP_OTP');
+            expect(mockPrisma.rideBooking.update).not.toHaveBeenCalledWith(
+                expect.objectContaining({ data: { otpAttemptCount: { increment: 1 } } })
+            );
+        });
+
+        it('writes the audit row this stack otherwise skips', async () => {
+            mockPrisma.rideBooking.findUnique.mockResolvedValue(liveBooking());
+            mockIsOtpValid.mockReturnValue(false);
+            mockPrisma.rideBooking.update.mockResolvedValue({
+                id: 'booking-f', rideId: 'ride-f', passengerId: 'passenger-f', status: BookingStatus.IN_PROGRESS,
+            });
+
+            await verifyPickupOtp('driver-f', 'booking-f', undefined, FORCED);
+
+            expect(mockRecordEvent).toHaveBeenCalledWith(
+                'ride-f', 'booking-f', 'PICKUP_OTP_VERIFIED', 'DRIVER', 'driver-f',
+                expect.objectContaining({ force: true }),
+                expect.anything()
+            );
+            expect(mockHandleForcedAction).toHaveBeenCalledWith(
+                expect.objectContaining({ action: 'PICKUP_OTP_VERIFIED', bookingId: 'booking-f' })
+            );
+        });
+
+        it('forces a drop-off OTP for a booking in the wrong state', async () => {
+            mockPrisma.rideBooking.findUnique.mockResolvedValue(
+                liveBooking({ status: BookingStatus.CONFIRMED, dropOtpExpiresAt: new Date(Date.now() - 60_000) })
+            );
+            mockIsOtpValid.mockReturnValue(false);
+            mockPrisma.rideBooking.update.mockResolvedValue({
+                id: 'booking-f', rideId: 'ride-f', passengerId: 'passenger-f', status: BookingStatus.COMPLETED,
+            });
+
+            const result = await verifyDropOtp('driver-f', 'booking-f', undefined, FORCED);
+
+            expect(result.status).toBe(BookingStatus.COMPLETED);
+            expect(result.skippedChecks).toEqual(
+                expect.arrayContaining(['INVALID_BOOKING_STATUS', 'DROP_OTP_EXPIRED', 'INVALID_DROP_OTP'])
+            );
+        });
+
+        it('refuses to force once the ride is no longer running', async () => {
+            mockPrisma.rideBooking.findUnique.mockResolvedValue(
+                liveBooking({ ride: { ...liveBooking().ride, status: RideStatus.COMPLETED } })
+            );
+
+            await expect(
+                verifyPickupOtp('driver-f', 'booking-f', undefined, FORCED)
+            ).rejects.toThrow(FORCE_REQUIRES_RIDE_IN_PROGRESS);
+        });
+
+        it('never lets force past the ownership check', async () => {
+            mockPrisma.rideBooking.findUnique.mockResolvedValue(liveBooking());
+
+            await expect(
+                verifyPickupOtp('someone-else', 'booking-f', undefined, FORCED)
+            ).rejects.toThrow('FORBIDDEN_DRIVER');
+        });
     });
 });

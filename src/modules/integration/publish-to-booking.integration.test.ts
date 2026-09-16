@@ -576,6 +576,7 @@ jest.mock('../payments/payment.service.js', () => ({
 
 import polyline from '@mapbox/polyline';
 import * as DraftRideService from '../publish-ride/draft-ride.service';
+import { sumReservedSeats } from '../ride-booking/segment-capacity.utils';
 import { createBooking as createBookingRaw, cancelBooking } from '../ride-booking/ride-booking.service';
 
 /**
@@ -851,6 +852,52 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             // Both bookings succeed — non-overlapping segments
             expect(bookings).toHaveLength(2);
             expect(rides[0].availableSeats).toBe(0); // max occupied across all edges = 1
+        });
+
+        it('counts a segment booking alongside whole-route ones', async () => {
+            // The reported regression: 3-seat ride, two seats sold over the whole route
+            // and one more over a single leg. availableSeats (peak occupancy) says the ride is full;
+            // the seats actually sold are 3, and that is what the driver must see.
+            draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 3 }));
+            await DraftRideService.publishRide('driver-1');
+
+            const rideId = rides[0].id;
+            const crawleyWp = waypoints.find(w => w.placeId === 'place-crawley')!;
+
+            await createBooking('passenger-1', { rideId, seatsBooked: 2 });
+            await createBooking('passenger-2', {
+                rideId,
+                seatsBooked: 1,
+                pickupWaypointId: crawleyWp.id,
+            });
+
+            expect(rides[0].availableSeats).toBe(0);
+            expect(sumReservedSeats(bookings)).toBe(3);
+        });
+
+        it('reports seats sold even when the legs do not overlap', async () => {
+            // Two disjoint segments on a 3-seat ride: peak occupancy is 1, so two seats
+            // still look free — correct for availability, wrong as a count of sales.
+            draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 3 }));
+            await DraftRideService.publishRide('driver-1');
+
+            const rideId = rides[0].id;
+            const gatwickWp = waypoints.find(w => w.placeId === 'place-gatwick')!;
+            const crawleyWp = waypoints.find(w => w.placeId === 'place-crawley')!;
+
+            await createBooking('passenger-1', {
+                rideId,
+                seatsBooked: 1,
+                dropoffWaypointId: gatwickWp.id,
+            });
+            await createBooking('passenger-2', {
+                rideId,
+                seatsBooked: 1,
+                pickupWaypointId: crawleyWp.id,
+            });
+
+            expect(rides[0].availableSeats).toBe(2);
+            expect(sumReservedSeats(bookings)).toBe(2);
         });
 
         it('blocks overlapping segment when capacity is full', async () => {

@@ -24,14 +24,22 @@ const OPENAPI_BUNDLE_PATH = path.join(ROOT, 'docs/api/openapi/dist/openapi.json'
 
 const buildRouterImportMap = (modulesSource: string): Map<string, string> => {
   const map = new Map<string, string>();
-  const importRe = /import\s+([A-Za-z_][A-Za-z0-9_]*)\s+from\s+['"](\.\/[^'"]+\.routes)\.js['"];/g;
+  // Matches both `import x from './x.routes.js'` and `import { a, b } from './x.routes.js'`.
+  const importRe = /import\s+(?:([A-Za-z_][A-Za-z0-9_]*)|\{([^}]+)\})\s+from\s+['"](\.\/[^'"]+\.routes)\.js['"];/g;
 
   for (const match of modulesSource.matchAll(importRe)) {
-    const routerVar = match[1];
-    const rel = match[2].replace(/^\.\/+/, '');
+    const rel = match[3].replace(/^\.\/+/, '');
     const routeFile = path.join(ROOT, 'src/modules', `${rel}.ts`);
 
-    if (fs.existsSync(routeFile)) {
+    if (!fs.existsSync(routeFile)) {
+      continue;
+    }
+
+    const routerVars = match[1]
+      ? [match[1]]
+      : match[2].split(',').map((entry) => entry.split(/\sas\s/).pop()!.trim()).filter(Boolean);
+
+    for (const routerVar of routerVars) {
       map.set(routerVar, routeFile);
     }
   }

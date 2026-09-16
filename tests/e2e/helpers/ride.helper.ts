@@ -8,6 +8,13 @@ export function futureDateStr(daysFromNow = 30): string {
   return d.toISOString().split('T')[0];
 }
 
+export interface MeetingPointInput {
+  placeId: string;
+  address: string;
+  lat: number;
+  lng: number;
+}
+
 export interface PublishRideInput {
   originPlaceId?: string;
   originAddress: string;
@@ -23,6 +30,13 @@ export interface PublishRideInput {
   basePricePerSeat?: number;
   currency?: string;
   femaleOnly?: boolean;
+  /**
+   * Origin-area pickup points and destination-area drop-off points. Publishing
+   * refuses a draft with none of either (MEETING_POINTS_REQUIRED), so a spec that
+   * needs a real published ride has to supply them.
+   */
+  pickups?: MeetingPointInput[];
+  dropoffs?: MeetingPointInput[];
   stopover?: {
     placeId: string;
     address: string;
@@ -68,6 +82,21 @@ export async function publishRide(
   });
   if (destRes.status !== 200) {
     throw new Error(`Set destination failed: ${destRes.status} ${JSON.stringify(destRes.data)}`);
+  }
+
+  // Step 2b/2c: Meeting points — only sent when the caller supplies them, so
+  // specs that never publish successfully keep their existing behaviour.
+  if (input.pickups?.length) {
+    const pickupsRes = await a.put('/publish-ride/draft/pickups', { pickups: input.pickups });
+    if (pickupsRes.status !== 200) {
+      throw new Error(`Set pickups failed: ${pickupsRes.status} ${JSON.stringify(pickupsRes.data)}`);
+    }
+  }
+  if (input.dropoffs?.length) {
+    const dropoffsRes = await a.put('/publish-ride/draft/dropoffs', { dropoffs: input.dropoffs });
+    if (dropoffsRes.status !== 200) {
+      throw new Error(`Set dropoffs failed: ${dropoffsRes.status} ${JSON.stringify(dropoffsRes.data)}`);
+    }
   }
 
   // Step 3: Compute routes (requires Google Maps API key)

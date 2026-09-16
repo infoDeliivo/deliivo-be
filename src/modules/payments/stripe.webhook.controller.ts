@@ -9,6 +9,7 @@ import { constructStripeEvent } from './stripe.service.js';
 import { logInfo, logError, logWarn, logDebug } from '../../utils/logger.js';
 import { applyStripePaymentSucceededToBooking } from '../ride-booking/ride-booking.service.js';
 import { markBookingPaymentRefunded } from './payment.service.js';
+import { releaseBookingSeats } from '../ride-booking/segment-capacity.utils.js';
 
 const getHeaderValue = (value: string | string[] | undefined): string | null => {
     if (!value) return null;
@@ -43,10 +44,13 @@ const applyPaymentIntentFailed = async (intent: Stripe.PaymentIntent) => {
                 rideId: true,
                 passengerId: true,
                 seatsBooked: true,
+                pickupPosition: true,
+                dropoffPosition: true,
                 status: true,
                 ride: {
                     select: {
                         id: true,
+                        totalSeats: true,
                         originAddress: true,
                         destinationAddress: true,
                         departureDate: true,
@@ -67,11 +71,17 @@ const applyPaymentIntentFailed = async (intent: Stripe.PaymentIntent) => {
             },
         });
 
-        await tx.ride.update({
-            where: { id: booking.rideId },
-            data: {
-                availableSeats: { increment: booking.seatsBooked },
-            },
+        // Normally a no-op: in stripe mode the booking is still PAYMENT_PENDING and holds
+        // no seats, so the old raw increment invented one and inflated availableSeats on
+        // every failed card attempt. releaseBookingSeats claims seatsReservedAt first, so
+        // it only gives back seats a booking actually held.
+        await releaseBookingSeats(tx, {
+            bookingId: booking.id,
+            rideId: booking.rideId,
+            seatsBooked: booking.seatsBooked,
+            pickupPosition: booking.pickupPosition,
+            dropoffPosition: booking.dropoffPosition,
+            totalSeats: booking.ride.totalSeats,
         });
 
         return booking;

@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { BookingStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
@@ -9,6 +10,15 @@ import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode
 import { releaseBookingSeats } from '../ride-booking/segment-capacity.utils.js';
 import { emitToUsers } from '../../socket/index.js';
 import { awardBookingCompletionRewards } from '../rewards/rewards.service.js';
+import {
+    createForceContext,
+    assertForceAllowedOnRide,
+    type ForceInput,
+    type ForceContext,
+    type ForceSummary,
+} from '../ride-operations/force-override.js';
+import { handleForcedAction } from '../ride-operations/force-override.effects.js';
+import { recordEvent } from '../ride-operations/ride-operations.service.js';
 
 const PICKUP_OTP_TTL_MS = 6 * 60 * 60 * 1000;
 const DROP_OTP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -29,7 +39,7 @@ type DriverBookingResult = {
     passengerId: string;
     status: BookingStatus;
     segment?: SegmentInfo;
-};
+} & Partial<ForceSummary>;
 
 const fetchDriverBooking = async (bookingId: string) => {
     return prisma.rideBooking.findUnique({
@@ -429,35 +439,81 @@ export const cancelAfterAccept = async (driverId: string, bookingId: string, rea
     };
 };
 
-const assertOtpGuard = (booking: DriverBookingRecord, expectedStatus: BookingStatus) => {
-    if (booking.status !== expectedStatus) throw new Error('INVALID_BOOKING_STATUS');
+const assertOtpGuard = (
+    booking: DriverBookingRecord,
+    expectedStatus: BookingStatus,
+    force: ForceContext
+) => {
+    force.assertOrForce(booking.status !== expectedStatus, 'INVALID_BOOKING_STATUS');
+};
+
+/**
+ * This stack predates ride events and normally writes none. A forced OTP still
+ * has to leave an audit row, otherwise it never reaches the admin review queue.
+ */
+const auditForcedOtp = async (
+    booking: DriverBookingRecord,
+    driverId: string,
+    force: ForceContext,
+    eventType: 'PICKUP_OTP_VERIFIED' | 'DROP_OTP_VERIFIED'
+) => {
+    if (!force.forced) return;
+
+    await recordEvent(
+        booking.rideId,
+        booking.id,
+        eventType,
+        'DRIVER',
+        driverId,
+        {
+            actionId: randomUUID(),
+            clientTimestamp: new Date().toISOString(),
+            force: true,
+            overrideReason: force.overrideReason ?? undefined,
+        },
+        { force, metadataJson: { source: 'driver-booking', otpValidated: false } }
+    );
+
+    await handleForcedAction({
+        context: force,
+        action: eventType,
+        rideId: booking.rideId,
+        bookingId: booking.id,
+        passengerId: booking.passengerId,
+        actorId: driverId,
+    });
 };
 
 export const verifyPickupOtp = async (
     driverId: string,
     bookingId: string,
-    otp: string
+    otp: string | undefined,
+    forceInput: ForceInput = {}
 ): Promise<DriverBookingResult> => {
     const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
-    assertOtpGuard(booking, BookingStatus.CONFIRMED);
 
-    if (!booking.pickupOtpHash || !booking.pickupOtpExpiresAt) {
-        throw new Error('PICKUP_OTP_NOT_AVAILABLE');
-    }
-    if (booking.pickupOtpExpiresAt.getTime() < Date.now()) {
-        throw new Error('PICKUP_OTP_EXPIRED');
-    }
-    if (booking.otpAttemptCount >= MAX_OTP_ATTEMPTS) {
-        throw new Error('OTP_ATTEMPT_LIMIT_EXCEEDED');
-    }
+    const force = createForceContext(forceInput);
+    assertForceAllowedOnRide(force, booking.ride.status);
 
-    if (!isOtpValid(otp, booking.pickupOtpHash)) {
+    assertOtpGuard(booking, BookingStatus.CONFIRMED, force);
+
+    force.assertOrForce(!booking.pickupOtpHash || !booking.pickupOtpExpiresAt, 'PICKUP_OTP_NOT_AVAILABLE');
+    force.assertOrForce(
+        Boolean(booking.pickupOtpExpiresAt && booking.pickupOtpExpiresAt.getTime() < Date.now()),
+        'PICKUP_OTP_EXPIRED'
+    );
+    force.assertOrForce(booking.otpAttemptCount >= MAX_OTP_ATTEMPTS, 'OTP_ATTEMPT_LIMIT_EXCEEDED');
+
+    const isValid = Boolean(booking.pickupOtpHash && otp && isOtpValid(otp, booking.pickupOtpHash));
+
+    if (!isValid && !force.forced) {
         await prisma.rideBooking.update({
             where: { id: bookingId },
             data: { otpAttemptCount: { increment: 1 } },
         });
         throw new Error('INVALID_PICKUP_OTP');
     }
+    force.assertOrForce(!isValid, 'INVALID_PICKUP_OTP');
 
     const updated = await prisma.rideBooking.update({
         where: { id: bookingId },
@@ -486,40 +542,48 @@ export const verifyPickupOtp = async (
         },
     });
 
+    await auditForcedOtp(booking, driverId, force, 'PICKUP_OTP_VERIFIED');
+
     return {
         bookingId: updated.id,
         rideId: updated.rideId,
         passengerId: updated.passengerId,
         status: updated.status,
         segment: resolveBookingSegment(booking),
+        ...force.summary(),
     };
 };
 
 export const verifyDropOtp = async (
     driverId: string,
     bookingId: string,
-    otp: string
+    otp: string | undefined,
+    forceInput: ForceInput = {}
 ): Promise<DriverBookingResult> => {
     const booking = requireDriverBooking(driverId, await fetchDriverBooking(bookingId));
-    assertOtpGuard(booking, BookingStatus.IN_PROGRESS);
 
-    if (!booking.dropOtpHash || !booking.dropOtpExpiresAt) {
-        throw new Error('DROP_OTP_NOT_AVAILABLE');
-    }
-    if (booking.dropOtpExpiresAt.getTime() < Date.now()) {
-        throw new Error('DROP_OTP_EXPIRED');
-    }
-    if (booking.otpAttemptCount >= MAX_OTP_ATTEMPTS) {
-        throw new Error('OTP_ATTEMPT_LIMIT_EXCEEDED');
-    }
+    const force = createForceContext(forceInput);
+    assertForceAllowedOnRide(force, booking.ride.status);
 
-    if (!isOtpValid(otp, booking.dropOtpHash)) {
+    assertOtpGuard(booking, BookingStatus.IN_PROGRESS, force);
+
+    force.assertOrForce(!booking.dropOtpHash || !booking.dropOtpExpiresAt, 'DROP_OTP_NOT_AVAILABLE');
+    force.assertOrForce(
+        Boolean(booking.dropOtpExpiresAt && booking.dropOtpExpiresAt.getTime() < Date.now()),
+        'DROP_OTP_EXPIRED'
+    );
+    force.assertOrForce(booking.otpAttemptCount >= MAX_OTP_ATTEMPTS, 'OTP_ATTEMPT_LIMIT_EXCEEDED');
+
+    const isValid = Boolean(booking.dropOtpHash && otp && isOtpValid(otp, booking.dropOtpHash));
+
+    if (!isValid && !force.forced) {
         await prisma.rideBooking.update({
             where: { id: bookingId },
             data: { otpAttemptCount: { increment: 1 } },
         });
         throw new Error('INVALID_DROP_OTP');
     }
+    force.assertOrForce(!isValid, 'INVALID_DROP_OTP');
 
     const updated = await prisma.rideBooking.update({
         where: { id: bookingId },
@@ -549,11 +613,14 @@ export const verifyDropOtp = async (
     });
     await awardBookingCompletionRewards(bookingId);
 
+    await auditForcedOtp(booking, driverId, force, 'DROP_OTP_VERIFIED');
+
     return {
         bookingId: updated.id,
         rideId: updated.rideId,
         passengerId: updated.passengerId,
         status: updated.status,
         segment: resolveBookingSegment(booking),
+        ...force.summary(),
     };
 };

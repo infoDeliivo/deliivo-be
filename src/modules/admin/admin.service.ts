@@ -1736,3 +1736,70 @@ export const updateEmergencyAlertStatus = async (
         select: emergencyAlertSelect,
     });
 };
+
+// ============================================================
+//  FORCED RIDE ACTION REVIEW QUEUE
+// ============================================================
+
+/**
+ * Every step a driver forced through lands here: ride events are written with
+ * validationStatus SUSPICIOUS, carrying the reason they typed and the guards
+ * their override skipped.
+ */
+export const listRideOverrides = async (query: {
+    page?: number;
+    limit?: number;
+    actorId?: string;
+    rideId?: string;
+    bookingId?: string;
+    from?: string;
+    to?: string;
+}) => {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.RideEventWhereInput = { validationStatus: 'SUSPICIOUS' };
+    if (query.actorId) where.actorId = query.actorId;
+    if (query.rideId) where.rideId = query.rideId;
+    if (query.bookingId) where.bookingId = query.bookingId;
+    if (query.from || query.to) {
+        where.serverTimestamp = {
+            ...(query.from ? { gte: new Date(query.from) } : {}),
+            ...(query.to ? { lte: new Date(query.to) } : {}),
+        };
+    }
+
+    const [events, total] = await Promise.all([
+        prisma.rideEvent.findMany({
+            where,
+            skip,
+            take: limit,
+            orderBy: { serverTimestamp: 'desc' },
+            include: {
+                ride: {
+                    select: {
+                        id: true,
+                        status: true,
+                        originAddress: true,
+                        destinationAddress: true,
+                        departureDate: true,
+                        departureTime: true,
+                        driver: { select: { id: true, firstName: true, email: true, phone: true } },
+                    },
+                },
+            },
+        }),
+        prisma.rideEvent.count({ where }),
+    ]);
+
+    return {
+        overrides: events,
+        pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        },
+    };
+};

@@ -1,4 +1,5 @@
 import { RideStatus, BookingStatus } from '@prisma/client';
+import type { ForceInput } from './force-override.js';
 
 // Valid ride state transitions
 export const RIDE_TRANSITIONS: Record<RideStatus, RideStatus[]> = {
@@ -55,8 +56,7 @@ export type RideEventInput = {
     lat?: number;
     lng?: number;
     clientTimestamp: string;
-    overrideReason?: string;
-};
+} & ForceInput;
 
 export type DriverArrivedInput = RideEventInput & {
     bookingId: string;

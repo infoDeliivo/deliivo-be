@@ -71,6 +71,8 @@ export const createDispute = async (params: {
     raisedBy: string;
     reason: string;
     description?: string;
+    /** Opening status. Defaults to OPEN; system-raised flags start at NEEDS_MANUAL_REVIEW. */
+    status?: string;
 }) => {
     // Verify booking exists and belongs to the ride
     const booking = await prisma.rideBooking.findUnique({
@@ -115,7 +117,7 @@ export const createDispute = async (params: {
             raisedBy: params.raisedBy,
             reason: params.reason,
             description: params.description ?? null,
-            status: DISPUTE_STATUSES.OPEN,
+            status: params.status ?? DISPUTE_STATUSES.OPEN,
         },
     });
 

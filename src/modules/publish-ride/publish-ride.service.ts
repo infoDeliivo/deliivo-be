@@ -4,6 +4,7 @@ import { ListRidesQuery } from './publish-ride.types.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
+import { sumReservedSeats } from '../ride-booking/segment-capacity.utils.js';
 import { createNotification } from '../notification/notification.service.js';
 import {
     markBookingPaymentRefunded,
@@ -304,6 +305,10 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
 
         return {
             ...ride,
+            // Seats actually sold. Not totalSeats - availableSeats: that scalar is peak
+            // occupancy over the ride's segment edges, so disjoint segment bookings do
+            // not move it. See sumReservedSeats.
+            bookedSeats: sumReservedSeats(ride.bookings.filter((booking: any) => booking.status !== BookingStatus.CANCELLED)),
             bookings: enhancedBookings,
         };
     });
@@ -485,6 +490,8 @@ export const getRideById = async (driverId: string, rideId: string) => {
 
     return {
         ...ride,
+        // Seats actually sold — see the note in getUserRides.
+        bookedSeats: sumReservedSeats(ride.bookings.filter((booking) => booking.status !== BookingStatus.CANCELLED)),
         bookings: enhancedBookings,
     };
 };
@@ -538,6 +545,11 @@ export const cancelRide = async (driverId: string, rideId: string) => {
                 cancelledByRole: 'DRIVER',
                 cancellationReason: 'DRIVER_CANCELLED_RIDE',
                 refundPercent: 100,
+                // The seats stop being held here. Segment capacity is deliberately left
+                // alone — the ride is cancelled, so its availability no longer matters,
+                // and a per-booking release would be N extra writes. Clearing the flag is
+                // what keeps seat sums (sumReservedSeats) honest on a cancelled ride.
+                seatsReservedAt: null,
             },
         });
 

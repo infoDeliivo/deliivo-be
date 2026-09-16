@@ -3,6 +3,7 @@ import { prisma } from '../../config/index.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { logError } from '../../utils/logger.js';
+import { releaseBookingSeats } from '../ride-booking/segment-capacity.utils.js';
 
 /* ====================== DATA EXPORT ====================== */
 export const exportUserData = async (userId: string) => {
@@ -181,6 +182,8 @@ export const deleteUserAccount = async (userId: string) => {
                     paymentAmount: true,
                     paymentCurrency: true,
                     seatsBooked: true,
+                    pickupPosition: true,
+                    dropoffPosition: true,
                     rideId: true,
                 },
             },
@@ -206,9 +209,16 @@ export const deleteUserAccount = async (userId: string) => {
                     },
                 });
 
-                await tx.ride.update({
-                    where: { id: booking.rideId },
-                    data: { availableSeats: { increment: booking.seatsBooked } },
+                // Release through the seat-accounting helper: a raw availableSeats
+                // increment leaves RideSegmentCapacity.occupiedSeats stale, and the next
+                // recompute from the edges wipes it out again.
+                await releaseBookingSeats(tx, {
+                    bookingId: booking.id,
+                    rideId: booking.rideId,
+                    seatsBooked: booking.seatsBooked,
+                    pickupPosition: booking.pickupPosition,
+                    dropoffPosition: booking.dropoffPosition,
+                    totalSeats: ride.totalSeats,
                 });
 
                 if (booking.stripePaymentIntentId && booking.paymentAmount) {
@@ -233,7 +243,10 @@ export const deleteUserAccount = async (userId: string) => {
             paymentAmount: true,
             paymentCurrency: true,
             seatsBooked: true,
+            pickupPosition: true,
+            dropoffPosition: true,
             rideId: true,
+            ride: { select: { totalSeats: true } },
         },
     });
 
@@ -250,9 +263,14 @@ export const deleteUserAccount = async (userId: string) => {
                 },
             });
 
-            await tx.ride.update({
-                where: { id: booking.rideId },
-                data: { availableSeats: { increment: booking.seatsBooked } },
+            // See the note on the driver-side release above.
+            await releaseBookingSeats(tx, {
+                bookingId: booking.id,
+                rideId: booking.rideId,
+                seatsBooked: booking.seatsBooked,
+                pickupPosition: booking.pickupPosition,
+                dropoffPosition: booking.dropoffPosition,
+                totalSeats: booking.ride.totalSeats,
             });
 
             if (booking.stripePaymentIntentId && booking.paymentAmount) {

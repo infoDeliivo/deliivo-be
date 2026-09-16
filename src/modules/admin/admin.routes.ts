@@ -12,6 +12,7 @@ import {
     rejectVehicleSchema,
     userIdParamSchema,
     vehicleIdParamSchema,
+    rideOverrideQuerySchema,
 } from './admin.validator.js';
 import * as dlReviewController from '../dl-verification/dl-review.controller.js';
 import { declineDlSchema, dlUserIdParamSchema, resubmitDlSchema } from '../dl-verification/dl-verification.validator.js';
@@ -27,6 +28,11 @@ router.use(authorize('ADMIN') as any);
 router.get('/users', adminController.listUsers as any);
 router.get('/users/:id', adminController.getUserDetails as any);
 router.get('/rides', adminController.listRides as any);
+router.get(
+    '/ride-overrides',
+    validate({ query: rideOverrideQuerySchema }),
+    adminController.listRideOverrides as any
+);
 router.get('/revenue/ledger', adminController.getRevenueLedger as any);
 router.get('/sos', adminController.listEmergencyAlerts as any);
 router.post('/sos/:id/status', adminController.updateEmergencyAlertStatus as any);

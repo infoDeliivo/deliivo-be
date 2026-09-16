@@ -94,3 +94,17 @@ export const releaseBookingSeats = async (
     await releaseSegmentSeats(tx, input);
     return true;
 };
+
+/**
+ * Seats currently held on a ride: what riders actually bought, not peak concurrent
+ * occupancy. `ride.availableSeats` answers "can another rider fit" (totalSeats minus
+ * the busiest edge), which under-reports sales when bookings sit on disjoint segments —
+ * two riders on non-overlapping legs sell two seats with a peak of one. Driver-facing
+ * "booked" counts must use this instead.
+ *
+ * `seatsReservedAt` is the only source of truth for "this row holds seats": status is
+ * not, because a PAYMENT_PENDING booking holds nothing and a NO_SHOW one still does.
+ */
+export const sumReservedSeats = (
+    bookings: ReadonlyArray<{ seatsBooked: number; seatsReservedAt: Date | null }>
+): number => bookings.reduce((total, booking) => total + (booking.seatsReservedAt ? booking.seatsBooked : 0), 0);

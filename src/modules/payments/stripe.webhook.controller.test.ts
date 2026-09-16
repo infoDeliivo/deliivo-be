@@ -141,7 +141,7 @@ describe('handleStripeWebhook', () => {
         expect(res.status).toHaveBeenCalledWith(200);
     });
 
-    it('marks PAYMENT_FAILED and restores seats on payment failure', async () => {
+    it('marks PAYMENT_FAILED without inventing a seat the booking never held', async () => {
         mockConstructStripeEvent.mockReturnValue({
             id: 'evt_failed_1',
             type: 'payment_intent.payment_failed',
@@ -165,9 +165,12 @@ describe('handleStripeWebhook', () => {
                     rideId: 'ride-2',
                     passengerId: 'passenger-2',
                     seatsBooked: 2,
+                    pickupPosition: null,
+                    dropoffPosition: null,
                     status: 'PAYMENT_PENDING',
                     ride: {
                         id: 'ride-2',
+                        totalSeats: 4,
                         originAddress: 'Mathura',
                         destinationAddress: 'Delhi',
                         departureDate: new Date('2026-04-03T00:00:00.000Z'),
@@ -175,6 +178,9 @@ describe('handleStripeWebhook', () => {
                     },
                 }),
                 update: jest.fn().mockResolvedValue({}),
+                // Nothing to claim: in stripe mode the seats are taken at payment time,
+                // so an unpaid booking has seatsReservedAt null.
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
             ride: {
                 update: jest.fn().mockResolvedValue({}),
@@ -192,15 +198,70 @@ describe('handleStripeWebhook', () => {
         await handleStripeWebhook(req, res);
 
         expect(tx.rideBooking.update).toHaveBeenCalled();
-        expect(tx.ride.update).toHaveBeenCalledWith(
-            expect.objectContaining({
-                data: { availableSeats: { increment: 2 } },
-            })
-        );
+        // The old code incremented availableSeats here, handing back a seat the booking
+        // never held and inflating the ride's capacity on every failed card attempt.
+        expect(tx.ride.update).not.toHaveBeenCalled();
         expect(mockCreateNotification).toHaveBeenCalledWith(
             expect.objectContaining({
                 userId: 'passenger-2',
                 type: 'booking.payment.failed',
+            })
+        );
+        expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('still releases seats for a booking that did hold them', async () => {
+        mockConstructStripeEvent.mockReturnValue({
+            id: 'evt_failed_2',
+            type: 'payment_intent.payment_failed',
+            data: { object: { id: 'pi_2b', metadata: { bookingId: 'booking-2b' } } },
+        });
+
+        mockPrisma.stripeWebhookEvent.findUnique.mockResolvedValue(null);
+        mockPrisma.stripeWebhookEvent.create.mockResolvedValue({});
+
+        const tx = {
+            rideBooking: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 'booking-2b',
+                    rideId: 'ride-2b',
+                    passengerId: 'passenger-2b',
+                    seatsBooked: 2,
+                    pickupPosition: null,
+                    dropoffPosition: null,
+                    status: 'PAYMENT_PENDING',
+                    ride: {
+                        id: 'ride-2b',
+                        totalSeats: 4,
+                        originAddress: 'Mathura',
+                        destinationAddress: 'Delhi',
+                        departureDate: new Date('2026-04-03T00:00:00.000Z'),
+                        departureTime: '13:00',
+                    },
+                }),
+                update: jest.fn().mockResolvedValue({}),
+                // Rows written before seats moved to payment time still hold them.
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            ride: {
+                update: jest.fn().mockResolvedValue({}),
+            },
+        };
+
+        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+
+        const req: any = {
+            headers: { 'stripe-signature': 'sig_test' },
+            body: Buffer.from('{}'),
+        };
+        const res = makeRes();
+
+        await handleStripeWebhook(req, res);
+
+        // No segment positions, so the release falls back to the whole-ride counter.
+        expect(tx.ride.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: { availableSeats: { increment: 2 } },
             })
         );
         expect(res.status).toHaveBeenCalledWith(200);
