@@ -44,6 +44,8 @@ type DriverBookingResult = {
 const fetchDriverBooking = async (bookingId: string) => {
     return prisma.rideBooking.findUnique({
         where: { id: bookingId },
+        // Server-side only: the verify paths compare against these hashes.
+        omit: { pickupOtpHash: false, dropOtpHash: false },
         include: {
             passenger: {
                 select: {

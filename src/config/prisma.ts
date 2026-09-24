@@ -18,7 +18,19 @@ export const pool = new Pool({
 
 const adapter = new PrismaPg(pool);
 
-export const prisma = new PrismaClient({ adapter });
+// OTP secrets never leave the server by default. The passenger's booking detail
+// opts back in to the plaintext codes and the verify paths opt in to the hashes.
+export const prisma = new PrismaClient({
+  adapter,
+  omit: {
+    rideBooking: {
+      pickupOtp: true,
+      dropOtp: true,
+      pickupOtpHash: true,
+      dropOtpHash: true,
+    },
+  },
+});
 
 const getDatabaseUrl = () => process.env.DATABASE_URL?.trim() || '';
 

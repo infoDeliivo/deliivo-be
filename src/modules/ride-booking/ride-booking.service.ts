@@ -975,7 +975,7 @@ type BookingPlan = {
  * inside the transaction, where it is the authoritative check.
  */
 const resolveBookingPlan = async (
-    client: Prisma.TransactionClient,
+    client: Prisma.TransactionClient | typeof prisma,
     passengerId: string,
     input: CreateBookingInput,
     now: Date,
@@ -2023,6 +2023,8 @@ export const getBookingById = async (
             id: bookingId,
             passengerId,
         },
+        // Only the passenger sees the plaintext codes; they read them out to the driver.
+        omit: { pickupOtp: false, dropOtp: false },
         include: {
             ride: {
                 include: {
@@ -2070,8 +2072,8 @@ export const getBookingById = async (
 
     return {
         ...response,
-        pickupOtp: (booking as any).pickupOtp ?? null,
-        dropOtp: (booking as any).dropOtp ?? null,
+        pickupOtp: booking.pickupOtp ?? null,
+        dropOtp: booking.dropOtp ?? null,
         pickupOtpVerifiedAt: booking.pickupOtpVerifiedAt,
         dropOtpVerifiedAt: booking.dropOtpVerifiedAt,
         ratingByViewer: booking.ratings?.[0] ?? null,

@@ -534,17 +534,51 @@ export const resolveDispute = async (disputeId: string, params: {
 //  QUERIES
 // ============================================================
 
+// Both parties and admins read this, so it returns an explicit shape: no OTP
+// state and no Stripe identifiers.
 export const getDisputeById = async (disputeId: string) => {
     return prisma.dispute.findUnique({
         where: { id: disputeId },
         include: {
             booking: {
-                include: {
+                select: {
+                    id: true,
+                    passengerId: true,
+                    status: true,
+                    seatsBooked: true,
+                    totalPrice: true,
+                    pickupAddress: true,
+                    dropoffAddress: true,
+                    pickupOtpVerifiedAt: true,
+                    dropOtpVerifiedAt: true,
+                    cancelledAt: true,
+                    createdAt: true,
                     passenger: { select: { id: true, firstName: true, avatarUrl: true } },
-                    payment: true,
+                    payment: {
+                        select: {
+                            id: true,
+                            status: true,
+                            amountTotal: true,
+                            fareAmount: true,
+                            platformFeeAmount: true,
+                            refundedFareAmount: true,
+                            refundedFeeAmount: true,
+                            currency: true,
+                        },
+                    },
                 },
             },
-            ride: true,
+            ride: {
+                select: {
+                    id: true,
+                    driverId: true,
+                    status: true,
+                    originAddress: true,
+                    destinationAddress: true,
+                    departureDate: true,
+                    departureTime: true,
+                },
+            },
         },
     });
 };

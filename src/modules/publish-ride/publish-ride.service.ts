@@ -31,6 +31,19 @@ const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
     BookingStatus.IN_PROGRESS,
 ];
 
+/**
+ * Booking columns the driver's ride views never get. The OTP codes and hashes are
+ * already omitted client-wide; this drops the rest of the OTP state and the
+ * rider's Stripe identifiers, since these bookings are spread straight into the response.
+ */
+const DRIVER_HIDDEN_BOOKING_FIELDS = {
+    pickupOtpExpiresAt: true,
+    dropOtpExpiresAt: true,
+    otpAttemptCount: true,
+    stripePaymentIntentId: true,
+    stripeChargeId: true,
+} as const;
+
 const reconcileDriverRideListStatuses = async (driverId: string) => {
     const now = new Date();
     const candidates = await prisma.ride.findMany({
@@ -197,6 +210,7 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                         },
                     },
                     orderBy: { createdAt: 'desc' },
+                    omit: DRIVER_HIDDEN_BOOKING_FIELDS,
                     include: {
                         passenger: {
                             select: {
@@ -366,6 +380,7 @@ export const getRideById = async (driverId: string, rideId: string) => {
                 },
                 },
                 orderBy: { createdAt: 'desc' },
+                omit: DRIVER_HIDDEN_BOOKING_FIELDS,
                 include: {
                     passenger: {
                         select: {

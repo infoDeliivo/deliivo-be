@@ -562,6 +562,8 @@ export const verifyPickupAndBoard = async (
 ) => {
     const booking = await prisma.rideBooking.findUnique({
         where: { id: bookingId },
+        // Server-side only: needed to check the OTP the driver typed in.
+        omit: { pickupOtpHash: false },
         include: { ride: true },
     });
 

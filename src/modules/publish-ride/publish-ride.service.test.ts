@@ -99,3 +99,23 @@ describe('getRideById bookedSeats', () => {
         expect(ride.bookedSeats).toBe(1);
     });
 });
+
+describe('getRideById booking privacy', () => {
+    it('asks Prisma to leave OTP state and Stripe ids out of the bookings', async () => {
+        mockPrisma.ride.findFirst.mockResolvedValue(rideWith([booking()], 2));
+
+        await getRideById(DRIVER_ID, RIDE_ID);
+
+        const args = mockPrisma.ride.findFirst.mock.calls[0][0];
+        expect(args.include.bookings.omit).toEqual(
+            expect.objectContaining({
+                pickupOtpExpiresAt: true,
+                dropOtpExpiresAt: true,
+                otpAttemptCount: true,
+                stripePaymentIntentId: true,
+            })
+        );
+        expect(args.include.bookings.omit).not.toHaveProperty('pickupOtp', false);
+        expect(args.include.bookings.omit).not.toHaveProperty('dropOtp', false);
+    });
+});
