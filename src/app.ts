@@ -180,6 +180,8 @@ app.use('/api/v1/auth/otp/resend', ...otpLimiters);
 app.use('/api/v1/auth/otp/verify', ...otpLimiters);
 app.use('/api/v1/auth/signup', ...otpLimiters);
 app.use('/api/v1/auth/login', ...otpLimiters);
+app.use('/api/v1/users/me/contact/request', ...otpLimiters);
+app.use('/api/v1/users/me/contact/verify', ...otpLimiters);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', protect, userRouter);
 app.use('/api/v1/users', protect, rewardsRouter);

@@ -128,6 +128,12 @@
     "/api/v1/users/me/onboarding/complete": {
       "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1onboarding~1complete"
     },
+    "/api/v1/users/me/contact/request": {
+      "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1contact~1request"
+    },
+    "/api/v1/users/me/contact/verify": {
+      "$ref": "./paths/users.yaml#/paths/~1api~1v1~1users~1me~1contact~1verify"
+    },
     "/api/v1/uploads/presign": {
       "$ref": "./paths/uploads.yaml#/paths/~1api~1v1~1uploads~1presign"
     },

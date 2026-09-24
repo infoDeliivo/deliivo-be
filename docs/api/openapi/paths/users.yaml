@@ -46,7 +46,8 @@
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
           }
-        }
+        },
+        "description": "Basic info for the authenticated user, including `email`, `phone` and their `emailVerified` / `phoneVerified` flags."
       }
     },
     "/api/v1/users/me/locale": {
@@ -333,6 +334,162 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me/contact/request": {
+      "post": {
+        "operationId": "usersPostMeContactRequest",
+        "summary": "POST users/me/contact/request",
+        "description": "Start adding or replacing the authenticated user's email or phone. Sends a 4-digit OTP to the new value (valid 5 minutes, 60s resend cooldown). Nothing is saved until `/users/me/contact/verify` succeeds. 409 when another verified account already uses the value; 400 when it is already the user's verified contact. Rate limited like the auth OTP routes.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "method",
+                  "identifier"
+                ],
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "email",
+                      "phone"
+                    ]
+                  },
+                  "identifier": {
+                    "type": "string",
+                    "description": "Email address, or phone number in E.164 format (e.g. `+37255512345`). Emails are stored lowercased.",
+                    "example": "+37255512345"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Code sent. `code` is only included in OTP debug mode (staging / DISABLE_REAL_OTP).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          },
+          "429": {
+            "$ref": "../components/responses/errors.yaml#/TooManyRequests"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/users/me/contact/verify": {
+      "post": {
+        "operationId": "usersPostMeContactVerify",
+        "summary": "POST users/me/contact/verify",
+        "description": "Confirm the OTP sent by `/users/me/contact/request`. On success the value replaces the user's email/phone, is marked verified (`emailVerified` / `phoneVerified`) and becomes the login identifier. Returns the updated `GET /users/me` payload.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "method",
+                  "identifier",
+                  "code"
+                ],
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "email",
+                      "phone"
+                    ]
+                  },
+                  "identifier": {
+                    "type": "string",
+                    "description": "Email address, or phone number in E.164 format (e.g. `+37255512345`). Emails are stored lowercased.",
+                    "example": "+37255512345"
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{4}$",
+                    "example": "1234"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Contact saved and verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "../components/examples/common.yaml#/UserMeSuccess"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          },
+          "429": {
+            "$ref": "../components/responses/errors.yaml#/TooManyRequests"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
           }
         }
       }

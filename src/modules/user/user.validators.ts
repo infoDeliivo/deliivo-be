@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isAtLeastAge, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
+import { isValidE164PhoneNumber } from '../sms/sms.config.js';
 
 const personNameSchema = z
   .string()
@@ -76,3 +77,31 @@ export const fullProfileUpdateSchema = z.object({
 export const updateLocaleSchema = z.object({
   locale: z.string().trim().min(1).max(20),
 });
+
+/** Email must be an email, phone must be E.164 — same rules as signup. */
+const contactIdentifierRefinement = (data: { method: 'email' | 'phone'; identifier: string }) =>
+  data.method === 'email'
+    ? z.string().email().safeParse(data.identifier.trim()).success
+    : isValidE164PhoneNumber(data.identifier.trim());
+
+const contactIdentifierError = {
+  message: 'Identifier must be a valid email for email method, or a valid E.164 number for phone method',
+  path: ['identifier'],
+};
+
+export const contactRequestSchema = z
+  .object({
+    method: z.enum(['email', 'phone']),
+    identifier: z.string().min(1).max(254),
+  })
+  .strict()
+  .refine(contactIdentifierRefinement, contactIdentifierError);
+
+export const contactVerifySchema = z
+  .object({
+    method: z.enum(['email', 'phone']),
+    identifier: z.string().min(1).max(254),
+    code: z.string().regex(/^\d{4}$/, 'Code must be 4 digits'),
+  })
+  .strict()
+  .refine(contactIdentifierRefinement, contactIdentifierError);

@@ -1,13 +1,14 @@
 import redis from '../../cache/redis.js';
 import twilio from 'twilio';
 import { OTP_EXPIRY_MINUTES, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_SEC } from './otp.constants.js';
+import type { OtpPurpose } from './otp.types.js';
 
 const otpKey = (identifier: string, purpose: string, method: string) =>
   `otp:${purpose}:${identifier}:${method}`;
 
 export const createOtp = async (
   identifier: string,
-  purpose: 'signup' | 'login' | 'reset_password',
+  purpose: OtpPurpose,
   method: string,
 ) => {
   const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE_REAL_OTP === 'true';
@@ -40,7 +41,7 @@ export const createOtp = async (
 
 export const verifyOtp = async (
   identifier: string,
-  purpose: 'signup' | 'login' | 'reset_password',
+  purpose: OtpPurpose,
   code: string,
   method: string,
 ) => {
@@ -87,7 +88,7 @@ export const verifyOtp = async (
 
 export const resendOtp = async (
   identifier: string,
-  purpose: 'signup' | 'login' | 'reset_password',
+  purpose: OtpPurpose,
   method: string,
 ) => {
   const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE_REAL_OTP === 'true';

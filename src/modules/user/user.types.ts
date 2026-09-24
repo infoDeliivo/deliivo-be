@@ -123,3 +123,26 @@ export interface ServiceResult<T> {
   data?: T;
   reason?: string;
 }
+
+// ====================== CONTACT CHANGE (add / replace email or phone) ======================
+
+export type ContactMethod = 'email' | 'phone';
+
+export type ContactChangeError =
+  | 'USER_NOT_FOUND'
+  | 'CONTACT_UNCHANGED'
+  | 'CONTACT_IN_USE'
+  | 'OTP_COOLDOWN'
+  | 'OTP_FAILED'
+  | 'NO_PENDING_CHANGE'
+  | 'OTP_INVALID'
+  | 'OTP_EXPIRED'
+  | 'OTP_TOO_MANY_ATTEMPTS';
+
+export type ContactChangeResult<T> = { success: true; data: T } | { success: false; error: ContactChangeError };
+
+export interface ContactRequestData {
+  identifier: string;
+  /** Issued OTP, or 'TWILIO_VERIFY' when Twilio delivers it itself. Never returned to clients outside debug mode. */
+  code: string;
+}

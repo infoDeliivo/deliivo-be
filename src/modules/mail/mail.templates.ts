@@ -24,6 +24,18 @@ export const signupOtpTemplate = (otp: string) => `
     </p>
   </div>
 `;
+export const contactVerifyOtpTemplate = (otp: string) => `
+  <div style="font-family: Arial, sans-serif; padding: 20px">
+    <h2>Email Verification</h2>
+    <p>Use the OTP below to add this email address to your account:</p>
+
+    <h1 style="letter-spacing: 6px">${otp}</h1>
+
+    <p style="color: #555">
+      This OTP is valid for <b>5 minutes</b>. If you did not request this, you can ignore this email.
+    </p>
+  </div>
+`;
 export const otpSuccessTemplate = (purpose: 'login' | 'signup') => `
   <div style="font-family: Arial, sans-serif; padding: 20px">
     <h2>${purpose === 'login' ? 'Login Successful' : 'Signup Successful'}</h2>
