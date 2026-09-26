@@ -72,15 +72,16 @@ async function notify(userId: string, requestId: string, title: string, body: st
 
 async function assertActiveUser(id: string) {
   const user = await prisma.user.findUnique({ where: { id } });
-  if (
-    !user ||
-    user.isBanned ||
-    !user.tosAcceptedAt ||
-    !user.privacyAcceptedAt ||
-    !user.dob ||
-    calculateAgeYears(user.dob) < MINIMUM_BOOKING_AGE_YEARS
-  ) {
-    throw new Error('Complete your profile and accept the terms before using ride requests.');
+  if (!user) throw new Error('Sign in before using ride requests.');
+  if (user.isBanned) throw new Error('Your account is blocked from using ride requests.');
+  if (!user.dob) {
+    throw new Error('Add your date of birth in your profile before using ride requests.');
+  }
+  if (calculateAgeYears(user.dob) < MINIMUM_BOOKING_AGE_YEARS) {
+    throw new Error(`You must be at least ${MINIMUM_BOOKING_AGE_YEARS} years old to use ride requests.`);
+  }
+  if (!user.tosAcceptedAt || !user.privacyAcceptedAt) {
+    throw new Error('Accept the Terms of Service and Privacy Policy before using ride requests.');
   }
 }
 

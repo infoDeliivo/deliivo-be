@@ -1,4 +1,5 @@
 const mockDb = {
+  user: { findUnique: jest.fn() },
   rideRequestOffer: { findMany: jest.fn(), findUnique: jest.fn(), updateMany: jest.fn() },
   rideRequest: { updateMany: jest.fn() },
   rideBooking: { updateMany: jest.fn(), findUnique: jest.fn() },
@@ -32,7 +33,10 @@ import {
   checkoutOffer,
   listRequests,
   requestSchema,
+  createOffer,
+  createRequest,
 } from './ride-request.service';
+import { assertDriverCanPublish } from '../publish-ride/driver-eligibility.service.js';
 import { cancelPaymentIntent } from '../payments/stripe.service.js';
 import {
   applyStripePaymentSucceededToBooking,
@@ -41,6 +45,48 @@ import {
 import { releaseSegmentSeats } from '../ride-booking/segment-capacity.utils.js';
 import { ensureRequestPayment } from './ride-request.payment.js';
 import { getBookingById } from '../ride-booking/ride-booking.service.js';
+
+describe('ride request account requirements', () => {
+  const activeUser = {
+    isBanned: false,
+    dob: new Date('1990-01-01'),
+    tosAcceptedAt: new Date(),
+    privacyAcceptedAt: new Date(),
+  };
+  const offer = {
+    vehicleId: 'vehicle', departureAt: '2030-01-01T12:00:00Z', totalSeats: 3,
+    pricePerSeat: 20, expiresInHours: 24, acceptsSharedJourney: true as const,
+  };
+  const request = {
+    originPlaceId: 'riga', destinationPlaceId: 'tallinn',
+    departureAfter: '2030-01-01T12:00:00Z', departureBefore: '2030-01-01T12:00:00Z',
+    seats: 1, luggage: 0, notes: '',
+  };
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each([
+    [null, 'Sign in'],
+    [{ ...activeUser, isBanned: true }, 'account is blocked'],
+    [{ ...activeUser, dob: null }, 'date of birth'],
+    [{ ...activeUser, dob: new Date() }, 'at least 8 years old'],
+    [{ ...activeUser, tosAcceptedAt: null }, 'Terms of Service and Privacy Policy'],
+    [{ ...activeUser, privacyAcceptedAt: null }, 'Terms of Service and Privacy Policy'],
+  ])('rejects an ineligible account with an actionable reason: %j', async (user, reason) => {
+    mockDb.user.findUnique.mockResolvedValue(user);
+    await expect(createOffer('request', 'driver', offer)).rejects.toThrow(reason as string);
+    await expect(createRequest('rider', request)).rejects.toThrow(reason as string);
+    expect(assertDriverCanPublish).not.toHaveBeenCalled();
+    expect(mockDb.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('continues to driver eligibility after consent is recorded', async () => {
+    mockDb.user.findUnique.mockResolvedValue(activeUser);
+    (assertDriverCanPublish as jest.Mock).mockRejectedValueOnce(new Error('DRIVER_CHECK'));
+    await expect(createOffer('request', 'driver', offer)).rejects.toThrow('DRIVER_CHECK');
+    expect(assertDriverCanPublish).toHaveBeenCalledWith('driver', 'vehicle');
+  });
+});
 
 describe('request checkout reconciliation', () => {
   beforeEach(() => {
