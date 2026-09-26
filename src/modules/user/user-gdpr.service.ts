@@ -81,6 +81,8 @@ export const exportUserData = async (userId: string) => {
                     createdAt: true,
                 },
             },
+            rideRequests: true,
+            rideRequestOffers: true,
             ratingsGiven: {
                 orderBy: { createdAt: 'desc' },
                 take: 200,
@@ -172,6 +174,11 @@ const CANCELLABLE_RIDE_STATUSES: RideStatus[] = [
 ];
 
 export const deleteUserAccount = async (userId: string) => {
+    if (await prisma.rideRequestOffer.count({ where: { status: 'SELECTED', OR: [{ driverId: userId }, { request: { riderId: userId } }] } })) {
+        throw new Error('A ride request payment is still being processed. Please retry account deletion after checkout expires.');
+    }
+    await prisma.rideRequest.deleteMany({ where: { riderId: userId } });
+    await prisma.rideRequestOffer.deleteMany({ where: { driverId: userId, status: { not: 'ACCEPTED' } } });
     // 1. Cancel active rides as driver + refund all their bookings
     const activeRides = await prisma.ride.findMany({
         where: { driverId: userId, status: { in: CANCELLABLE_RIDE_STATUSES } },

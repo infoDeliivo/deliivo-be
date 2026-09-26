@@ -26,6 +26,11 @@ const scheduleMaintenanceJob = (name: string, data: Record<string, never>, optio
 };
 
 // Schedule the nightly job once - BullMQ deduplicates by jobId
+if (process.env.RIDE_REQUESTS_ENABLED === 'true') {
+    scheduleMaintenanceJob('ride-request-expiry', {}, { repeat: { every: 60000 }, jobId: 'ride-request-expiry', removeOnComplete: true, removeOnFail: 100 });
+}
+
+// Schedule the nightly job once - BullMQ deduplicates by jobId
 scheduleMaintenanceJob(
     'nightly-cleanup',
     {},
@@ -685,6 +690,11 @@ export const runAbandonedUploadReport = async () => {
 export const maintenanceWorker = new Worker(
     QUEUE_NAME,
     async (job: any) => {
+        if (job.name === 'ride-request-expiry') {
+            const { expireRequestCheckouts } = await import('../modules/ride-request/ride-request.service.js');
+            await expireRequestCheckouts();
+            return;
+        }
         if (job.name === 'ride-overdue-check') {
             await runRideOverdueCheck();
             return;

@@ -8,9 +8,8 @@ import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-polic
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
 import { releaseSegmentSeats } from '../ride-booking/segment-capacity.utils.js';
 import { emitToUsers } from '../../socket/index.js';
+import { bookingOtpExpiries } from '../ride-booking/booking-otp-expiry.js';
 
-const PICKUP_OTP_TTL_MS = 6 * 60 * 60 * 1000;
-const DROP_OTP_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 const DRIVER_PENALTY_PERCENT = 50;
 
@@ -129,9 +128,8 @@ export const acceptBooking = async (driverId: string, bookingId: string): Promis
             pickupOtp,
             dropOtp,
             pickupOtpHash: hashOtp(pickupOtp),
-            pickupOtpExpiresAt: new Date(now.getTime() + PICKUP_OTP_TTL_MS),
             dropOtpHash: hashOtp(dropOtp),
-            dropOtpExpiresAt: new Date(now.getTime() + DROP_OTP_TTL_MS),
+            ...bookingOtpExpiries(booking.ride, now),
             otpAttemptCount: 0,
         },
         select: {

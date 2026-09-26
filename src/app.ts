@@ -6,6 +6,7 @@ import redis from './cache/redis.js';
 
 import {
   authRouter,
+  rideRequestRouter,
   travelPreferenceRouter,
   vehiclesRouter,
   mapRouter,
@@ -187,6 +188,7 @@ app.use('/api/v1/auth/login', ...otpLimiters);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', protect, userRouter);
 app.use('/api/v1/publish-ride', protect, publishRideRouter);
+app.use('/api/v1/ride-requests', protect, bookingLimiter, rideRequestRouter);
 app.use('/api/v1/search-rides', searchLimiter, searchRideRouter);
 app.use('/api/v1/bookings', protect, bookingLimiter, rideBookingRouter);
 app.use('/api/v1/bookings', protect, bookingOperationsRouter);

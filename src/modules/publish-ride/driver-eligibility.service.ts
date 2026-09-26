@@ -132,6 +132,7 @@ const buildVehicleRequirement = (
  */
 export const getDriverPublishEligibility = async (
     driverId: string,
+    vehicleId?: string,
 ): Promise<PublishEligibility> => {
     const bankSkipped = skipBankCheck();
     const vehicleVerificationSkipped = skipVehicleVerification();
@@ -145,7 +146,7 @@ export const getDriverPublishEligibility = async (
             },
         }),
         prisma.vehicle.findFirst({
-            where: { userId: driverId, deletedAt: null },
+            where: { userId: driverId, deletedAt: null, ...(vehicleId ? { id: vehicleId } : {}) },
             select: { id: true, verificationStatus: true, rejectionReason: true },
         }),
     ]);
@@ -221,8 +222,8 @@ export const getDriverPublishEligibility = async (
  * Throw the first unmet requirement's error code. Codes are plain Error messages to match
  * the convention the publish-ride controllers already map to HTTP statuses.
  */
-export const assertDriverCanPublish = async (driverId: string): Promise<void> => {
-    const { eligible, requirements } = await getDriverPublishEligibility(driverId);
+export const assertDriverCanPublish = async (driverId: string, vehicleId?: string): Promise<void> => {
+    const { eligible, requirements } = await getDriverPublishEligibility(driverId, vehicleId);
     if (eligible) return;
 
     const blocker = requirements.find((item) => !item.satisfied);

@@ -1,4 +1,5 @@
 import authRouter from './auth/auth.routes.js';
+import rideRequestRouter from './ride-request/ride-request.routes.js';
 import vehiclesRouter from './vehicles/vehicle.routes.js';
 import travelPreferenceRouter from './travel-preferences/travelPreference.routes.js';
 import mapRouter from './maps/google.routes.js';
@@ -28,6 +29,7 @@ import { contentRouter, adminContentRouter } from './content/content.routes.js';
 import uploadsRouter from './uploads/uploads.routes.js';
 
 export {
+    rideRequestRouter,
     authRouter,
     vehiclesRouter,
     travelPreferenceRouter,

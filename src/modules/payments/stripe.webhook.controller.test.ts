@@ -1,4 +1,5 @@
 const mockPrisma = {
+    rideRequestOffer: { findUnique: jest.fn().mockResolvedValue(null), findFirst: jest.fn().mockResolvedValue(null) },
     stripeWebhookEvent: {
         findUnique: jest.fn(),
         create: jest.fn(),
@@ -28,6 +29,10 @@ jest.mock('../notification/notification.service.js', () => ({
     __esModule: true,
     createNotification: (...args: unknown[]) => mockCreateNotification(...args),
 }));
+jest.mock('../../queue/deadline.queue.js', () => ({ enqueueDeadlineCheck: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('../publish-ride/draft-ride.service.js', () => ({ assertDriverHasNoOverlappingRide: jest.fn() }));
+jest.mock('./payment.service.js', () => ({ markBookingPaymentPaid: jest.fn().mockResolvedValue(undefined), markBookingPaymentRefunded: jest.fn() }));
+jest.mock('../../socket/index.js', () => ({ emitToUsers: jest.fn().mockResolvedValue(undefined) }));
 
 import { handleStripeWebhook } from './stripe.webhook.controller.js';
 
@@ -42,6 +47,7 @@ const makeRes = () => {
 describe('handleStripeWebhook', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockPrisma.$transaction.mockImplementation(async callback => callback(mockPrisma));
     });
 
     it('moves booking to DRIVER_PENDING on payment success and sends driver notification', async () => {
@@ -197,5 +203,15 @@ describe('handleStripeWebhook', () => {
         expect(mockPrisma.stripeWebhookEvent.create).not.toHaveBeenCalled();
         expect(res.status).toHaveBeenCalledWith(200);
         expect(res.json).toHaveBeenCalledWith({ received: true, duplicate: true });
+    });
+
+    it('keeps request checkout seats reserved on a retryable card decline', async () => {
+        mockPrisma.stripeWebhookEvent.findUnique.mockResolvedValue(null);
+        mockPrisma.rideRequestOffer.findFirst.mockResolvedValueOnce({ id: 'selected-offer' });
+        mockConstructStripeEvent.mockReturnValue({ id: 'evt_request_decline', type: 'payment_intent.payment_failed', data: { object: { id: 'pi_request', metadata: { bookingId: 'booking-request' } } } });
+        const res = makeRes();
+        await handleStripeWebhook({ headers: { 'stripe-signature': 'sig_test' }, body: Buffer.from('{}') } as any, res);
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(200);
     });
 });

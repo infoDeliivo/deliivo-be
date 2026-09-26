@@ -10,6 +10,7 @@ const mockPrisma = {
     },
     rideBooking: {
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     paymentMethod: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -25,6 +26,7 @@ jest.mock('../../config/index.js', () => ({
 jest.mock('../payments/stripe.service.js', () => ({
     __esModule: true,
     createBookingPaymentIntent: jest.fn(),
+    cancelPaymentIntent: jest.fn(),
     refundPaymentIntent: jest.fn(),
 }));
 
@@ -46,6 +48,9 @@ jest.mock('../../queue/deadline.queue.js', () => ({
     __esModule: true,
     enqueueDeadlineCheck: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock('../ride-request/ride-request.payment.js', () => ({ ensureRequestPayment: jest.fn() }));
+
+jest.mock('../publish-ride/draft-ride.service.js', () => ({ assertDriverHasNoOverlappingRide: jest.fn() }));
 
 jest.mock('./segment-capacity.utils.js', () => ({
     __esModule: true,
@@ -53,7 +58,10 @@ jest.mock('./segment-capacity.utils.js', () => ({
 }));
 
 import { createBooking } from './ride-booking.service';
-import { createBookingPaymentIntent } from '../payments/stripe.service.js';
+import { createBookingPaymentIntent, cancelPaymentIntent } from '../payments/stripe.service.js';
+import { ensureRequestPayment } from '../ride-request/ride-request.payment.js';
+import { createPayment } from '../payments/payment.service.js';
+import { releaseSegmentSeats } from './segment-capacity.utils.js';
 
 const mockedCreateBookingPaymentIntent = createBookingPaymentIntent as jest.Mock;
 const mockedCreateNotification = mockCreateNotification;
@@ -108,6 +116,7 @@ const buildTx = () => {
     };
 
     return {
+        $queryRaw: jest.fn().mockResolvedValue([]),
         user: {
             findUnique: jest.fn().mockResolvedValue({
                 name: 'Passenger',
@@ -376,6 +385,27 @@ describe('createBooking segment pricing + payment intent', () => {
                 segmentFare: 30,
             }),
         }));
+    });
+
+    it.each(['intent', 'bookkeeping', 'expired'])('does not expose payment details when %s initialization fails', async (stage) => {
+        const baseTx = buildTx();
+        const ride = await baseTx.ride.findFirst();
+        const tx = { ...baseTx,
+            rideRequest: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            rideRequestOffer: {
+                findUnique: jest.fn().mockResolvedValue({ id: 'offer', requestId: 'request', rideId: 'ride-1', driverId: 'driver-1', status: 'OPEN', expiresAt: new Date(Date.now() + 3600000), request: { riderId: 'passenger-1', seats: 1 }, ride }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }), update: jest.fn(),
+            },
+        };
+        mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+        if (stage === 'intent') mockedCreateBookingPaymentIntent.mockRejectedValueOnce(new Error('gateway unavailable'));
+        else if (stage === 'bookkeeping') (ensureRequestPayment as jest.Mock).mockRejectedValueOnce(new Error('bookkeeping unavailable'));
+        else mockPrisma.rideBooking.updateMany.mockResolvedValueOnce({ count: 0 });
+        await expect(createBooking('passenger-1', { rideId: 'ride-1', seatsBooked: 1 }, 'offer')).rejects.toThrow();
+        expect(tx.rideBooking.update).not.toHaveBeenCalled();
+        expect(releaseSegmentSeats).not.toHaveBeenCalled();
+        expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+        if (stage === 'expired') expect(cancelPaymentIntent).toHaveBeenCalledWith('pi_123');
     });
 
     it('creates a driver-pending booking and notifies the driver when payment mode is bypass', async () => {

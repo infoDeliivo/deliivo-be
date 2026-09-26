@@ -101,6 +101,7 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
 
     const where = {
         driverId,
+        NOT: { requestOffer: { status: { not: 'ACCEPTED' } } },
         ...(statuses.length === 1 ? { status: statuses[0] } : {}),
         ...(statuses.length > 1 ? { status: { in: statuses } } : {}),
     };

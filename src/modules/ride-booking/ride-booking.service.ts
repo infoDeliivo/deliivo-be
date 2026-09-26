@@ -9,7 +9,7 @@ import {
     SegmentRide,
 } from '../search-ride/segment-view.utils.js';
 import { decodeViewToken } from '../search-ride/view-token.utils.js';
-import { createBookingPaymentIntent, getStripeClient, refundPaymentIntent } from '../payments/stripe.service.js';
+import { createBookingPaymentIntent, getStripeClient, refundPaymentIntent, cancelPaymentIntent } from '../payments/stripe.service.js';
 import { createNotification } from '../notification/notification.service.js';
 import { DRIVER_DECISION_NOTIFICATION_TYPE, DRIVER_DECISION_WINDOW_MS } from '../payments/stripe.constants.js';
 import { enqueueDeadlineCheck } from '../../queue/deadline.queue.js';
@@ -44,6 +44,8 @@ import { emitToUsers } from '../../socket/index.js';
 import { calculateAgeYears, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
 import { formatBookingReference } from '../../utils/booking-reference.js';
 import { isBookingWindowClosed } from './booking-window.js';
+import { reserveRequestOffer, confirmRequestBooking } from '../ride-request/ride-request.booking.js';
+import { ensureRequestPayment } from '../ride-request/ride-request.payment.js';
 
 type RideWaypointDetails = {
     id: string;
@@ -136,7 +138,7 @@ const CANCELLABLE_BOOKING_STATUSES: BookingStatus[] = [
 const MAX_SEATS_PER_BOOKING = 4;
 
 /* ================= PRICE CALCULATION UTILITIES ================= */
-const calculateBookingPrice = (
+export const calculateBookingPrice = (
     basePricePerSeat: number,
     seatsBooked: number,
     luggageCount: number = 0,
@@ -186,7 +188,8 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
     const now = new Date();
     const fallbackDecisionDeadlineAt = new Date(now.getTime() + DRIVER_DECISION_WINDOW_MS);
 
-    const updateResult = await prisma.rideBooking.updateMany({
+    const updateResult = await prisma.$transaction(async (tx) => {
+      const result = await tx.rideBooking.updateMany({
         where: {
             id: bookingId,
             status: BookingStatus.PAYMENT_PENDING,
@@ -202,7 +205,13 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
         },
     });
 
+      if (result.count) await confirmRequestBooking(tx, bookingId);
+      return result;
+    });
+
     if (updateResult.count === 0) {
+        const accepted = await prisma.rideRequestOffer.findUnique({ where: { bookingId } });
+        if (accepted?.status === 'ACCEPTED') await markBookingPaymentPaid(bookingId, accepted.driverId);
         return false;
     }
 
@@ -236,6 +245,16 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
     });
 
     if (!booking) {
+        return true;
+    }
+
+    if (booking.status === BookingStatus.CONFIRMED) {
+        await markBookingPaymentPaid(booking.id, booking.ride.driverId);
+        await Promise.all([booking.passengerId, booking.ride.driverId].map(userId => createNotification({
+            userId, type: 'ride_request.matched', title: 'Ride confirmed',
+            body: 'The requested ride is confirmed. Remaining seats are now available to other riders.',
+            data: { bookingId: booking.id, rideId: booking.rideId, deepLink: `app://ride/${booking.rideId}` },
+        }).catch(error => console.warn('Request confirmation notification failed', error))));
         return true;
     }
 
@@ -637,7 +656,8 @@ const notifyRiderBookingState = async (params: {
 /* ================= CREATE BOOKING ================= */
 export const createBooking = async (
     passengerId: string,
-    input: CreateBookingInput
+    input: CreateBookingInput,
+    requestOfferId?: string,
 ): Promise<BookingResponse> => {
     // Guard: passenger must have accepted ToS and must not be banned
     const passenger = await prisma.user.findUnique({
@@ -686,10 +706,13 @@ export const createBooking = async (
         .slice(0, 300);
 
     const bookingSeed = await prisma.$transaction(async (tx) => {
+        if (requestOfferId) await reserveRequestOffer(tx, requestOfferId, passengerId, rideId, seatsBooked);
+        // Serialize capacity reads and writes, including requests for the final seats.
+        await tx.$queryRaw`SELECT "id" FROM "Ride" WHERE "id" = ${rideId} FOR UPDATE`;
         const ride = await tx.ride.findFirst({
             where: {
                 id: rideId,
-                status: RideStatus.PUBLISHED,
+                status: requestOfferId ? RideStatus.DRAFT : RideStatus.PUBLISHED,
             },
             include: {
                 driver: {
@@ -844,7 +867,7 @@ export const createBooking = async (
                 where: {
                     id: rideId,
                     availableSeats: { gte: seatsBooked },
-                    status: RideStatus.PUBLISHED,
+                    status: requestOfferId ? RideStatus.DRAFT : RideStatus.PUBLISHED,
                 },
                 data: { availableSeats: { decrement: seatsBooked } },
             });
@@ -907,6 +930,14 @@ export const createBooking = async (
             },
         });
 
+        if (requestOfferId) {
+            await tx.rideRequestOffer.update({ where: { id: requestOfferId }, data: { bookingId: booking.id } });
+            if (bypassBookingPaymentMode) {
+                await confirmRequestBooking(tx, booking.id);
+                booking.status = BookingStatus.CONFIRMED;
+                booking.ride.status = RideStatus.PUBLISHED;
+            }
+        }
         return {
             booking,
             ride,
@@ -952,6 +983,9 @@ export const createBooking = async (
             console.warn('Bypass payment side effects failed; booking request notifications will still be sent', error);
         }
 
+        if (requestOfferId) return mapBookingResponse(bookingSeed.booking as unknown as BookingWithRideDetails, {
+            luggageCount, notes: normalizedNotes || null, priceBreakdown: bookingSeed.priceBreakdown,
+        });
         try {
             await notifyRiderBookingState({
                 passengerId,
@@ -1040,7 +1074,19 @@ export const createBooking = async (
             customerId: riderPaymentMethod?.stripeCustomerId ?? null,
             driverStripeAccountId,
         });
+        if (requestOfferId) {
+            const linked = await prisma.rideBooking.updateMany({
+                where: { id: bookingSeed.booking.id, status: BookingStatus.PAYMENT_PENDING },
+                data: { stripePaymentIntentId: paymentIntent.paymentIntentId },
+            });
+            if (!linked.count) {
+                await cancelPaymentIntent(paymentIntent.paymentIntentId);
+                throw new Error('REQUEST_CHECKOUT_EXPIRED');
+            }
+        }
     } catch {
+        // Request checkout reservations are released only by Stripe reconciliation.
+        if (requestOfferId) throw new Error('PAYMENT_INITIALIZATION_FAILED');
         await prisma.$transaction(async (tx) => {
             const existing = await tx.rideBooking.findUnique({
                 where: { id: bookingSeed.booking.id },
@@ -1082,17 +1128,25 @@ export const createBooking = async (
         const stripePlatformFeeAmount = Math.round(bookingSeed.priceBreakdown.totalPrice * stripePlatformFeePercent) / 100;
         const stripeFareAmount = bookingSeed.priceBreakdown.totalPrice - stripePlatformFeeAmount;
 
-        const stripePaymentRecord = await createPayment({
-            bookingId: bookingSeed.booking.id,
-            rideId: bookingSeed.booking.rideId,
-            riderId: passengerId,
-            amountTotal: bookingSeed.priceBreakdown.totalPrice,
-            fareAmount: stripeFareAmount,
-            platformFeeAmount: stripePlatformFeeAmount,
-            currency: paymentIntent.currency,
-            stripePaymentIntentId: paymentIntent.paymentIntentId,
-        });
-        await markPaymentPending(stripePaymentRecord.id);
+        if (requestOfferId) {
+            await ensureRequestPayment(prisma, {
+                ...bookingSeed.booking,
+                stripePaymentIntentId: paymentIntent.paymentIntentId,
+                paymentCurrency: paymentIntent.currency,
+            });
+        } else {
+            const stripePaymentRecord = await createPayment({
+                bookingId: bookingSeed.booking.id,
+                rideId: bookingSeed.booking.rideId,
+                riderId: passengerId,
+                amountTotal: bookingSeed.priceBreakdown.totalPrice,
+                fareAmount: stripeFareAmount,
+                platformFeeAmount: stripePlatformFeeAmount,
+                currency: paymentIntent.currency,
+                stripePaymentIntentId: paymentIntent.paymentIntentId,
+            });
+            await markPaymentPending(stripePaymentRecord.id);
+        }
 
         const originAddress = resolveSegmentAddress(
             bookingSeed.ride.originAddress,
@@ -1154,6 +1208,7 @@ export const createBooking = async (
             },
         });
     } catch (error) {
+        if (requestOfferId) throw error;
         await prisma.$transaction(async (tx) => {
             const existing = await tx.rideBooking.findUnique({
                 where: { id: bookingSeed.booking.id },
@@ -1168,7 +1223,7 @@ export const createBooking = async (
                 },
             });
 
-            if (!existing) return;
+            if (!existing || existing.status !== BookingStatus.PAYMENT_PENDING) return;
 
             await tx.rideBooking.update({
                 where: { id: bookingSeed.booking.id },
@@ -1274,6 +1329,9 @@ export const cancelBooking = async (
     bookingId: string,
     reason?: string
 ): Promise<CancelBookingResult> => {
+    if (await prisma.rideRequestOffer.findFirst({ where: { bookingId, status: 'SELECTED', request: { riderId: passengerId } } })) {
+        throw new Error('REQUEST_CHECKOUT_PENDING: Wait for the checkout reservation to expire before cancelling the request.');
+    }
     const booking = await prisma.rideBooking.findFirst({
         where: {
             id: bookingId,

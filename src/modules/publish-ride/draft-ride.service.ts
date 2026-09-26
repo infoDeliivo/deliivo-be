@@ -1,7 +1,7 @@
 import redis from '../../cache/redis.js';
 import { logWarn } from '../../utils/logger.js';
 import { prisma } from '../../config/index.js';
-import { RideStatus } from '@prisma/client';
+import { RideStatus, Prisma } from '@prisma/client';
 import {
   CreateOriginInput,
   UpdateDestinationInput,
@@ -81,12 +81,12 @@ const getPlaceCountryCode = async (placeId: string) => {
   return countryCode;
 };
 
-const validateBalticPlace = async (placeId: string) => {
+export const validateBalticPlace = async (placeId: string) => {
   const countryCode = await getPlaceCountryCode(placeId);
   if (!BALTIC_COUNTRY_CODES.has(countryCode)) throw new Error('LOCATION_OUTSIDE_BALTICS');
 };
 
-const validateEuropeanDestinationPlace = async (placeId: string) => {
+export const validateEuropeanDestinationPlace = async (placeId: string) => {
   const countryCode = await getPlaceCountryCode(placeId);
   if (!EUROPE_COUNTRY_CODES.has(countryCode)) throw new Error('DESTINATION_OUTSIDE_EUROPE');
 };
@@ -115,11 +115,13 @@ const endTimeForRideWindow = (start: Date, durationSeconds?: number | null): Dat
   return new Date(start.getTime() + durationMs);
 };
 
-const assertDriverHasNoOverlappingRide = async (
+export const assertDriverHasNoOverlappingRide = async (
   driverId: string,
   departureDate: Date,
   departureTime: string,
   routeDurationSeconds?: number | null,
+  db: Prisma.TransactionClient = prisma,
+  excludeRideId?: string,
 ) => {
   const draftStart = combineDepartureDateTimeUtc(departureDate, departureTime);
   const draftEnd = endTimeForRideWindow(draftStart, routeDurationSeconds);
@@ -133,10 +135,14 @@ const assertDriverHasNoOverlappingRide = async (
     0,
   ));
 
-  const existingRides = await prisma.ride.findMany({
+  const existingRides = await db.ride.findMany({
     where: {
       driverId,
-      status: { in: [...ACTIVE_DRIVER_RIDE_STATUSES] },
+      id: excludeRideId ? { not: excludeRideId } : undefined,
+      OR: [
+        { status: { in: [...ACTIVE_DRIVER_RIDE_STATUSES] } },
+        { status: RideStatus.DRAFT, requestOffer: { status: 'SELECTED' } },
+      ],
       departureDate: {
         gte: addDaysUtc(dayStart, -1),
         lte: addDaysUtc(dayStart, 1),
@@ -281,7 +287,7 @@ const ROUTE_BLOCKED_REASON = 'NON_ROAD_ROUTE_NOT_ALLOWED';
 
 const normalizeRouteText = (value?: string | null) => (value || '').toLowerCase();
 
-const detectBlockedRoute = (route: any): { isPublishable: boolean; blockedReason?: string } => {
+export const detectBlockedRoute = (route: any): { isPublishable: boolean; blockedReason?: string } => {
   const warnings = Array.isArray(route?.warnings) ? route.warnings : [];
   const description = normalizeRouteText(route?.description);
   const stepHints = Array.isArray(route?.legs)
@@ -1591,6 +1597,8 @@ export const publishRide = async (driverId: string) => {
 
   // ---- Atomic DB insert ---- //
   const ride = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${driverId} FOR UPDATE`;
+    await assertDriverHasNoOverlappingRide(driverId, new Date(draft.departureDate!), draft.departureTime!, draft.routeDurationSeconds, tx);
     // Create the ride as PUBLISHED (skip DRAFT entirely in DB)
     const newRide = await tx.ride.create({
       data: {

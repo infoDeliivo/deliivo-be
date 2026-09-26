@@ -248,7 +248,9 @@ describe('publishRide', () => {
 
         mockPrisma.$transaction.mockImplementation(async (callback: any) => {
             return callback({
+                $queryRaw: jest.fn().mockResolvedValue([]),
                 ride: {
+                    findMany: jest.fn().mockResolvedValue([]),
                     create: rideCreate,
                     findUnique: rideFindUnique,
                 },
