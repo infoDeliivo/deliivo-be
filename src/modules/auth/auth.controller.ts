@@ -16,7 +16,7 @@ import {
   temporaryAdminLoginService,
 } from './auth.service.js';
 import { sendMail } from '../mail/mail.service.js';
-import { signupOtpTemplate, loginOtpTemplate, resetOtpTemplate } from '../mail/mail.templates.js';
+import { signupOtpTemplate, loginOtpTemplate, resetOtpTemplate, mailSubjects } from '../mail/mail.templates.js';
 import { createOtp, verifyOtp, resendOtp } from '../otp/otp.service.js';
 import {
   sendSms,
@@ -37,7 +37,7 @@ const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE
 const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
   if (purpose === 'signup') {
     return {
-      mailSubject: 'Verify your email for Deliivo',
+      mailSubject: mailSubjects.signupOtp,
       mailTemplate: signupOtpTemplate(code),
       smsTemplate: signupOtpSmsTemplate(code),
     };
@@ -45,14 +45,14 @@ const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
 
   if (purpose === 'login') {
     return {
-      mailSubject: 'Your Deliivo sign-in code',
+      mailSubject: mailSubjects.loginOtp,
       mailTemplate: loginOtpTemplate(code),
       smsTemplate: loginOtpSmsTemplate(code),
     };
   }
 
   return {
-    mailSubject: 'Reset your Deliivo password',
+    mailSubject: mailSubjects.resetOtp,
     mailTemplate: resetOtpTemplate(code),
     smsTemplate: resetOtpSmsTemplate(code),
   };
@@ -157,7 +157,7 @@ export const signup = async (req: Request, res: Response) => {
       if (!isOtpDebugMode) {
         await sendMail({
           to: identifier,
-          subject: 'Verify your email for Deliivo',
+          subject: mailSubjects.signupOtp,
           html: signupOtpTemplate(code),
         });
       }
@@ -352,7 +352,7 @@ export const login = async (req: Request, res: Response) => {
       if (!isOtpDebugMode) {
         await sendMail({
           to: identifier,
-          subject: 'Your Deliivo sign-in code',
+          subject: mailSubjects.loginOtp,
           html: loginOtpTemplate(code),
         });
       }

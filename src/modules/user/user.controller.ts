@@ -19,7 +19,7 @@ import { setPreferredLocale } from './user-locale.service.js';
 import { requestContactChangeService, verifyContactChangeService } from './user.contact.service.js';
 import type { ContactChangeError, ContactMethod } from './user.types.js';
 import { sendMail } from '../mail/mail.service.js';
-import { contactVerifyOtpTemplate } from '../mail/mail.templates.js';
+import { contactVerifyOtpTemplate, mailSubjects } from '../mail/mail.templates.js';
 import { sendSms, contactVerifyOtpSmsTemplate } from '../sms/index.js';
 
 // Cache TTL constants
@@ -468,7 +468,7 @@ export const requestContactChange = async (req: AuthRequest, res: Response) => {
     const { identifier: target, code } = result.data;
     if (!isOtpDebugMode) {
       if (method === 'email') {
-        await sendMail({ to: target, subject: 'Verify your email', html: contactVerifyOtpTemplate(code) });
+        await sendMail({ to: target, subject: mailSubjects.contactVerifyOtp, html: contactVerifyOtpTemplate(code) });
       } else if (code !== 'TWILIO_VERIFY') {
         const smsResult = await sendSms(target, contactVerifyOtpSmsTemplate(code));
         if (!smsResult.success) {

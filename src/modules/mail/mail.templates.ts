@@ -58,25 +58,33 @@ const emailLayout = ({ preheader, heading, body, purpose, main = '', note = '' }
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light only" />
+    <style>
+      @media only screen and (max-width: 600px) {
+        .email-outer { padding: 0 !important; }
+        .email-card { border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+        .email-px { padding-left: 20px !important; padding-right: 20px !important; }
+        .email-heading { font-size: 22px !important; }
+      }
+    </style>
   </head>
   <body style="margin: 0; padding: 0; background-color: ${colors.cream}">
     <div style="display: none; max-height: 0; overflow: hidden; opacity: 0">${preheader}</div>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: ${colors.cream}">
       <tr>
-        <td align="center" style="padding: 40px 16px">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 560px; background-color: ${colors.white}; border: 1px solid ${colors.border}; border-radius: 16px; overflow: hidden">
+        <td align="center" class="email-outer" style="padding: 40px 16px">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-card" style="max-width: 560px; background-color: ${colors.white}; border: 1px solid ${colors.border}; border-radius: 16px; overflow: hidden">
             <tr>
               <td style="height: 4px; line-height: 4px; font-size: 0; background-color: ${colors.orange}">&nbsp;</td>
             </tr>
             <tr>
-              <td style="padding: 28px 40px 24px; border-bottom: 1px solid ${colors.divider}">
+              <td class="email-px" style="padding: 28px 40px 24px; border-bottom: 1px solid ${colors.divider}">
                 <img src="${escapeHtml(mailLogoUrl())}" width="112" height="39" alt="Deliivo" style="display: block; width: 112px; height: 39px; border: 0; font-family: ${fontStack}; font-size: 20px; font-weight: 800; color: ${colors.orangeDark}" />
               </td>
             </tr>
             <tr>
-              <td style="padding: 36px 40px 40px; font-family: ${fontStack}; color: ${colors.dark}">
+              <td class="email-px" style="padding: 36px 40px 40px; font-family: ${fontStack}; color: ${colors.dark}">
                 ${purpose ? `<div style="margin: 0 0 14px"><span style="display: inline-block; padding: 4px 12px; border-radius: 999px; background-color: ${colors.orangeLight}; border: 1px solid ${colors.orangeBorder}; font-family: ${fontStack}; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; color: ${colors.orangeText}">${purpose}</span></div>` : ''}
-                <h1 style="margin: 0 0 12px; font-family: ${fontStack}; font-size: 24px; line-height: 1.3; font-weight: 700; color: ${colors.dark}">${heading}</h1>
+                <div role="heading" aria-level="1" class="email-heading" style="margin: 0 0 12px; font-family: ${fontStack}; font-size: 24px; line-height: 1.3; font-weight: 700; color: ${colors.dark}">${heading}</div>
                 <p style="margin: 0; font-family: ${fontStack}; font-size: 15px; line-height: 1.6; color: ${colors.text}">${body}</p>
                 ${main}
                 ${note ? `<p style="margin: 28px 0 0; font-family: ${fontStack}; font-size: 13px; line-height: 1.6; color: ${colors.gray}">${note}</p>` : ''}
@@ -103,9 +111,9 @@ const emailLayout = ({ preheader, heading, body, purpose, main = '', note = '' }
 `;
 };
 
-// Email clients strip JavaScript, so a real copy-to-clipboard button is impossible.
-// Instead, `user-select: all` selects the whole code on one tap or click, and the plain
-// "verification code" wording lets Gmail and iOS Mail show their own native Copy button.
+// Email clients strip JavaScript, so a copy-to-clipboard button cannot work inside an email.
+// `user-select: all` selects the whole code in one click where the client supports it, and
+// the "verification code" wording lets the Gmail app show its own "Copy code" button.
 const otpBox = (otp: string) => `
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px">
     <tr>
@@ -114,7 +122,7 @@ const otpBox = (otp: string) => `
         <div style="margin-top: 10px; font-family: ${fontStack}; font-size: 36px; line-height: 1.2; font-weight: 700; letter-spacing: 10px; color: ${colors.dark}">
           <span style="-webkit-user-select: all; user-select: all">${escapeHtml(otp)}</span>
         </div>
-        <div style="margin-top: 10px; font-family: ${fontStack}; font-size: 13px; color: ${colors.gray}">Expires in ${OTP_EXPIRY_MINUTES} minutes &middot; Tap or select the code to copy it</div>
+        <div style="margin-top: 10px; font-family: ${fontStack}; font-size: 13px; color: ${colors.gray}">Expires in ${OTP_EXPIRY_MINUTES} minutes</div>
       </td>
     </tr>
   </table>
@@ -134,6 +142,18 @@ const supportLink = (supportEmail = supportEmailAddress()) =>
   `<a href="mailto:${escapeHtml(supportEmail)}" style="color: ${colors.orangeDark}">${escapeHtml(supportEmail)}</a>`;
 
 const supportLine = (supportEmail?: string) => `Not you? Contact ${supportLink(supportEmail)} right away.`;
+
+// Subjects start with the purpose so the reason for the email is visible in the inbox list.
+export const mailSubjects = {
+  signupOtp: 'Sign up – Verify your email for Deliivo',
+  loginOtp: 'Sign in – Your Deliivo sign-in code',
+  resetOtp: 'Password reset – Reset your Deliivo password',
+  contactVerifyOtp: 'Email verification – Confirm your Deliivo email',
+  loginSuccess: 'Sign in – New sign-in to Deliivo',
+  signupSuccess: 'Sign up – Your email is verified',
+  welcome: 'Welcome to Deliivo',
+  passwordChanged: 'Security alert – Your Deliivo password was changed',
+} as const;
 
 export const loginOtpTemplate = (otp: string) =>
   emailLayout({
