@@ -82,6 +82,44 @@ describe('TC-DL-001b — KYC identity gate on session creation', () => {
     expect([200, 201, 409, 500, 503]).toContain(res.status);
   });
 
+  // Registration is by email OR phone, so one of the two profile fields is always null.
+  // The client forwards the profile as it stands; a null must read as "not set" rather than
+  // failing validation for an account that is perfectly valid.
+  it('accepts a null email from a phone-registered driver', async () => {
+    const res = await pa.post('/dl-verification', {
+      firstName: 'Test',
+      lastName: 'PassengerAlpha',
+      email: null,
+    });
+
+    expect(res.status).not.toBe(400);
+    expect(String(res.data.message ?? '')).not.toMatch(/email/i);
+  });
+
+  it('accepts a null phoneNumber from an email-registered driver', async () => {
+    const res = await pa.post('/dl-verification', {
+      firstName: 'Test',
+      lastName: 'PassengerAlpha',
+      phoneNumber: null,
+    });
+
+    expect(res.status).not.toBe(400);
+    expect(String(res.data.message ?? '')).not.toMatch(/phone/i);
+  });
+
+  it('still rejects a malformed email', async () => {
+    const res = await pa.post('/dl-verification', {
+      firstName: 'Test',
+      lastName: 'PassengerAlpha',
+      email: 'not-an-email',
+    });
+
+    // The envelope message is a generic "Validation failed"; the offending field is named
+    // in the errors array, which is what proves null and malformed are treated differently.
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.data)).toMatch(/email/i);
+  });
+
   it('still rejects a callback that is not a URL', async () => {
     const res = await pa.post('/dl-verification', {
       firstName: 'Test',
@@ -225,6 +263,15 @@ const signedPost = (rawBody: string, secret: string) =>
     transformRequest: [(data: string) => data],
   });
 
+const signedEventPost = (rawBody: string, secret: string) =>
+  api.post('/dl-verification/events', rawBody, {
+    headers: {
+      'Content-Type': 'application/json',
+      'x-hmac-signature': crypto.createHmac('sha256', secret).update(rawBody).digest('hex'),
+    },
+    transformRequest: [(data: string) => data],
+  });
+
 const describeSigned = sharedSecret ? describe : describe.skip;
 
 describeSigned('TC-DL-010 — Webhook accepts a signature over the raw body', () => {
@@ -272,5 +319,60 @@ describeSigned('TC-DL-010 — Webhook accepts a signature over the raw body', ()
 
     expect(res.status).toBe(200);
     expect(res.data).toMatchObject({ received: true, warning: 'SESSION_NOT_FOUND' });
+  });
+});
+
+// The row is created when a session opens, so it cannot say whether the driver actually
+// uploaded anything. Veriff's event stream is the only signal that separates the two, and the
+// publish checklist depends on it to avoid telling an abandoned session to sit and wait.
+describeSigned('TC-DL-011 — Event webhook records the submission', () => {
+  const eventSessionId = `e2e-event-${crypto.randomUUID()}`;
+
+  const eventBody = (action: string) =>
+    JSON.stringify({
+      id: eventSessionId,
+      attemptId: crypto.randomUUID(),
+      feature: 'selfid',
+      code: action === 'submitted' ? 7002 : 7001,
+      action,
+    });
+
+  beforeAll(async () => {
+    // Registering is how a browser-created session gets a row — the same row an event later
+    // stamps. It starts with no submittedAt, exactly like a session the driver abandons.
+    await pb.post('/dl-verification/register', {
+      sessionId: eventSessionId,
+      sessionUrl: 'https://alchemy.veriff.com/v/e2e-event-token',
+    });
+  });
+
+  it('rejects an event signed with the wrong secret', async () => {
+    const res = await signedEventPost(eventBody('submitted'), 'not-the-shared-secret');
+
+    expect([400, 401]).toContain(res.status);
+  });
+
+  it('accepts a correctly signed submitted event', async () => {
+    const res = await signedEventPost(eventBody('submitted'), sharedSecret as string);
+
+    expect(res.status).toBe(200);
+    expect(res.data.received).toBe(true);
+    expect(res.data.warning).toBeUndefined();
+  });
+
+  // "started" is the state the row is already in; stamping it would erase the distinction.
+  it('acknowledges a started event without treating it as a submission', async () => {
+    const res = await signedEventPost(eventBody('started'), sharedSecret as string);
+
+    expect(res.status).toBe(200);
+    expect(res.data.warning).toBe('IGNORED_ACTION');
+  });
+
+  it('acknowledges an event for a session it does not hold', async () => {
+    const raw = JSON.stringify({ id: `e2e-unknown-${crypto.randomUUID()}`, action: 'submitted', code: 7002 });
+    const res = await signedEventPost(raw, sharedSecret as string);
+
+    expect(res.status).toBe(200);
+    expect(res.data.warning).toBe('NO_MATCHING_SESSION');
   });
 });

@@ -21,6 +21,24 @@ const TERMINAL_DECISION_STATUSES = new Set([
 const getVeriffApiKey = () => process.env.VERIFF_API_KEY || '';
 const getVeriffSharedSecret = () => process.env.VERIFF_SHARED_SECRET || '';
 
+/**
+ * Veriff issues two keys per integration. The master signature key signs the requests we send
+ * (X-HMAC-SIGNATURE on session create and on the signed GETs); the integration's other shared
+ * secret is what Veriff signs its own webhooks with. They are not interchangeable — validating
+ * a real decision against the master key alone rejects it with a 401 and the driver's licence
+ * never resolves.
+ *
+ * Both are accepted so that an integration configured with a single key keeps working: an
+ * installation where the two are the same is simply a set of one.
+ */
+const getVeriffWebhookSecrets = (): string[] => {
+  const secrets = [process.env.VERIFF_WEBHOOK_SECRET, process.env.VERIFF_SHARED_SECRET]
+    .map((secret) => secret?.trim())
+    .filter((secret): secret is string => Boolean(secret));
+
+  return [...new Set(secrets)];
+};
+
 // Veriff only accepts HTTPS return URLs (API error 1302). Drop anything else
 // instead of letting the session-create call fail with a 400.
 const resolveCallbackUrl = (requested?: string): string | undefined => {
@@ -397,9 +415,9 @@ const HEX_SHA256 = /^[0-9a-f]{64}$/i;
  * would then be enough to self-approve a driving licence.
  */
 export const assertVeriffWebhookConfigured = (): void => {
-  if (getVeriffSharedSecret()) return;
+  if (getVeriffWebhookSecrets().length > 0) return;
   const message =
-    'VERIFF_SHARED_SECRET is not set; the Veriff decision webhook cannot be authenticated.';
+    'Neither VERIFF_WEBHOOK_SECRET nor VERIFF_SHARED_SECRET is set; the Veriff decision webhook cannot be authenticated.';
   if (process.env.NODE_ENV === 'production') {
     throw new Error(message);
   }
@@ -414,9 +432,11 @@ export const validateWebhookSignature = (
   signature: string,
 ): boolean => {
   // Fail closed rather than validating everything against an empty-key HMAC.
-  const sharedSecret = getVeriffSharedSecret();
-  if (!sharedSecret) {
-    logError('Veriff webhook rejected: VERIFF_SHARED_SECRET is not configured');
+  const secrets = getVeriffWebhookSecrets();
+  if (secrets.length === 0) {
+    logError(
+      'Veriff webhook rejected: neither VERIFF_WEBHOOK_SECRET nor VERIFF_SHARED_SECRET is configured',
+    );
     return false;
   }
 
@@ -426,17 +446,19 @@ export const validateWebhookSignature = (
     return false;
   }
 
-  const expected = crypto
-    .createHmac('sha256', sharedSecret)
-    .update(payload)
-    .digest();
   const provided = Buffer.from(signature, 'hex');
 
-  // timingSafeEqual throws on a length mismatch; the regex above makes that
-  // unreachable, but the guard keeps it from ever becoming a 500.
-  if (provided.length !== expected.length) return false;
+  // Every candidate is compared even after one matches: bailing out early would leak, through
+  // timing, which of the integration's keys signed the payload.
+  return secrets.reduce((matched, secret) => {
+    const expected = crypto.createHmac('sha256', secret).update(payload).digest();
 
-  return crypto.timingSafeEqual(provided, expected);
+    // timingSafeEqual throws on a length mismatch; the regex above makes that
+    // unreachable, but the guard keeps it from ever becoming a 500.
+    if (provided.length !== expected.length) return matched;
+
+    return crypto.timingSafeEqual(provided, expected) || matched;
+  }, false);
 };
 
 const buildSessionSignature = (sessionId: string): string =>
@@ -705,6 +727,43 @@ export const handleWebhookDecision = async (body: unknown) => {
 };
 
 // ─── Get DL verification status for a user ─────────────────────────
+/**
+ * Veriff's *event* webhook, which is a different stream from the decision webhook: it fires
+ * while the driver is still in the flow ("started", "submitted"), carries no verdict, and its
+ * payload is flat rather than nested under `verification`.
+ *
+ * Only "submitted" is acted on, and only to stamp `submittedAt`. The row is written when the
+ * session opens, so without this the publish checklist cannot tell a driver who uploaded and
+ * is waiting from one who opened the flow and abandoned it — and telling the second group to
+ * sit tight strands them on a session that will never produce a decision.
+ */
+export const handleWebhookEvent = async (body: unknown) => {
+  if (!isRecord(body)) return { success: false, reason: 'INVALID_PAYLOAD' };
+
+  const sessionId = typeof body.id === 'string' ? body.id : '';
+  const action = typeof body.action === 'string' ? body.action : '';
+
+  if (!sessionId) return { success: false, reason: 'INVALID_PAYLOAD' };
+
+  // "started" and anything Veriff adds later are recorded by their absence: the driver has
+  // not submitted, which is already what a row with no submittedAt means.
+  if (action !== 'submitted') return { success: true, reason: 'IGNORED_ACTION', action };
+
+  // updateMany rather than update: an event for a session this deployment never created is
+  // normal (another environment, a deleted row) and must not throw.
+  const updated = await prisma.dlVerification.updateMany({
+    where: { veriffSessionId: sessionId, submittedAt: null },
+    data: { submittedAt: new Date() },
+  });
+
+  if (updated.count === 0) {
+    logDebug('Veriff event: no pending row to stamp', { sessionId, action });
+    return { success: true, reason: 'NO_MATCHING_SESSION', action };
+  }
+
+  return { success: true, action };
+};
+
 export const getVerificationStatus = async (userId: string) => {
   await reconcilePendingVeriffSessionsForUser(userId);
 

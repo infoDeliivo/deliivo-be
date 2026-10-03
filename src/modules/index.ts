@@ -1,4 +1,5 @@
 import authRouter from './auth/auth.routes.js';
+import rideRequestRouter from './ride-request/ride-request.routes.js';
 import vehiclesRouter from './vehicles/vehicle.routes.js';
 import travelPreferenceRouter from './travel-preferences/travelPreference.routes.js';
 import mapRouter from './maps/google.routes.js';
@@ -14,7 +15,7 @@ import paymentsConnectRouter from './payments/stripe.connect.routes.js';
 import { paymentRouter } from './payments/payment.routes.js';
 import ratingsRouter from './ratings/ratings.routes.js';
 import dlVerificationRouter from './dl-verification/dl-verification.routes.js';
-import dlVerificationWebhookRouter from './dl-verification/dl-verification.webhook.routes.js';
+import dlVerificationWebhookRouter, { eventsRouter as dlVerificationEventsRouter } from './dl-verification/dl-verification.webhook.routes.js';
 import adminRouter from './admin/admin.routes.js';
 import { rideOperationsRouter, bookingOperationsRouter } from './ride-operations/ride-operations.routes.js';
 import { pricingRouter } from './pricing/pricing.routes.js';
@@ -30,6 +31,7 @@ import rewardsRouter from './rewards/rewards.routes.js';
 import trackerRouter from './tracker/tracker.routes.js';
 
 export {
+    rideRequestRouter,
     authRouter,
     vehiclesRouter,
     travelPreferenceRouter,
@@ -47,6 +49,7 @@ export {
     ratingsRouter,
     dlVerificationRouter,
     dlVerificationWebhookRouter,
+    dlVerificationEventsRouter,
     adminRouter,
     rideOperationsRouter,
     bookingOperationsRouter,

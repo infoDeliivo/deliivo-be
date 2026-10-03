@@ -196,6 +196,8 @@ model User {
 
   // Payment relations
   paymentMethods PaymentMethod[]
+  rideRequests RideRequest[]
+  rideRequestOffers RideRequestOffer[]
   rewardCampaignsCreated RewardCampaign[] @relation("RewardCampaignCreatedBy")
   rewardCampaignsUpdated RewardCampaign[] @relation("RewardCampaignUpdatedBy")
   rewardReferralsSent RewardReferral[] @relation("RewardReferralReferrer")
@@ -254,6 +256,11 @@ model Vehicle {
   reviewedAt         DateTime?
   reviewedById       String?
 
+  // When the owner was last told that a document of theirs never reached storage. Guards the
+  // message so the audit does not repeat itself every night; cleared once the vehicle recovers,
+  // so a fresh breakage is announced again.
+  documentIssueNotifiedAt DateTime?
+
   documents VehicleDocument[]
   rides     Ride[]
 
@@ -273,9 +280,18 @@ model VehicleDocument {
   imageKey     String?
   documentType DocumentType
 
+  // Set when a HEAD against storage returned a definitive 404 — the row survived but the file
+  // never arrived, or was removed under us. Null means "believed present": either the last check
+  // found the object, or the row has never been checked (see storageCheckedAt).
+  storageMissingAt DateTime?
+  // When the audit last reached a verdict on this row. Null rows are checked first.
+  storageCheckedAt DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([vehicleId])
+  @@index([storageMissingAt])
+  @@index([storageCheckedAt])
 }
 
 model RefreshToken {
@@ -351,6 +367,7 @@ model Ride {
   id String @id @default(uuid())
 
   driverId  String
+  requestOffer RideRequestOffer?
   driver    User     @relation(fields: [driverId], references: [id], onDelete: Cascade)
   vehicleId String?
   vehicle   Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
@@ -422,6 +439,52 @@ model Ride {
   @@index([status, departureDate])
 }
 
+model RideRequest {
+  id String @id @default(uuid())
+  riderId String
+  rider User @relation(fields: [riderId], references: [id], onDelete: Cascade)
+  originPlaceId String
+  originAddress String
+  originLat Float
+  originLng Float
+  destinationPlaceId String
+  destinationAddress String
+  destinationLat Float
+  destinationLng Float
+  departureAfter DateTime
+  departureBefore DateTime
+  seats Int
+  luggage Int @default(0)
+  budgetPerSeat Float?
+  notes String?
+  status String @default("OPEN")
+  expiresAt DateTime
+  checkoutExpiresAt DateTime?
+  offers RideRequestOffer[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, expiresAt])
+  @@index([riderId, createdAt])
+}
+
+model RideRequestOffer {
+  id String @id @default(uuid())
+  requestId String
+  request RideRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  driverId String
+  driver User @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  rideId String @unique
+  ride Ride @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  bookingId String? @unique
+  booking RideBooking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  status String @default("OPEN")
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([requestId, status])
+  @@index([driverId, status])
+}
+
 model RideWaypoint {
   id     String @id @default(uuid())
   rideId String
@@ -468,6 +531,7 @@ model RideSegmentCapacity {
 
 model RideBooking {
   id        String @id @default(uuid())
+  requestOffer RideRequestOffer?
   rideId    String
   ride      Ride   @relation(fields: [rideId], references: [id], onDelete: Cascade)
   passengerId String
@@ -1316,6 +1380,12 @@ model DlVerification {
   nameMatch        Boolean?
   dobMatch         Boolean?
   genderMatch      Boolean?
+
+  // Stamped by Veriff's events webhook when the driver actually submits their documents.
+  // The row is created the moment a session opens, so PENDING alone cannot tell a driver
+  // who uploaded and is waiting from one who opened the flow and walked away — and those
+  // two need opposite things said to them.
+  submittedAt      DateTime?
 
   // Manual admin review. A driver who does not complete Veriff can upload a licence
   // photo instead; an admin reads it and approves or declines with a reason. The

@@ -41,6 +41,9 @@ export interface VehicleDocumentResponse {
     previewKey: string | null;
     // Public URL for public documents; null for private documents (use previewKey).
     image: string | null;
+    // True when the audit proved storage holds no object for this row — the upload never
+    // completed. The row is all that survives, so the driver has to re-add the vehicle.
+    storageMissing: boolean;
     createdAt: Date;
 }
 

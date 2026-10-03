@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { createNotification } from '../notification/notification.service.js';
 import { sendMail } from '../mail/mail.service.js';
+import { rewardsEnabled, assertRewardsEnabled } from '../../config/features.js';
 
 const DEFAULT_CURRENCY = 'EUR';
 
@@ -279,10 +280,12 @@ const ensureReferralRecord = async (
 };
 
 export const ensureUserReferralCode = async (userId: string) => {
+  if (!rewardsEnabled()) return null;
   return prisma.$transaction((tx) => ensureReferralCodeInternal(tx, userId));
 };
 
 export const attachReferralCodeToUser = async (userId: string, referralCode: string) => {
+  if (!rewardsEnabled()) return { attached: false, reason: 'REWARDS_DISABLED' as const };
   const normalized = referralCode.trim().toUpperCase();
   if (!normalized) throw new Error('REFERRAL_CODE_REQUIRED');
 
@@ -317,6 +320,7 @@ export const attachReferralCodeToUser = async (userId: string, referralCode: str
 };
 
 export const getRewardWallet = async (userId: string) => {
+  assertRewardsEnabled();
   const [user, entries, campaigns] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
@@ -374,6 +378,7 @@ export const getRewardWallet = async (userId: string) => {
 };
 
 export const listRewardCampaigns = async () => {
+  assertRewardsEnabled();
   return prisma.rewardCampaign.findMany({
     orderBy: [{ active: 'desc' }, { updatedAt: 'desc' }],
   });
@@ -399,6 +404,7 @@ export const upsertRewardCampaign = async (
   },
   adminId: string | null,
 ) => {
+  assertRewardsEnabled();
   const data = {
     code: input.code.trim().toUpperCase(),
     name: input.name.trim(),
@@ -596,6 +602,7 @@ export const grantManualReward = async (
   },
   adminId: string | null,
 ) => {
+  assertRewardsEnabled();
   const targetWallet = normalizeWalletType(input.walletType);
   const sourceType = (input.sourceType || 'MANUAL').trim().toUpperCase();
   const sourceId = (input.sourceId || randomUUID()).trim();
@@ -645,6 +652,7 @@ export const reverseRewardEntry = async (
   input: { entryId: string; reason: string; metadataJson?: Prisma.InputJsonValue | null },
   adminId: string | null,
 ) => {
+  assertRewardsEnabled();
   const original = await prisma.rewardWalletEntry.findUnique({
     where: { id: input.entryId },
   });
@@ -671,6 +679,7 @@ export const reverseRewardEntry = async (
 };
 
 export const awardBookingCompletionRewards = async (bookingId: string) => {
+  if (!rewardsEnabled()) return [];
   const booking = await prisma.rideBooking.findUnique({
     where: { id: bookingId },
     select: {
@@ -784,6 +793,7 @@ export const awardBookingCompletionRewards = async (bookingId: string) => {
 };
 
 export const awardRideCompletionRewards = async (rideId: string) => {
+  if (!rewardsEnabled()) return [];
   const ride = await prisma.ride.findUnique({
     where: { id: rideId },
     select: {

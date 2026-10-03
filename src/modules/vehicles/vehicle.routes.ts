@@ -14,6 +14,7 @@ const router = Router();
 
 /* ================= DRAFT FLOW (Redis only) ================= */
 router.post('/draft', validate({ body: draftLicenseSchema }), controller.createDraftWithLicense);
+router.get('/draft', controller.getActiveDraft);
 router.put('/draft/vehicle-details', validate({ body: draftVehicleDetailsSchema }), controller.updateDraftVehicleDetails);
 // Document image is uploaded first via the presigned flow (target=vehicle_draft_document);
 // the confirmed URL + documentType are posted here to attach it to the Redis draft.

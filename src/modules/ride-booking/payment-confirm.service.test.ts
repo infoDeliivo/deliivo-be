@@ -1,4 +1,6 @@
 const mockPrisma = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    rideRequestOffer: { findUnique: jest.fn().mockResolvedValue(null) },
     $transaction: jest.fn(),
     rideBooking: {
         findFirst: jest.fn(),
@@ -25,6 +27,8 @@ jest.mock('../../config/index.js', () => ({
     // withPrismaFallback: unlisted models/methods resolve empty instead of throwing.
     prisma: require('../../test-utils/prisma-mock.js').withPrismaFallback(mockPrisma),
 }));
+
+jest.mock('../publish-ride/draft-ride.service.js', () => ({ assertDriverHasNoOverlappingRide: jest.fn() }));
 
 const mockRetrieve = jest.fn();
 

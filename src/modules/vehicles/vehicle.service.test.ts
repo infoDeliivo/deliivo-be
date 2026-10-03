@@ -54,9 +54,26 @@ describe('getVehicle — single vehicle exposes documents with previewKey', () =
                 documentType: 'VEHICLE_DOCUMENT',
                 previewKey: 'uploads/vehicle-documents/u1/d.png',
                 image: null,
+                storageMissing: false,
                 createdAt: docRow.createdAt,
             },
         ]);
+    });
+
+    it('reports a document the audit could not find in storage', async () => {
+        mockFindFirst.mockResolvedValue({
+            id: 'v1',
+            brand: 'Toyota',
+            documents: [{ ...docRow, storageMissingAt: new Date('2026-09-07T00:00:00.000Z') }],
+        });
+        const result = (await getVehicle('u1', 'v1')) as {
+            documents: Array<{ storageMissing: boolean }>;
+            hasMissingDocuments: boolean;
+            missingDocumentTypes: string[];
+        };
+        expect(result.documents[0].storageMissing).toBe(true);
+        expect(result.hasMissingDocuments).toBe(true);
+        expect(result.missingDocumentTypes).toEqual(['VEHICLE_DOCUMENT']);
     });
 
     it('returns an empty documents array when there are none', async () => {

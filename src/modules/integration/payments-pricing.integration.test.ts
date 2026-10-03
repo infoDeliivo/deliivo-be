@@ -730,6 +730,12 @@ describe('Ledger Service', () => {
 // ============================================================
 
 describe('Payout Service', () => {
+    const originalMockMode = process.env.STRIPE_CONNECT_MOCK_MODE;
+    beforeAll(() => { process.env.STRIPE_CONNECT_MOCK_MODE = 'false'; });
+    afterAll(() => {
+        if (originalMockMode === undefined) delete process.env.STRIPE_CONNECT_MOCK_MODE;
+        else process.env.STRIPE_CONNECT_MOCK_MODE = originalMockMode;
+    });
     test('processes payout for driver with eligible payments', async () => {
         // Create a fresh eligible payment
         const payment = await createPayment({

@@ -50,6 +50,54 @@ const setVehicleStatus = async (status: 'PENDING' | 'APPROVED' | 'REJECTED') => 
   }
 };
 
+// Veriff rows are normally written by session creation and the decision webhook. Neither can
+// run here — a TEST integration never decides on its own — so the two states the gate reads
+// are set directly.
+const createLicenceRow = async (status: 'PENDING' | 'IDENTITY_MISMATCH' | 'APPROVED') => {
+  const db = getDb();
+  try {
+    await db.dlVerification.create({
+      data: {
+        userId: driverId,
+        veriffSessionId: `e2e-elg-${status.toLowerCase()}-${driverId}`,
+        veriffSessionUrl: 'https://example.test/e2e-session',
+        status,
+      },
+    });
+  } finally {
+    await db.$disconnect();
+  }
+};
+
+const setLicenceStatus = async (status: 'PENDING' | 'IDENTITY_MISMATCH' | 'APPROVED') => {
+  const db = getDb();
+  try {
+    await db.dlVerification.updateMany({ where: { userId: driverId }, data: { status } });
+  } finally {
+    await db.$disconnect();
+  }
+};
+
+// Veriff's event webhook stamps this when the driver actually uploads. Set directly here for
+// the same reason as the rows themselves: a TEST integration sends no events of its own.
+const setLicenceSubmitted = async (submittedAt: Date | null) => {
+  const db = getDb();
+  try {
+    await db.dlVerification.updateMany({ where: { userId: driverId }, data: { submittedAt } });
+  } finally {
+    await db.$disconnect();
+  }
+};
+
+const clearLicenceRows = async () => {
+  const db = getDb();
+  try {
+    await db.dlVerification.deleteMany({ where: { userId: driverId } });
+  } finally {
+    await db.$disconnect();
+  }
+};
+
 beforeAll(async () => {
   if (!process.env.DATABASE_URL) {
     console.warn('[33-publish-eligibility] DATABASE_URL not set — tests will skip.');
@@ -106,6 +154,11 @@ describe('TC-ELG-001 — eligibility checklist', () => {
 describe('TC-ELG-002 — the wizard is gated at its entry point', () => {
   it('rejects POST /draft/origin before a vehicle exists', async () => {
     if (!ready) return;
+
+    // The gates are reported in order, and the first unsatisfied one is what the entry point
+    // throws. Licence and payouts have to be satisfied for the vehicle gate to be the one
+    // under test — otherwise this asserts DRIVER_NOT_VERIFIED while claiming to test vehicles.
+    await setDriver({ dlVerified: true, stripeOnboardingComplete: true });
 
     const res = await authed(driverToken).post('/publish-ride/draft/origin', {
       originPlaceId: 'ChIJdd4hrwug2EcRmSrV3Vo6llI',
@@ -227,6 +280,97 @@ describe('TC-ELG-004 — vehicle review state controls publishing', () => {
     const res = await authed(driverToken).get('/publish-ride/eligibility');
 
     expect(res.data.data.eligible).toBe(true);
+  });
+});
+
+describe('TC-ELG-006 — a submitted licence reads as under review, not as untouched', () => {
+  // Veriff decides asynchronously: the row is PENDING from the moment the driver finishes
+  // uploading until the decision webhook lands. Both ends of that window are exercised here,
+  // because the bug this guards against is the middle looking identical to the start.
+  it('moves DL_VERIFICATION through pending and back to satisfied on approval', async () => {
+    if (!ready) return;
+
+    await setDriver({ tosAcceptedAt: new Date(), stripeOnboardingComplete: true, dlVerified: false });
+    await setVehicleStatus('APPROVED');
+    await clearLicenceRows();
+
+    // 1. Nothing submitted — the driver is asked to verify, and sent to the session route.
+    const untouched = await authed(driverToken).get('/publish-ride/eligibility');
+    expect(requirement(untouched.data, 'DL_VERIFICATION')).toMatchObject({
+      satisfied: false,
+      reason: 'DRIVER_NOT_VERIFIED',
+      actionUrl: '/api/v1/dl-verification',
+    });
+
+    // 2. Submitted, awaiting the decision webhook — a code of its own, and a destination the
+    //    driver can poll instead of a second Veriff session for the same document.
+    await createLicenceRow('PENDING');
+
+    // A row alone is not a submission: the session may have been opened and abandoned. That
+    // driver still needs the Verify licence button, not an invitation to wait.
+    const abandoned = await authed(driverToken).get('/publish-ride/eligibility');
+    expect(requirement(abandoned.data, 'DL_VERIFICATION')).toMatchObject({
+      satisfied: false,
+      reason: 'DRIVER_NOT_VERIFIED',
+      actionUrl: '/api/v1/dl-verification',
+    });
+
+    // The event webhook stamps submittedAt — only now is the driver genuinely waiting.
+    await setLicenceSubmitted(new Date());
+
+    const underReview = await authed(driverToken).get('/publish-ride/eligibility');
+    expect(underReview.data.data.eligible).toBe(false);
+    expect(requirement(underReview.data, 'DL_VERIFICATION')).toMatchObject({
+      satisfied: false,
+      skipped: false,
+      reason: 'DL_VERIFICATION_PENDING',
+      actionUrl: '/api/v1/dl-verification/status',
+    });
+
+    // The wizard entry point speaks the same language as the checklist.
+    const gated = await authed(driverToken).post('/publish-ride/draft/origin', {
+      originPlaceId: 'ChIJdd4hrwug2EcRmSrV3Vo6llI',
+      originAddress: 'Tallinn, Estonia',
+      originLat: 59.437,
+      originLng: 24.7536,
+    });
+    expect(gated.status).toBe(403);
+    expect(String(gated.data.message)).toMatch(/under review/i);
+
+    // 3. The approved decision webhook flips both the row and the user flag.
+    await setLicenceStatus('APPROVED');
+    await setDriver({ dlVerified: true });
+
+    const approved = await authed(driverToken).get('/publish-ride/eligibility');
+    expect(requirement(approved.data, 'DL_VERIFICATION')).toMatchObject({
+      satisfied: true,
+      reason: null,
+      actionUrl: null,
+    });
+    expect(approved.data.data.eligible).toBe(true);
+
+    await clearLicenceRows();
+  });
+
+  // A mismatch is fixable now; waiting is not. The driver is shown the actionable one.
+  it('keeps DL_IDENTITY_MISMATCH ahead of a pending session', async () => {
+    if (!ready) return;
+
+    await setDriver({ dlVerified: false });
+    await clearLicenceRows();
+    await createLicenceRow('PENDING');
+    await createLicenceRow('IDENTITY_MISMATCH');
+    await setLicenceSubmitted(new Date());
+
+    const res = await authed(driverToken).get('/publish-ride/eligibility');
+
+    expect(requirement(res.data, 'DL_VERIFICATION')).toMatchObject({
+      reason: 'DL_IDENTITY_MISMATCH',
+      actionUrl: '/api/v1/dl-verification',
+    });
+
+    await clearLicenceRows();
+    await setDriver({ dlVerified: true });
   });
 });
 

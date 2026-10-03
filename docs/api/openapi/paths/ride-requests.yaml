@@ -1,0 +1,516 @@
+{
+  "paths": {
+    "/api/v1/ride-requests": {
+      "get": {
+        "operationId": "rideRequestsList",
+        "summary": "Browse requests or list own requests/offers; admin view requires ADMIN",
+        "tags": [
+          "Ride Requests"
+        ],
+        "description": "Requires RIDE_REQUESTS_ENABLED=true. See docs/ride-requests.md for lifecycle, authorization and rollout requirements.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success in the standard data envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          }
+        },
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "browse",
+                "mine",
+                "offers",
+                "admin"
+              ],
+              "default": "browse"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000,
+              "default": 1
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "UTC calendar date"
+            }
+          },
+          {
+            "name": "seats",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "rideRequestsCreate",
+        "summary": "Post a shared ride requirement without payment",
+        "tags": [
+          "Ride Requests"
+        ],
+        "description": "Requires RIDE_REQUESTS_ENABLED=true. See docs/ride-requests.md for lifecycle, authorization and rollout requirements.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success in the standard data envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "originPlaceId",
+                  "destinationPlaceId",
+                  "departureAfter",
+                  "departureBefore",
+                  "seats"
+                ],
+                "properties": {
+                  "originPlaceId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "destinationPlaceId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "departureAfter": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "departureBefore": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "seats": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4
+                  },
+                  "luggage": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "default": 0
+                  },
+                  "budgetPerSeat": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1000
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ride-requests/{id}": {
+      "get": {
+        "operationId": "rideRequestsDetails",
+        "summary": "Owner/admin sees all offers; drivers see only their own",
+        "tags": [
+          "Ride Requests"
+        ],
+        "description": "Requires RIDE_REQUESTS_ENABLED=true. See docs/ride-requests.md for lifecycle, authorization and rollout requirements.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success in the standard data envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/ride-requests/{id}/cancel": {
+      "post": {
+        "operationId": "rideRequestsCancel",
+        "summary": "Owner/admin cancels an open request",
+        "tags": [
+          "Ride Requests"
+        ],
+        "description": "Requires RIDE_REQUESTS_ENABLED=true. See docs/ride-requests.md for lifecycle, authorization and rollout requirements.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success in the standard data envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/ride-requests/{id}/offers": {
+      "post": {
+        "operationId": "rideRequestsOffer",
+        "summary": "Eligible driver offers a vehicle, fare and departure",
+        "tags": [
+          "Ride Requests"
+        ],
+        "description": "Requires RIDE_REQUESTS_ENABLED=true. See docs/ride-requests.md for lifecycle, authorization and rollout requirements.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success in the standard data envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "vehicleId",
+                  "departureAt",
+                  "totalSeats",
+                  "pricePerSeat",
+                  "acceptsSharedJourney"
+                ],
+                "properties": {
+                  "vehicleId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "departureAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "totalSeats": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8
+                  },
+                  "pricePerSeat": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1000,
+                    "multipleOf": 0.01
+                  },
+                  "expiresInHours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 48,
+                    "default": 24
+                  },
+                  "acceptsSharedJourney": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ride-requests/offers/{id}/checkout": {
+      "post": {
+        "operationId": "rideRequestsCheckout",
+        "summary": "Request owner selects or resumes an offer checkout",
+        "tags": [
+          "Ride Requests"
+        ],
+        "description": "Requires RIDE_REQUESTS_ENABLED=true. See docs/ride-requests.md for lifecycle, authorization and rollout requirements.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success in the standard data envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/ride-requests/offers/{id}/withdraw": {
+      "post": {
+        "operationId": "rideRequestsWithdraw",
+        "summary": "Driver withdraws their unselected offer",
+        "tags": [
+          "Ride Requests"
+        ],
+        "description": "Requires RIDE_REQUESTS_ENABLED=true. See docs/ride-requests.md for lifecycle, authorization and rollout requirements.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success in the standard data envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

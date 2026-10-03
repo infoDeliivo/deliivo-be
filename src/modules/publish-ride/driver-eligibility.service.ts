@@ -132,6 +132,7 @@ const buildVehicleRequirement = (
  */
 export const getDriverPublishEligibility = async (
     driverId: string,
+    vehicleId?: string,
 ): Promise<PublishEligibility> => {
     const bankSkipped = skipBankCheck();
     const vehicleVerificationSkipped = skipVehicleVerification();
@@ -145,7 +146,7 @@ export const getDriverPublishEligibility = async (
             },
         }),
         prisma.vehicle.findFirst({
-            where: { userId: driverId, deletedAt: null },
+            where: { userId: driverId, deletedAt: null, ...(vehicleId ? { id: vehicleId } : {}) },
             select: { id: true, verificationStatus: true, rejectionReason: true },
         }),
     ]);
@@ -165,13 +166,41 @@ export const getDriverPublishEligibility = async (
               )
             : false;
 
+    // A submitted licence sits unverified until the Veriff decision webhook lands, which can
+    // take minutes. Without a code of its own that window is indistinguishable from having
+    // never started, so the driver is told to "verify your licence" for work already done and
+    // submits again. IDENTITY_MISMATCH still wins: it is actionable now, waiting is not.
+    //
+    // `submittedAt`, not merely status PENDING: the row is created the moment a session opens,
+    // so PENDING alone would also cover a driver who opened the flow and walked away. Telling
+    // that driver to wait strands them on a session that will never produce a decision, with
+    // no way back to the button that would start a real one.
+    const licenceUnderReview =
+        !driver?.dlVerified && !identityMismatch
+            ? Boolean(
+                  await prisma.dlVerification.findFirst({
+                      where: { userId: driverId, status: 'PENDING', submittedAt: { not: null } },
+                      orderBy: { createdAt: 'desc' },
+                      select: { id: true },
+                  }),
+              )
+            : false;
+
+    const licenceReason = identityMismatch
+        ? 'DL_IDENTITY_MISMATCH'
+        : licenceUnderReview
+          ? 'DL_VERIFICATION_PENDING'
+          : 'DRIVER_NOT_VERIFIED';
+
     const requirements: PublishRequirement[] = [
         // KYC gate — never skippable, whatever the environment.
         requirement(
             'DL_VERIFICATION',
             Boolean(driver?.dlVerified),
-            identityMismatch ? 'DL_IDENTITY_MISMATCH' : 'DRIVER_NOT_VERIFIED',
-            '/api/v1/dl-verification',
+            licenceReason,
+            // Under review there is nothing to re-submit, so the driver is pointed at the
+            // status endpoint to poll rather than back into a second Veriff session.
+            licenceUnderReview ? '/api/v1/dl-verification/status' : '/api/v1/dl-verification',
         ),
         requirement(
             'BANK_ACCOUNT',
@@ -193,8 +222,8 @@ export const getDriverPublishEligibility = async (
  * Throw the first unmet requirement's error code. Codes are plain Error messages to match
  * the convention the publish-ride controllers already map to HTTP statuses.
  */
-export const assertDriverCanPublish = async (driverId: string): Promise<void> => {
-    const { eligible, requirements } = await getDriverPublishEligibility(driverId);
+export const assertDriverCanPublish = async (driverId: string, vehicleId?: string): Promise<void> => {
+    const { eligible, requirements } = await getDriverPublishEligibility(driverId, vehicleId);
     if (eligible) return;
 
     const blocker = requirements.find((item) => !item.satisfied);

@@ -35,6 +35,9 @@ const applyPaymentIntentSucceeded = async (intent: Stripe.PaymentIntent) => {
 const applyPaymentIntentFailed = async (intent: Stripe.PaymentIntent) => {
     const bookingId = intent.metadata?.[STRIPE_METADATA_KEYS.bookingId];
     if (!bookingId) return;
+    // A declined card can be retried on the same intent. Keep request seats held
+    // until success or the expiry worker cancels the intent at Stripe.
+    if (await prisma.rideRequestOffer.findFirst({ where: { bookingId, status: 'SELECTED' } })) return;
 
     const failedBooking = await prisma.$transaction(async (tx) => {
         const booking = await tx.rideBooking.findUnique({

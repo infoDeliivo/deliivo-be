@@ -163,6 +163,74 @@ paths:
         '401':
           description: "HMAC validation failed or header missing"
 
+  /api/v1/dl-verification/events:
+    post:
+      tags:
+        - "DL Verification"
+      summary: "Veriff event webhook"
+      operationId: handleDlVerificationEvent
+      description: >
+        Public endpoint for Veriff's event stream, which is separate from the decision
+        webhook: it reports progress through the flow and carries no verdict. Its payload is
+        flat rather than nested under `verification`. Only `action: "submitted"` is acted on,
+        recording that the driver actually uploaded their documents — the verification row is
+        created when the session opens, so it cannot otherwise distinguish a driver waiting on
+        a decision from one who abandoned the flow. Authenticated with the same HMAC-SHA256
+        shared secret as the decision webhook. Always answers 200 so Veriff does not retry.
+      security: []
+      parameters:
+        - in: header
+          name: x-hmac-signature
+          required: true
+          schema:
+            type: string
+          description: "Hex encoded HMAC-SHA256 signature computed over the raw request payload using the Veriff Shared Secret"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  description: "The Veriff session ID"
+                attemptId:
+                  type: string
+                  format: uuid
+                  description: "The verification attempt within the session"
+                action:
+                  type: string
+                  description: "Stage the driver reached (started, submitted). Only `submitted` is recorded."
+                  example: "submitted"
+                code:
+                  type: integer
+                  description: "Event code corresponding to the action (7001 started, 7002 submitted)"
+                  example: 7002
+                feature:
+                  type: string
+                  example: "selfid"
+      responses:
+        '200':
+          description: >
+            Event acknowledged. `warning` names why nothing was recorded: `IGNORED_ACTION` for
+            an action other than submitted, `NO_MATCHING_SESSION` when no row holds that
+            session id, `INVALID_PAYLOAD` for a signed body that is not JSON.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                    example: true
+                  warning:
+                    type: string
+                    example: "IGNORED_ACTION"
+        '401':
+          description: "HMAC validation failed or header missing"
+
   /api/v1/dl-verification/document:
     post:
       tags:

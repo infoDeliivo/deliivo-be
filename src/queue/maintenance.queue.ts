@@ -11,6 +11,7 @@ import redis from '../cache/redis.js';
 import { PENDING_UPLOAD_PREFIX } from '../modules/uploads/uploads.constants.js';
 import { prisma } from '../config/index.js';
 import { createNotification } from '../modules/notification/notification.service.js';
+import { auditVehicleDocuments } from '../modules/vehicles/vehicle-document-audit.service.js';
 import { releaseBookingSeats } from '../modules/ride-booking/segment-capacity.utils.js';
 
 const QUEUE_NAME = 'maintenance';
@@ -23,6 +24,11 @@ const scheduleMaintenanceJob = (name: string, data: Record<string, never>, optio
         logError(`Failed to schedule maintenance job: ${name}`, error);
     });
 };
+
+// Schedule the nightly job once - BullMQ deduplicates by jobId
+if (process.env.RIDE_REQUESTS_ENABLED === 'true') {
+    scheduleMaintenanceJob('ride-request-expiry', {}, { repeat: { every: 60000 }, jobId: 'ride-request-expiry', removeOnComplete: true, removeOnFail: 100 });
+}
 
 // Schedule the nightly job once - BullMQ deduplicates by jobId
 scheduleMaintenanceJob(
@@ -141,6 +147,21 @@ scheduleMaintenanceJob(
     {
         repeat: { pattern: '0 * * * *' }, // hourly
         jobId: 'abandoned-upload-report',
+        removeOnComplete: true,
+        removeOnFail: 50,
+    }
+);
+
+// Vehicle document audit: asks storage whether the file behind each saved document row is
+// actually there. The abandoned-upload report above sees only uploads that were never
+// confirmed; this catches the ones that were confirmed and still left us holding nothing.
+// Marks the row and tells the owner once, so they can re-add the vehicle.
+scheduleMaintenanceJob(
+    'vehicle-document-audit',
+    {},
+    {
+        repeat: { pattern: '30 4 * * *' }, // 04:30 UTC daily
+        jobId: 'vehicle-document-audit',
         removeOnComplete: true,
         removeOnFail: 50,
     }
@@ -718,10 +739,14 @@ export const runUnpaidBookingSweep = async (): Promise<{ checked: number; expire
 
     return { checked: stale.length, expired };
 };
-
 export const maintenanceWorker = new Worker(
     QUEUE_NAME,
     async (job: any) => {
+        if (job.name === 'ride-request-expiry') {
+            const { expireRequestCheckouts } = await import('../modules/ride-request/ride-request.service.js');
+            await expireRequestCheckouts();
+            return;
+        }
         if (job.name === 'ride-overdue-check') {
             await runRideOverdueCheck();
             return;
@@ -781,6 +806,10 @@ export const maintenanceWorker = new Worker(
             return;
         }
 
+        if (job.name === 'vehicle-document-audit') {
+            await auditVehicleDocuments();
+            return;
+        }
         // nightly-cleanup (original job)
         const now = new Date();
         const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);

@@ -2,6 +2,8 @@ import { BookingStatus, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
+import { clearPreferredLocaleCache } from './user-locale.service.js';
+import { clearDetectedCountryCache } from './user-geo.service.js';
 import { logError } from '../../utils/logger.js';
 import { releaseBookingSeats } from '../ride-booking/segment-capacity.utils.js';
 
@@ -20,6 +22,10 @@ export const exportUserData = async (userId: string) => {
             phone: true,
             emailVerified: true,
             phoneVerified: true,
+            // Derived personal data: inferred from their requests rather than given by them, so a
+            // subject-access request must show it.
+            preferredLocale: true,
+            detectedCountry: true,
             role: true,
             onboardingStatus: true,
             isVerified: true,
@@ -77,6 +83,8 @@ export const exportUserData = async (userId: string) => {
                     createdAt: true,
                 },
             },
+            rideRequests: true,
+            rideRequestOffers: true,
             ratingsGiven: {
                 orderBy: { createdAt: 'desc' },
                 take: 200,
@@ -169,6 +177,11 @@ const CANCELLABLE_RIDE_STATUSES: RideStatus[] = [
 ];
 
 export const deleteUserAccount = async (userId: string) => {
+    if (await prisma.rideRequestOffer.count({ where: { status: 'SELECTED', OR: [{ driverId: userId }, { request: { riderId: userId } }] } })) {
+        throw new Error('A ride request payment is still being processed. Please retry account deletion after checkout expires.');
+    }
+    await prisma.rideRequest.deleteMany({ where: { riderId: userId } });
+    await prisma.rideRequestOffer.deleteMany({ where: { driverId: userId, status: { not: 'ACCEPTED' } } });
     // 1. Cancel active rides as driver + refund all their bookings
     const activeRides = await prisma.ride.findMany({
         where: { driverId: userId, status: { in: CANCELLABLE_RIDE_STATUSES } },
@@ -299,6 +312,7 @@ export const deleteUserAccount = async (userId: string) => {
             email: null,
             phone: null,
             avatarUrl: null,
+            detectedCountry: null,
             emailVerified: false,
             phoneVerified: false,
             isVerified: false,
@@ -310,6 +324,11 @@ export const deleteUserAccount = async (userId: string) => {
             privacyVersion: null,
         },
     });
+
+    // 5. Drop what Redis still remembers about them, including the language sync marker, which
+    // would otherwise describe a row that no longer exists for up to a day.
+    await clearPreferredLocaleCache(userId);
+    await clearDetectedCountryCache(userId);
 
     return { deleted: true };
 };

@@ -155,7 +155,14 @@ const nextId = (prefix: string) => `${prefix}-${++idCounter}`;
 // Build a Prisma-like transaction mock that operates on in-memory state
 const buildPrismaMock = () => {
     const txProxy = {
+        $queryRaw: jest.fn().mockResolvedValue([]),
         ride: {
+            findMany: jest.fn(async ({ where }: any) => rides.filter(ride =>
+                ride.driverId === where.driverId &&
+                (!where.id?.not || ride.id !== where.id.not) &&
+                ride.departureDate >= where.departureDate.gte && ride.departureDate <= where.departureDate.lte &&
+                where.OR.some((condition: any) => condition.status?.in?.includes(ride.status))
+            )),
             create: jest.fn(async ({ data }: any) => {
                 const ride: InMemoryRide = {
                     id: nextId('ride'),
@@ -661,6 +668,10 @@ const buildCompleteDraft = (overrides: Record<string, any> = {}) => ({
             recommendedPrice: 22,
         },
     ],
+    stopoverPricingByPlaceId: {
+        'place-gatwick': 12,
+        'place-crawley': 22,
+    },
     // Publishing requires at least one meeting point at each end.
     pickups: [{ placeId: 'place-origin-pickup', address: 'London Victoria', lat: 51.495, lng: -0.144 }],
     dropoffs: [{ placeId: 'place-dest-dropoff', address: 'Brighton Station', lat: 50.829, lng: -0.141 }],

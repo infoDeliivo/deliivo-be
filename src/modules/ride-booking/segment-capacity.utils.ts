@@ -5,7 +5,19 @@
  * and updating the denormalized `ride.availableSeats` field.
  */
 
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
+
+type PrismaTransaction = {
+    $queryRaw: Prisma.TransactionClient['$queryRaw'];
+    rideSegmentCapacity: {
+        findMany: (args: any) => Promise<any[]>;
+        updateMany: (args: any) => Promise<any>;
+    };
+    ride: {
+        update: (args: any) => Promise<any>;
+        updateMany: (args: any) => Promise<any>;
+    };
+};
 
 export interface ReleaseSeatsInput {
     rideId: string;
@@ -20,10 +32,14 @@ export interface ReleaseSeatsInput {
  * Uses per-segment capacity if available, otherwise falls back to global increment.
  */
 export const releaseSegmentSeats = async (
-    tx: Prisma.TransactionClient,
+    tx: PrismaTransaction,
     input: ReleaseSeatsInput
 ): Promise<void> => {
     const { rideId, seatsBooked, pickupPosition, dropoffPosition, totalSeats } = input;
+
+    // Match reservation order: ride first, then segment rows. This also serializes
+    // recalculation of availableSeats against concurrent bookings and releases.
+    await tx.$queryRaw`SELECT "id" FROM "Ride" WHERE "id" = ${rideId} FOR UPDATE`;
 
     // If positions are known, use per-segment release
     if (pickupPosition != null && dropoffPosition != null) {

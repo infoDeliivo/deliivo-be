@@ -59,6 +59,7 @@ import { emitToUsers } from '../../socket/index.js';
 import { calculateAgeYears, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
 import { formatBookingReference } from '../../utils/booking-reference.js';
 import { isBookingWindowClosed } from './booking-window.js';
+import { reserveRequestOffer, confirmRequestBooking } from '../ride-request/ride-request.booking.js';
 import { logError } from '../../utils/logger.js';
 
 type RideWaypointDetails = {
@@ -395,6 +396,7 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
                 },
             });
 
+            await confirmRequestBooking(tx, bookingId);
             await reserveSeatsForBooking(tx, {
                 rideId: reserving.rideId,
                 totalSeats: reserving.ride.totalSeats,
@@ -414,6 +416,8 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
     }
 
     if (claimed === 'ALREADY_APPLIED') {
+        const accepted = await prisma.rideRequestOffer.findUnique({ where: { bookingId } });
+        if (accepted?.status === 'ACCEPTED') await markBookingPaymentPaid(bookingId, accepted.driverId);
         return false;
     }
 
@@ -454,6 +458,16 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
     });
 
     if (!booking) {
+        return true;
+    }
+
+    if (booking.status === BookingStatus.CONFIRMED) {
+        await markBookingPaymentPaid(booking.id, booking.ride.driverId);
+        await Promise.all([booking.passengerId, booking.ride.driverId].map(userId => createNotification({
+            userId, type: 'ride_request.matched', title: 'Ride confirmed',
+            body: 'The requested ride is confirmed. Remaining seats are now available to other riders.',
+            data: { bookingId: booking.id, rideId: booking.rideId, deepLink: `app://ride/${booking.rideId}` },
+        }).catch(error => console.warn('Request confirmation notification failed', error))));
         return true;
     }
 
@@ -980,7 +994,8 @@ const resolveBookingPlan = async (
     input: CreateBookingInput,
     now: Date,
     bypassBookingPaymentMode: boolean,
-    feeTerms: ServiceFeeTerms
+    feeTerms: ServiceFeeTerms,
+    requestOfferId?: string,
 ): Promise<BookingPlan> => {
     const {
         rideId,
@@ -995,7 +1010,7 @@ const resolveBookingPlan = async (
     const ride = await client.ride.findFirst({
         where: {
             id: rideId,
-            status: RideStatus.PUBLISHED,
+            status: requestOfferId ? RideStatus.DRAFT : RideStatus.PUBLISHED,
         },
         include: {
             driver: {
@@ -1152,13 +1167,14 @@ const resolveBookingPlan = async (
 const reserveWholeRideSeats = async (
     tx: Prisma.TransactionClient,
     rideId: string,
-    seatsBooked: number
+    seatsBooked: number,
+    allowDraft = false,
 ): Promise<void> => {
     const seatUpdate = await tx.ride.updateMany({
         where: {
             id: rideId,
             availableSeats: { gte: seatsBooked },
-            status: RideStatus.PUBLISHED,
+            status: allowDraft ? RideStatus.DRAFT : RideStatus.PUBLISHED,
         },
         data: { availableSeats: { decrement: seatsBooked } },
     });
@@ -1183,12 +1199,15 @@ const reserveSeatsForBooking = async (
         // sides fall back to the whole-ride seat count.
         pickupPosition: number | null;
         dropoffPosition: number | null;
+        allowDraft?: boolean;
     }
 ): Promise<void> => {
     const { rideId, totalSeats, seatsBooked, pickupPosition, dropoffPosition } = params;
+    // Keep the same ride-first lock order as seat release and request checkout.
+    await tx.$queryRaw`SELECT "id" FROM "Ride" WHERE "id" = ${rideId} FOR UPDATE`;
 
     if (pickupPosition === null || dropoffPosition === null) {
-        await reserveWholeRideSeats(tx, rideId, seatsBooked);
+        await reserveWholeRideSeats(tx, rideId, seatsBooked, params.allowDraft);
         return;
     }
 
@@ -1203,7 +1222,7 @@ const reserveSeatsForBooking = async (
 
     if (edgeCapacities.length === 0) {
         // Rides without segment capacity rows
-        await reserveWholeRideSeats(tx, rideId, seatsBooked);
+        await reserveWholeRideSeats(tx, rideId, seatsBooked, params.allowDraft);
         return;
     }
 
@@ -1362,7 +1381,8 @@ const resolvePendingBookingReentry = async (
 
 export const createBooking = async (
     passengerId: string,
-    input: CreateBookingInput
+    input: CreateBookingInput,
+    requestOfferId?: string,
 ): Promise<BookingResponse> => {
     // Guard: passenger must have accepted ToS and must not be banned
     const passengerAccount = await prisma.user.findUnique({
@@ -1460,7 +1480,8 @@ export const createBooking = async (
 
     if (bypassBookingPaymentMode) {
         const seed = await prisma.$transaction(async (tx) => {
-            const plan = await resolveBookingPlan(tx, passengerId, input, now, true, feeTerms);
+            if (requestOfferId) await reserveRequestOffer(tx, requestOfferId, passengerId, rideId, seatsBooked);
+            const plan = await resolveBookingPlan(tx, passengerId, input, now, true, feeTerms, requestOfferId);
 
             await reserveSeatsForBooking(tx, {
                 rideId,
@@ -1468,12 +1489,20 @@ export const createBooking = async (
                 seatsBooked,
                 pickupPosition: plan.pickupPosition,
                 dropoffPosition: plan.dropoffPosition,
+                allowDraft: Boolean(requestOfferId),
             });
 
             const booking = await tx.rideBooking.create({
                 data: buildBookingData(plan),
                 include: BOOKING_CREATE_INCLUDE,
             });
+
+            if (requestOfferId) {
+                await tx.rideRequestOffer.update({ where: { id: requestOfferId }, data: { bookingId: booking.id } });
+                await confirmRequestBooking(tx, booking.id);
+                booking.status = BookingStatus.CONFIRMED;
+                booking.ride.status = RideStatus.PUBLISHED;
+            }
 
             const split = resolvePaymentSplit(plan.priceBreakdown);
 
@@ -1520,6 +1549,9 @@ export const createBooking = async (
             });
         }
 
+        if (requestOfferId) return mapBookingResponse(seed.booking as unknown as BookingWithRideDetails, {
+            luggageCount, notes: normalizedNotes || null, priceBreakdown: seed.plan.priceBreakdown,
+        });
         try {
             await notifyRiderBookingState({
                 passengerId,
@@ -1585,7 +1617,7 @@ export const createBooking = async (
     // ---- Stripe mode ----
     // Pre-flight resolve so the PaymentIntent exists before any row is written.
     // Before anything is created: does this rider already have an unpaid booking here?
-    const reentry = await resolvePendingBookingReentry(passengerId, rideId);
+    const reentry = requestOfferId ? { kind: 'NONE' as const } : await resolvePendingBookingReentry(passengerId, rideId);
 
     if (reentry.kind === 'RESUME' || reentry.kind === 'APPLIED') {
         const existing = await getBookingById(passengerId, reentry.bookingId);
@@ -1616,7 +1648,7 @@ export const createBooking = async (
     }
 
     // Nothing here writes, so a failure leaves no booking and no seat hold.
-    const preflightPlan = await resolveBookingPlan(prisma, passengerId, input, now, false, feeTerms);
+    const preflightPlan = await resolveBookingPlan(prisma, passengerId, input, now, false, feeTerms, requestOfferId);
 
     const riderPaymentMethod = await prisma.paymentMethod.findFirst({
         where: {
@@ -1655,7 +1687,8 @@ export const createBooking = async (
     let seed: { booking: Awaited<ReturnType<typeof prisma.rideBooking.create>>; plan: BookingPlan };
     try {
         seed = await prisma.$transaction(async (tx) => {
-            const plan = await resolveBookingPlan(tx, passengerId, input, now, false, feeTerms);
+            if (requestOfferId) await reserveRequestOffer(tx, requestOfferId, passengerId, rideId, seatsBooked);
+            const plan = await resolveBookingPlan(tx, passengerId, input, now, false, feeTerms, requestOfferId);
 
             // The intent was created for the pre-flight amount. If the fare moved in
             // between, fail rather than charge an amount the rider never saw.
@@ -1692,6 +1725,9 @@ export const createBooking = async (
                 stripePaymentIntentId: paymentIntent.paymentIntentId,
             });
 
+            if (requestOfferId) {
+                await tx.rideRequestOffer.update({ where: { id: requestOfferId }, data: { bookingId: booking.id } });
+            }
             return { booking, plan };
         }, BOOKING_TRANSACTION_OPTIONS);
     } catch (error) {
@@ -1850,6 +1886,9 @@ export const cancelBooking = async (
     bookingId: string,
     reason?: string
 ): Promise<CancelBookingResult> => {
+    if (await prisma.rideRequestOffer.findFirst({ where: { bookingId, status: 'SELECTED', request: { riderId: passengerId } } })) {
+        throw new Error('REQUEST_CHECKOUT_PENDING: Wait for the checkout reservation to expire before cancelling the request.');
+    }
     const booking = await prisma.rideBooking.findFirst({
         where: {
             id: bookingId,

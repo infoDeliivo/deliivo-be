@@ -21,8 +21,11 @@ export const createSessionSchema = z.object({
   // Optional person fields. Date of birth and gender are not accepted here — they are
   // taken from the profile, which is what the decision webhook enforces the document
   // against, so letting the caller supply them would only invite a mismatch.
-  email: z.string().email('Invalid email format').optional(),
-  phoneNumber: z.string().min(1).max(20).optional(),
+  // A phone-registered driver has no email, and an email-registered one has no phone. The
+  // client forwards the profile as it stands, so null is what "not set" looks like on the
+  // wire — rejecting it fails verification for an account that is perfectly valid.
+  email: z.string().email('Invalid email format').nullish(),
+  phoneNumber: z.string().min(1).max(20).nullish(),
   idNumber: z.string().min(1).max(50).optional(),
   fullName: z.string().min(1).max(200).optional(),
 

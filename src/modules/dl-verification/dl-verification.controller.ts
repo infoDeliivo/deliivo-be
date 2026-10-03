@@ -6,6 +6,7 @@ import {
   createVeriffSession,
   registerVeriffSession,
   handleWebhookDecision,
+  handleWebhookEvent,
   validateWebhookSignature,
   getVerificationStatus,
 } from './dl-verification.service.js';
@@ -38,8 +39,10 @@ export const createSession = async (req: Request, res: Response) => {
       userId,
       firstName,
       lastName,
-      email,
-      phoneNumber,
+      // null means "the profile has no such value"; the service treats absent and null the
+      // same way, and Veriff must not receive a null in the session payload.
+      email: email ?? undefined,
+      phoneNumber: phoneNumber ?? undefined,
       idNumber,
       fullName,
       documentNumber,
@@ -181,6 +184,60 @@ export const webhook = async (req: Request, res: Response) => {
   } catch (err: any) {
     logError('Veriff webhook error', err);
     // Return 200 even on error to prevent Veriff retry loops
+    return res.status(200).json({ received: true, error: 'Internal processing error' });
+  }
+};
+
+// ─── POST /events — Handle Veriff event webhook (public) ─────────
+// A separate Veriff stream from the decision webhook: it reports progress through the flow
+// ("started", "submitted") and carries no verdict, so it is authenticated the same way but
+// handled apart. Nothing here ever verifies a licence — it only records that the driver
+// finished uploading, which is what the publish checklist needs to stop telling someone who
+// already submitted to go and verify.
+export const events = async (req: Request, res: Response) => {
+  try {
+    const headerSignature = req.headers['x-hmac-signature'];
+    const signature = Array.isArray(headerSignature) ? headerSignature[0] : headerSignature;
+
+    if (!signature) {
+      return sendError(res, {
+        message: 'Missing webhook signature',
+        status: HttpStatus.UNAUTHORIZED,
+      });
+    }
+
+    const rawBody = getRawBody(req);
+
+    if (!rawBody) {
+      logError('Veriff event: raw body unavailable — check the express.raw() mount order');
+      return sendError(res, {
+        message: 'Invalid webhook payload',
+        status: HttpStatus.BAD_REQUEST,
+      });
+    }
+
+    if (!validateWebhookSignature(rawBody, signature)) {
+      logWarn('Veriff event: invalid HMAC signature');
+      return sendError(res, {
+        message: 'Invalid webhook signature',
+        status: HttpStatus.UNAUTHORIZED,
+      });
+    }
+
+    const body = parseWebhookBody(rawBody);
+
+    if (body === null || typeof body !== 'object') {
+      logWarn('Veriff event: signed payload is not valid JSON');
+      return res.status(200).json({ received: true, warning: 'INVALID_PAYLOAD' });
+    }
+
+    const result = await handleWebhookEvent(body);
+
+    // 200 whatever happens: an event Veriff cannot deliver is retried, and there is nothing
+    // on this path worth retrying — the decision webhook is the one that carries state.
+    return res.status(200).json({ received: true, ...(result.reason && { warning: result.reason }) });
+  } catch (err: unknown) {
+    logError('Veriff event webhook error', err instanceof Error ? err : new Error(String(err)));
     return res.status(200).json({ received: true, error: 'Internal processing error' });
   }
 };

@@ -27,12 +27,17 @@ const SECRET = 'veriff-shared-secret';
 
 // The service reads VERIFF_SHARED_SECRET at module load, so every test loads a fresh
 // copy of both modules with the env it needs.
-const loadModules = async (secret: string | undefined) => {
+const loadModules = async (secret: string | undefined, webhookSecret?: string) => {
     jest.resetModules();
     if (secret === undefined) {
         delete process.env.VERIFF_SHARED_SECRET;
     } else {
         process.env.VERIFF_SHARED_SECRET = secret;
+    }
+    if (webhookSecret === undefined) {
+        delete process.env.VERIFF_WEBHOOK_SECRET;
+    } else {
+        process.env.VERIFF_WEBHOOK_SECRET = webhookSecret;
     }
     const service = await import('./dl-verification.service.js');
     const controller = await import('./dl-verification.controller.js');
@@ -241,5 +246,141 @@ describe('webhook controller — raw body', () => {
         expect(response.statusCode).toBe(200);
         expect(response.payload).toEqual({ received: true, warning: 'INVALID_PAYLOAD' });
         expect(mockPrisma.dlVerification.update).not.toHaveBeenCalled();
+    });
+});
+
+// Veriff's event stream is a second, separate webhook: flat payload, no verdict, fired while
+// the driver is still in the flow. It exists here for one purpose — recording that documents
+// were actually submitted, which the row's own creation cannot tell us.
+describe('event webhook', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockPrisma.dlVerification.updateMany.mockResolvedValue({ count: 1 });
+    });
+
+    afterAll(() => {
+        process.env.VERIFF_SHARED_SECRET = SECRET;
+    });
+
+    const submittedEvent = {
+        id: 'session-1',
+        attemptId: 'attempt-1',
+        feature: 'selfid',
+        code: 7002,
+        action: 'submitted',
+    };
+
+    it('stamps submittedAt when the driver submits their documents', async () => {
+        const { controller } = await loadModules(SECRET);
+        const raw = JSON.stringify(submittedEvent);
+        const response = buildResponse();
+
+        await controller.events(buildRequest(Buffer.from(raw), sign(raw)), response.res);
+
+        expect(response.statusCode).toBe(200);
+        expect(mockPrisma.dlVerification.updateMany).toHaveBeenCalledWith({
+            where: { veriffSessionId: 'session-1', submittedAt: null },
+            data: { submittedAt: expect.any(Date) },
+        });
+    });
+
+    // "started" means the driver opened the flow, which is exactly the state the row is
+    // already in. Stamping it would erase the distinction the column exists to draw.
+    it('ignores a started event', async () => {
+        const { controller } = await loadModules(SECRET);
+        const raw = JSON.stringify({ ...submittedEvent, action: 'started', code: 7001 });
+        const response = buildResponse();
+
+        await controller.events(buildRequest(Buffer.from(raw), sign(raw)), response.res);
+
+        expect(response.statusCode).toBe(200);
+        expect(mockPrisma.dlVerification.updateMany).not.toHaveBeenCalled();
+    });
+
+    // Same secret, same exposure as the decision webhook: an unsigned caller could otherwise
+    // mark any session as submitted and move a driver into a state they never earned.
+    it('rejects an event with a forged signature', async () => {
+        const { controller } = await loadModules(SECRET);
+        const raw = JSON.stringify(submittedEvent);
+        const response = buildResponse();
+
+        await controller.events(buildRequest(Buffer.from(raw), sign(raw, 'wrong-secret')), response.res);
+
+        expect(response.statusCode).toBe(401);
+        expect(mockPrisma.dlVerification.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects an event with no signature at all', async () => {
+        const { controller } = await loadModules(SECRET);
+        const response = buildResponse();
+
+        await controller.events(buildRequest(Buffer.from(JSON.stringify(submittedEvent))), response.res);
+
+        expect(response.statusCode).toBe(401);
+        expect(mockPrisma.dlVerification.updateMany).not.toHaveBeenCalled();
+    });
+
+    // An event for a session this deployment never created is normal — another environment,
+    // or a row since deleted. Veriff must not be handed an error to retry against.
+    it('acknowledges an event for a session it does not hold', async () => {
+        mockPrisma.dlVerification.updateMany.mockResolvedValue({ count: 0 });
+        const { controller } = await loadModules(SECRET);
+        const raw = JSON.stringify(submittedEvent);
+        const response = buildResponse();
+
+        await controller.events(buildRequest(Buffer.from(raw), sign(raw)), response.res);
+
+        expect(response.statusCode).toBe(200);
+        expect(response.payload).toEqual({ received: true, warning: 'NO_MATCHING_SESSION' });
+    });
+});
+
+// Veriff issues two keys per integration: the master signature key signs what we send, and the
+// integration's other shared secret signs what Veriff sends. Using only the first rejects every
+// real decision with a 401 — the licence then never resolves and the driver waits forever.
+describe('webhook secrets', () => {
+    const WEBHOOK_SECRET = 'veriff-webhook-secret';
+
+    afterAll(() => {
+        process.env.VERIFF_SHARED_SECRET = SECRET;
+        delete process.env.VERIFF_WEBHOOK_SECRET;
+    });
+
+    it('accepts a payload signed with the dedicated webhook secret', async () => {
+        const { service } = await loadModules(SECRET, WEBHOOK_SECRET);
+        const raw = '{"id":"s1","action":"submitted"}';
+
+        expect(service.validateWebhookSignature(Buffer.from(raw), sign(raw, WEBHOOK_SECRET))).toBe(true);
+    });
+
+    // The API key keeps signing outbound calls, so an integration that reuses one key for both
+    // directions must not start failing the moment the second variable is introduced.
+    it('still accepts a payload signed with the shared secret', async () => {
+        const { service } = await loadModules(SECRET, WEBHOOK_SECRET);
+        const raw = '{"id":"s1","action":"submitted"}';
+
+        expect(service.validateWebhookSignature(Buffer.from(raw), sign(raw, SECRET))).toBe(true);
+    });
+
+    it('rejects a payload signed with neither', async () => {
+        const { service } = await loadModules(SECRET, WEBHOOK_SECRET);
+        const raw = '{"id":"s1","action":"submitted"}';
+
+        expect(service.validateWebhookSignature(Buffer.from(raw), sign(raw, 'third-key'))).toBe(false);
+    });
+
+    // Fail closed: with no key at all every payload would otherwise be checked against an
+    // empty-key HMAC, which anyone can reproduce.
+    it('rejects everything when no secret is configured at all', async () => {
+        const { service } = await loadModules(undefined, undefined);
+        const raw = '{"id":"s1","action":"submitted"}';
+
+        expect(service.validateWebhookSignature(Buffer.from(raw), sign(raw, SECRET))).toBe(false);
+    });
+
+    it('starts up when only the webhook secret is set', async () => {
+        const { service } = await loadModules(undefined, WEBHOOK_SECRET);
+
+        expect(() => service.assertVeriffWebhookConfigured()).not.toThrow();
     });
 });

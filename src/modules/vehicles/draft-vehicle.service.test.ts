@@ -264,7 +264,7 @@ describe('saveVehicle', () => {
 
         it('rejects once the vehicle limit is reached', async () => {
             mockRedis.get.mockResolvedValue(draftWith('GB', []));
-            mockPrisma.vehicle.count.mockResolvedValue(1);
+            mockPrisma.vehicle.count.mockResolvedValue(3);
 
             await expect(DraftVehicleService.saveVehicle('user-1')).rejects.toThrow(
                 'MAX_VEHICLE_LIMIT_REACHED',

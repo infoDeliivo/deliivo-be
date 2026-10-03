@@ -294,6 +294,25 @@
       "isVerified": {
         "type": "boolean"
       },
+      "hasMissingDocuments": {
+        "type": "boolean",
+        "description": "True when at least one document row on this vehicle has no object in storage — the upload never completed. The driver must delete the vehicle and add it again."
+      },
+      "missingDocumentTypes": {
+        "type": "array",
+        "description": "Document types whose files never reached storage. Empty unless hasMissingDocuments is true.",
+        "items": {
+          "type": "string",
+          "enum": [
+            "VEHICLE_IMAGE",
+            "VEHICLE_IMAGE_FRONT",
+            "VEHICLE_IMAGE_BACK",
+            "VEHICLE_DOCUMENT",
+            "DRIVING_LICENSE",
+            "INSURANCE_DOCUMENT"
+          ]
+        }
+      },
       "documents": {
         "type": "array",
         "description": "Uploaded vehicle documents. Private docs (e.g. driving licence / insurance) have no public URL — use previewKey with GET /uploads/read to obtain a signed view URL.",
@@ -334,6 +353,10 @@
           "null"
         ],
         "description": "Public URL for public documents; null for private documents (served via previewKey)."
+      },
+      "storageMissing": {
+        "type": "boolean",
+        "description": "True when the nightly audit proved storage holds no object for this row — the upload never completed, so the file cannot be produced."
       },
       "createdAt": {
         "type": "string",
