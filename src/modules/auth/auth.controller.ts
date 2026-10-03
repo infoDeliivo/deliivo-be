@@ -37,7 +37,7 @@ const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE
 const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
   if (purpose === 'signup') {
     return {
-      mailSubject: 'Signup OTP',
+      mailSubject: 'Verify your email for Deliivo',
       mailTemplate: signupOtpTemplate(code),
       smsTemplate: signupOtpSmsTemplate(code),
     };
@@ -45,14 +45,14 @@ const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
 
   if (purpose === 'login') {
     return {
-      mailSubject: 'Login OTP',
+      mailSubject: 'Your Deliivo sign-in code',
       mailTemplate: loginOtpTemplate(code),
       smsTemplate: loginOtpSmsTemplate(code),
     };
   }
 
   return {
-    mailSubject: 'Password Reset OTP',
+    mailSubject: 'Reset your Deliivo password',
     mailTemplate: resetOtpTemplate(code),
     smsTemplate: resetOtpSmsTemplate(code),
   };
@@ -157,7 +157,7 @@ export const signup = async (req: Request, res: Response) => {
       if (!isOtpDebugMode) {
         await sendMail({
           to: identifier,
-          subject: 'Signup OTP',
+          subject: 'Verify your email for Deliivo',
           html: signupOtpTemplate(code),
         });
       }
@@ -352,7 +352,7 @@ export const login = async (req: Request, res: Response) => {
       if (!isOtpDebugMode) {
         await sendMail({
           to: identifier,
-          subject: 'Login OTP',
+          subject: 'Your Deliivo sign-in code',
           html: loginOtpTemplate(code),
         });
       }
@@ -438,7 +438,7 @@ export const resendOtpCont = async (req: Request, res: Response) => {
       if (!isOtpDebugMode) {
         await sendMail({
           to: identifier,
-          subject: `Resend ${template.mailSubject}`,
+          subject: template.mailSubject,
           html: template.mailTemplate,
         });
       }
