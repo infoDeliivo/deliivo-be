@@ -51,13 +51,10 @@ export const getStripeClient = (): Stripe => {
 };
 
 /**
- * Stripe collects an industry + product description for every connected account, individuals
- * included — that is the "Professional details / Business information" step drivers otherwise see.
- * The platform knows the answer (drivers all sell the same thing), so we send it up front and the
- * driver is left with identity details and a bank account. MCC 4121 = Taxicabs and Limousines, the
- * closest code for ridesharing.
+ * Used when updating a v1 account's business profile after creation.
+ * MCC 4121 = Taxicabs and Limousines, the closest code for ridesharing.
  */
-const buildBusinessProfile = (): Stripe.AccountCreateParams.BusinessProfile => ({
+const buildBusinessProfile = (): Stripe.AccountUpdateParams.BusinessProfile => ({
     mcc: process.env.STRIPE_CONNECT_MCC || '4121',
     product_description:
         process.env.STRIPE_CONNECT_PRODUCT_DESCRIPTION ||
@@ -166,9 +163,15 @@ const cleanDob = (
 };
 
 /**
- * Accounts we create are controller-based (`requirement_collection: 'application'`) so onboarding
- * can render fully white-label inside our own UI. Accounts created before that switch are Express
- * (`'stripe'`) and are not convertible — Stripe still authenticates those users inside the frame.
+ * Creates a connected account using the Stripe v2 Core Accounts API.
+ *
+ * Driver accounts are created as Recipient Configuration accounts — they only need to
+ * receive transfers (payouts), not collect payments. `dashboard: 'none'` keeps requirement
+ * collection with the platform, which is what lets the custom onboarding UI file details itself.
+ *
+ * Creation is the only v2 call in this module: retrieve/update/delete, bank accounts, terms and
+ * documents all stay on the v1 REST endpoints (`stripe.accounts.*`), which accept a v2 account id
+ * and answer in the v1 shape.
  */
 const createConnectedAccount = async (
     userId: string,
@@ -176,29 +179,52 @@ const createConnectedAccount = async (
 ): Promise<string> => {
     const stripe = getStripeClient();
     const email = cleanEmail(prefill.email);
+    const firstName = cleanText(prefill.firstName);
+    const lastName = cleanText(prefill.lastName);
+    const phone = cleanPhone(prefill.phone);
+    const dob = cleanDob(prefill.dob);
+    const country = readConnectAccountCountry(prefill);
 
-    const account = await stripe.accounts.create({
-        country: readConnectAccountCountry(prefill),
-        controller: {
-            stripe_dashboard: { type: 'none' },
-            fees: { payer: 'application' },
-            losses: { payments: 'application' },
-            requirement_collection: 'application',
+    // Prefill only what Stripe will accept; anything malformed is left for onboarding to collect.
+    const individual: Stripe.V2.Core.AccountCreateParams.Identity.Individual = {
+        ...(firstName ? { given_name: firstName } : {}),
+        ...(lastName ? { surname: lastName } : {}),
+        ...(email ? { email } : {}),
+        ...(phone ? { phone } : {}),
+        ...(dob ? { date_of_birth: { day: dob.day, month: dob.month, year: dob.year } } : {}),
+    };
+
+    const account = await stripe.v2.core.accounts.create({
+        display_name: [firstName, lastName].filter(Boolean).join(' ') || undefined,
+        contact_email: email,
+        dashboard: 'none',
+        defaults: {
+            responsibilities: {
+                fees_collector: 'application',
+                losses_collector: 'application',
+            },
         },
-        business_type: 'individual',
-        business_profile: buildBusinessProfile(),
-        capabilities: {
-            transfers: { requested: true },
+        configuration: {
+            recipient: {
+                capabilities: {
+                    stripe_balance: {
+                        stripe_transfers: { requested: true },
+                    },
+                },
+            },
         },
-        email,
-        individual: {
-            first_name: cleanText(prefill.firstName),
-            last_name: cleanText(prefill.lastName),
-            email,
-            phone: cleanPhone(prefill.phone),
-            dob: cleanDob(prefill.dob),
+        identity: {
+            ...(country ? { country } : {}),
+            entity_type: 'individual',
+            ...(Object.keys(individual).length > 0 ? { individual } : {}),
         },
         metadata: { userId },
+    });
+
+    // The v2 create endpoint has no business_profile field, so patch it immediately via the
+    // v1 update endpoint. Stripe requires business_profile.url before payouts are enabled.
+    await stripe.accounts.update(account.id, {
+        business_profile: buildBusinessProfile(),
     });
 
     return account.id;
@@ -405,6 +431,37 @@ export const deleteConnectBankAccount = async (
 ): Promise<ConnectRequirements> => {
     const stripe = getStripeClient();
     await assertAccountIsPlatformCollected(accountId);
+
+    // Fetch all bank accounts to check if this is the default/only one.
+    const account = await stripe.accounts.retrieve(accountId, {
+        expand: ['external_accounts'],
+    });
+
+    const bankAccounts = (account.external_accounts?.data ?? []).filter(
+        (ea): ea is Stripe.BankAccount => ea.object === 'bank_account'
+    );
+
+    const target = bankAccounts.find((ba) => ba.id === externalAccountId);
+
+    if (!target) {
+        // Already gone or wrong ID — just return current state.
+        return getConnectRequirements(accountId);
+    }
+
+    if (bankAccounts.length === 1) {
+        // Only one bank account — Stripe will not allow deletion.
+        throw new Error('CONNECT_CANNOT_DELETE_ONLY_BANK_ACCOUNT');
+    }
+
+    if (target.default_for_currency) {
+        // Promote another account to default before deleting this one.
+        const replacement = bankAccounts.find((ba) => ba.id !== externalAccountId);
+        if (replacement) {
+            await stripe.accounts.updateExternalAccount(accountId, replacement.id, {
+                default_for_currency: true,
+            });
+        }
+    }
 
     await stripe.accounts.deleteExternalAccount(accountId, externalAccountId);
 

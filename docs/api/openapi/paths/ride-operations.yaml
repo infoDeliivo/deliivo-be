@@ -1,0 +1,1649 @@
+{
+  "paths": {
+    "/api/v1/rides/{rideId}/start": {
+      "post": {
+        "operationId": "rideOperationsPostByRideIdStart",
+        "summary": "Start a ride",
+        "description": "Moves the ride to IN_PROGRESS. Not forceable: a ride that has not started cannot be overridden, so the departure window and the state transition always apply.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/RideIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/rides/{rideId}/finish": {
+      "post": {
+        "operationId": "rideOperationsPostByRideIdFinish",
+        "summary": "Finish a ride",
+        "description": "Completes the ride. Forcing skips BOOKINGS_NOT_ALL_TERMINAL; the bookings left open are named in the audit event and each of their riders is warned.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/RideIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/rides/{rideId}/locations": {
+      "post": {
+        "operationId": "rideOperationsPostByRideIdLocations",
+        "summary": "Submit a driver GPS ping",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/RideIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "lat",
+                  "lng",
+                  "timestamp"
+                ],
+                "properties": {
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "speed": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "heading": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 360
+                  },
+                  "accuracy": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "timestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/rides/{rideId}/latest-location": {
+      "get": {
+        "operationId": "rideOperationsGetByRideIdLatestLocation",
+        "summary": "Latest driver position",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/RideIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/rides/offline-sync": {
+      "post": {
+        "operationId": "rideOperationsPostOfflineSync",
+        "summary": "Replay actions queued while offline",
+        "description": "Replays up to 50 queued actions. A MANUAL_* action is always replayed as a forced one, since the guards it would hit describe the present rather than the moment the driver acted.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "actions"
+                ],
+                "properties": {
+                  "actions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "actionId",
+                        "eventType",
+                        "rideId",
+                        "clientTimestamp"
+                      ],
+                      "properties": {
+                        "actionId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "Client-generated id; replaying it is a no-op."
+                        },
+                        "lat": {
+                          "type": "number",
+                          "minimum": -90,
+                          "maximum": 90
+                        },
+                        "lng": {
+                          "type": "number",
+                          "minimum": -180,
+                          "maximum": 180
+                        },
+                        "clientTimestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "force": {
+                          "type": "boolean",
+                          "default": false,
+                          "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                        },
+                        "overrideReason": {
+                          "type": "string",
+                          "minLength": 5,
+                          "maxLength": 500,
+                          "description": "Why the step had to be forced. Required whenever force is true."
+                        },
+                        "eventType": {
+                          "type": "string"
+                        },
+                        "rideId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "bookingId": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "$ref": "../components/responses/errors.yaml#/Conflict"
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings/{id}/driver-arrived": {
+      "post": {
+        "operationId": "rideOperationsPostByIdDriverArrived",
+        "summary": "Driver arrived at pickup",
+        "description": "Starts the no-show wait timer. Forcing skips BOOKING_NOT_WAITING_FOR_PICKUP and records a geofence miss as GEOFENCE_OUT_OF_RANGE.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings/{id}/rider-arrived": {
+      "post": {
+        "operationId": "rideOperationsPostByIdRiderArrived",
+        "summary": "Rider arrived at pickup",
+        "description": "Records the rider's own arrival as dispute evidence.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings/{id}/verify-pickup-otp": {
+      "post": {
+        "operationId": "rideOperationsPostByIdVerifyPickupOtp",
+        "summary": "Verify the pickup OTP and board the passenger",
+        "description": "Forcing skips a missing, expired, wrong or attempt-exhausted OTP, does not burn an OTP attempt, and opens a NEEDS_MANUAL_REVIEW dispute. otp may be omitted only when force is true.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  },
+                  "otp": {
+                    "type": "string",
+                    "pattern": "^[0-9]{6}$",
+                    "description": "Required unless force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings/{id}/mark-no-show": {
+      "post": {
+        "operationId": "rideOperationsPostByIdMarkNoShow",
+        "summary": "Mark the passenger as a no-show",
+        "description": "Forcing skips BOOKING_NOT_AT_PICKUP and the 10-minute WAIT_TIME_NOT_ELAPSED guard, and opens a NEEDS_MANUAL_REVIEW dispute.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings/{id}/confirm-dropoff": {
+      "post": {
+        "operationId": "rideOperationsPostByIdConfirmDropoff",
+        "summary": "Driver confirms the drop-off",
+        "description": "Forcing skips BOOKING_NOT_ONBOARD and records a geofence miss.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings/{id}/rider-confirm-dropoff": {
+      "post": {
+        "operationId": "rideOperationsPostByIdRiderConfirmDropoff",
+        "summary": "Rider confirms the drop-off",
+        "description": "Completes the booking. Forcing skips BOOKING_NOT_DROP_PENDING.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings/{id}/report-missed-pickup": {
+      "post": {
+        "operationId": "rideOperationsPostByIdReportMissedPickup",
+        "summary": "Rider reports a missed pickup",
+        "description": "Records that the driver never collected this rider.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings/{id}/dev-simulate-pickup": {
+      "post": {
+        "operationId": "rideOperationsPostByIdDevSimulatePickup",
+        "summary": "Simulate a pickup (local testing only)",
+        "description": "Requires ALLOW_RIDE_SIMULATION=true; answers 403 otherwise.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings/{id}/dev-simulate-dropoff": {
+      "post": {
+        "operationId": "rideOperationsPostByIdDevSimulateDropoff",
+        "summary": "Simulate a drop-off (local testing only)",
+        "description": "Requires ALLOW_RIDE_SIMULATION=true; answers 403 otherwise.",
+        "tags": [
+          "Ride Operations"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "../components/parameters/common.yaml#/IdPath"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Client-generated id; replaying it is a no-op."
+                  },
+                  "lat": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "lng": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "clientTimestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the step through even though a guard refuses it. Only accepted while the ride is IN_PROGRESS; otherwise the call fails with 409 FORCE_REQUIRES_RIDE_IN_PROGRESS. Every forced step is audited, shown to the rider and queued for admin review."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why the step had to be forced. Required whenever force is true."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "../components/schemas/common.yaml#/ApiSuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "forced": {
+                              "type": "boolean",
+                              "description": "True when this step was pushed through by an override."
+                            },
+                            "overrideReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "skippedChecks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Guard codes the override skipped, e.g. WAIT_TIME_NOT_ELAPSED."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "../components/responses/errors.yaml#/BadRequest"
+          },
+          "401": {
+            "$ref": "../components/responses/errors.yaml#/Unauthorized"
+          },
+          "403": {
+            "$ref": "../components/responses/errors.yaml#/Forbidden"
+          },
+          "404": {
+            "$ref": "../components/responses/errors.yaml#/NotFound"
+          },
+          "409": {
+            "description": "A guard refused the step, or the step was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "../components/responses/errors.yaml#/ServerError"
+          }
+        }
+      }
+    }
+  }
+}

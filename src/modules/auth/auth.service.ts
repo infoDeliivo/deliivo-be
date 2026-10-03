@@ -4,6 +4,7 @@ import { createHash, timingSafeEqual } from 'crypto';
 import { Role } from '../user/user.constants.js';
 import { logError } from '../../utils/logger.js';
 import { OAuth2Client } from 'google-auth-library';
+import { attachReferralCodeToUser, ensureUserReferralCode } from '../rewards/rewards.service.js';
 import { SupportedLocale } from '../../utils/locale.js';
 
 const googleClient = new OAuth2Client();
@@ -43,6 +44,7 @@ export const googleAuthService = async (idToken: string, locale?: SupportedLocal
         preferredLocale: locale ?? null,
       },
     });
+    await ensureUserReferralCode(user.id);
   } else {
     user = await prisma.user.update({
       where: { id: user.id },
@@ -55,6 +57,9 @@ export const googleAuthService = async (idToken: string, locale?: SupportedLocal
         ...(locale && !user.preferredLocale ? { preferredLocale: locale } : {}),
       },
     });
+    if (!user.referralCode) {
+      await ensureUserReferralCode(user.id);
+    }
   }
 
   const tokens = await generateTokens({ id: user.id, role: user.role ?? Role.USER });
@@ -119,6 +124,7 @@ const identifierWhere = (method: string, identifier: string) => {
 export const signupService = async (
   method: string,
   identifier: string,
+  referralCode?: string,
   locale?: SupportedLocale | null,
 ) => {
   const normalized = normalizeAuthIdentifier(method, identifier);
@@ -142,6 +148,11 @@ export const signupService = async (
       },
     });
 
+    await ensureUserReferralCode(newUser.id);
+    if (referralCode) {
+      await attachReferralCodeToUser(newUser.id, referralCode).catch(() => null);
+    }
+
     return {
       success: true,
       user: newUser,
@@ -150,6 +161,9 @@ export const signupService = async (
   }
 
   // User exists but not verified → reuse OTP flow
+  if (!user.referralCode) {
+    await ensureUserReferralCode(user.id);
+  }
   // Backfill only. A locale already on the row is the user's own choice and outranks whatever
   // this request happens to be sending.
   if (locale && !user.preferredLocale) {
@@ -157,6 +171,9 @@ export const signupService = async (
       where: { id: user.id },
       data: { preferredLocale: locale },
     });
+  }
+  if (referralCode && !user.referredByUserId) {
+    await attachReferralCodeToUser(user.id, referralCode).catch(() => null);
   }
 
   return {

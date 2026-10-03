@@ -5,12 +5,14 @@ import * as adminController from './admin.controller.js';
 import { pricingConfigCreateSchema, pricingConfigIdSchema, pricingConfigUpdateSchema } from '../pricing/pricing.validator.js';
 import {
     adminForceCompleteBookingSchema,
+    adminDeleteUserSchema,
     adminVerificationEmailSchema,
     adminOpenBookingDisputeSchema,
     bookingIdParamSchema,
     rejectVehicleSchema,
     userIdParamSchema,
     vehicleIdParamSchema,
+    rideOverrideQuerySchema,
 } from './admin.validator.js';
 import * as dlReviewController from '../dl-verification/dl-review.controller.js';
 import { declineDlSchema, dlUserIdParamSchema, resubmitDlSchema } from '../dl-verification/dl-verification.validator.js';
@@ -26,11 +28,21 @@ router.use(authorize('ADMIN') as any);
 router.get('/users', adminController.listUsers as any);
 router.get('/users/:id', adminController.getUserDetails as any);
 router.get('/rides', adminController.listRides as any);
+router.get(
+    '/ride-overrides',
+    validate({ query: rideOverrideQuerySchema }),
+    adminController.listRideOverrides as any
+);
 router.get('/revenue/ledger', adminController.getRevenueLedger as any);
 router.get('/sos', adminController.listEmergencyAlerts as any);
 router.post('/sos/:id/status', adminController.updateEmergencyAlertStatus as any);
 router.post('/users/:id/ban', adminController.banUser as any);
 router.post('/users/:id/unban', adminController.unbanUser as any);
+router.post(
+    '/users/:id/delete',
+    validate({ params: userIdParamSchema, body: adminDeleteUserSchema }),
+    adminController.deleteUser as any,
+);
 router.post(
     '/users/:id/require-veriff',
     validate({ params: userIdParamSchema }),

@@ -5,6 +5,7 @@ import { createNotification } from '../modules/notification/notification.service
 import { refundPaymentIntent } from '../modules/payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../modules/ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../modules/ride-booking/booking-payment-mode.js';
+import { releaseBookingSeats } from '../modules/ride-booking/segment-capacity.utils.js';
 
 const EXTENDED_DEADLINE_HOURS = 1;
 
@@ -59,6 +60,7 @@ export const checkExpiredDeadlines = async () => {
                 select: {
                     id: true,
                     driverId: true,
+                    totalSeats: true,
                 },
             },
         },
@@ -143,11 +145,16 @@ const autoCancelBooking = async (booking: any) => {
             },
         });
 
-        await tx.ride.update({
-            where: { id: booking.rideId },
-            data: {
-                availableSeats: { increment: booking.seatsBooked },
-            },
+        // Releasing through releaseBookingSeats, not a raw availableSeats increment: the
+        // increment left RideSegmentCapacity.occupiedSeats untouched, so the next booking
+        // that recomputed availableSeats from the edges silently took the seat back.
+        await releaseBookingSeats(tx, {
+            bookingId: booking.id,
+            rideId: booking.rideId,
+            seatsBooked: booking.seatsBooked,
+            pickupPosition: booking.pickupPosition,
+            dropoffPosition: booking.dropoffPosition,
+            totalSeats: booking.ride.totalSeats,
         });
     });
 

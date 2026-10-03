@@ -27,6 +27,9 @@ export interface PriceBreakdown {
     serviceFee: number;
     totalPrice: number;
     currency: string;
+    /** Rate the fee was computed at, so clients can label it without doing arithmetic. */
+    serviceFeePercent: number;
+    serviceFeeFlat: number;
 }
 
 /* ================= CREATE BOOKING INPUT ================= */
@@ -88,6 +91,11 @@ export interface BookingSegmentRideInfo extends BookingRideInfo {
 /* ================= BOOKING RESPONSE ================= */
 export interface BookingResponse {
     id: string;
+    /**
+     * True when this is an existing unpaid booking handed back for the rider to finish
+     * paying, rather than a newly created one. The API answers 200 instead of 201 for it.
+     */
+    resumed?: boolean;
     bookingReference: string;
     rideId: string;
     passengerId: string;
@@ -97,6 +105,9 @@ export interface BookingResponse {
     priceBreakdown?: PriceBreakdown;
     status: BookingStatus;
     displayStatus?: string;
+    cancelledAt?: Date | null;
+    /** 'PASSENGER' | 'DRIVER' | 'ADMIN' | 'SYSTEM' — who ended the booking. */
+    cancelledByRole?: string | null;
     pickupWaypointId: string | null;
     dropoffWaypointId: string | null;
     notes: string | null;

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 
 // ============================================================
@@ -13,6 +14,7 @@ export const ENTRY_TYPES = {
     REFUND_TO_RIDER: 'REFUND_TO_RIDER',
     DRIVER_TRANSFER_CREATED: 'DRIVER_TRANSFER_CREATED',
     PAYOUT_FAILURE_REVERSAL: 'PAYOUT_FAILURE_REVERSAL',
+    PLATFORM_FEE_REVERSAL: 'PLATFORM_FEE_REVERSAL',
 } as const;
 
 export const ACCOUNT_TYPES = {
@@ -97,42 +99,71 @@ export const recordPaymentReceived = async (params: {
 //  RECORD REFUND
 // ============================================================
 
+/**
+ * Records a refund as three entries: the rider is credited the whole refund, and it is funded by the
+ * driver and the platform in proportion to how the original payment was split.
+ *
+ * The platform entry matters under the fee-on-top model. Debiting the driver for the entire gross
+ * refund — as this did before — made the driver fund the platform's share: on a 10.20 payment
+ * (10.00 fare + 0.20 fee) refunded 50%, the driver lost 5.10 of a 10.00 fare while the platform kept
+ * its fee in full.
+ *
+ * `fareRefundAmount + feeRefundAmount` must equal `refundAmount` exactly, or reconciliation's
+ * debit/credit check will flag the payment. `resolveRefundSplit` guarantees that.
+ */
 export const recordRefund = async (params: {
     paymentId: string;
     bookingId: string;
     riderId: string;
     driverId: string;
     refundAmount: number;
+    fareRefundAmount: number;
+    feeRefundAmount: number;
     currency: string;
 }) => {
     const groupId = randomUUID();
 
-    await prisma.ledgerEntry.createMany({
-        data: [
-            {
-                entryGroupId: groupId,
-                paymentId: params.paymentId,
-                bookingId: params.bookingId,
-                userId: params.riderId,
-                accountType: ACCOUNT_TYPES.RIDER,
-                entryType: ENTRY_TYPES.REFUND_TO_RIDER,
-                direction: DIRECTION.CREDIT,
-                amount: params.refundAmount,
-                currency: params.currency,
-            },
-            {
-                entryGroupId: groupId,
-                paymentId: params.paymentId,
-                bookingId: params.bookingId,
-                userId: params.driverId,
-                accountType: ACCOUNT_TYPES.DRIVER,
-                entryType: ENTRY_TYPES.DRIVER_EARNING_LIABILITY,
-                direction: DIRECTION.DEBIT,
-                amount: params.refundAmount,
-                currency: params.currency,
-            },
-        ],
-    });
+    const entries: Prisma.LedgerEntryCreateManyInput[] = [
+        {
+            entryGroupId: groupId,
+            paymentId: params.paymentId,
+            bookingId: params.bookingId,
+            userId: params.riderId,
+            accountType: ACCOUNT_TYPES.RIDER,
+            entryType: ENTRY_TYPES.REFUND_TO_RIDER,
+            direction: DIRECTION.CREDIT,
+            amount: params.refundAmount,
+            currency: params.currency,
+        },
+        {
+            entryGroupId: groupId,
+            paymentId: params.paymentId,
+            bookingId: params.bookingId,
+            userId: params.driverId,
+            accountType: ACCOUNT_TYPES.DRIVER,
+            entryType: ENTRY_TYPES.DRIVER_EARNING_LIABILITY,
+            direction: DIRECTION.DEBIT,
+            amount: params.fareRefundAmount,
+            currency: params.currency,
+        },
+    ];
+
+    // Mirrors the `platformFee > 0` guard on the payment side: no zero-amount entries.
+    if (params.feeRefundAmount > 0) {
+        entries.push({
+            entryGroupId: groupId,
+            paymentId: params.paymentId,
+            bookingId: params.bookingId,
+            userId: null,
+            accountType: ACCOUNT_TYPES.PLATFORM,
+            entryType: ENTRY_TYPES.PLATFORM_FEE_REVERSAL,
+            direction: DIRECTION.DEBIT,
+            amount: params.feeRefundAmount,
+            currency: params.currency,
+        });
+    }
+
+    await prisma.ledgerEntry.createMany({ data: entries });
 
     return { entryGroupId: groupId };
 };
@@ -161,6 +192,97 @@ export const recordTransfer = async (params: {
                 entryType: ENTRY_TYPES.DRIVER_TRANSFER_CREATED,
                 direction: DIRECTION.DEBIT,
                 amount: params.transferAmount,
+                currency: params.currency,
+            },
+        ],
+    });
+
+    return { entryGroupId: groupId };
+};
+
+/**
+ * Reopens the driver's liability after a transfer fails.
+ *
+ * `recordTransfer` debits the liability as soon as the transfer is created, so without this reversal
+ * a failed transfer leaves the money permanently discharged from the ledger and the driver's derived
+ * balance understated — they appear to have been paid.
+ *
+ * Specified in the payment design as PAYOUT_FAILURE_REVERSAL ("reopen liability if transfer fails").
+ */
+export const recordPayoutFailureReversal = async (params: {
+    paymentId: string;
+    bookingId: string;
+    driverId: string;
+    reversedAmount: number;
+    currency: string;
+    reason?: string;
+}) => {
+    const groupId = randomUUID();
+
+    await prisma.ledgerEntry.create({
+        data: {
+            entryGroupId: groupId,
+            paymentId: params.paymentId,
+            bookingId: params.bookingId,
+            userId: params.driverId,
+            accountType: ACCOUNT_TYPES.DRIVER,
+            entryType: ENTRY_TYPES.PAYOUT_FAILURE_REVERSAL,
+            direction: DIRECTION.CREDIT,
+            amount: params.reversedAmount,
+            currency: params.currency,
+            ...(params.reason ? { metadataJson: { reason: params.reason } } : {}),
+        },
+    });
+
+    return { entryGroupId: groupId };
+};
+
+/**
+ * Records what the payment provider charged us for processing a payment.
+ *
+ * Specified as STRIPE_FEE_EXPENSE ("stored when available from provider balance transaction"). It was
+ * never written, so the platform's real margin was absent from the ledger and from reporting — which
+ * matters because the platform is merchant of record and absorbs this cost. At a low take rate the
+ * fee can exceed the service fee, and nothing surfaced that.
+ *
+ * Written as a balanced pair: the provider is credited what it earned, and the platform is debited
+ * for paying it. A single-sided entry would break the per-payment debit/credit equality that
+ * reconciliation checks and raise LEDGER_IMBALANCE on every payment.
+ */
+export const recordProviderFeeExpense = async (params: {
+    paymentId: string;
+    bookingId: string;
+    feeAmount: number;
+    currency: string;
+}) => {
+    if (!(params.feeAmount > 0)) {
+        return { entryGroupId: null };
+    }
+
+    const groupId = randomUUID();
+
+    await prisma.ledgerEntry.createMany({
+        data: [
+            {
+                entryGroupId: groupId,
+                paymentId: params.paymentId,
+                bookingId: params.bookingId,
+                userId: null,
+                accountType: ACCOUNT_TYPES.PROVIDER,
+                entryType: ENTRY_TYPES.STRIPE_FEE_EXPENSE,
+                direction: DIRECTION.CREDIT,
+                amount: params.feeAmount,
+                currency: params.currency,
+            },
+            {
+                entryGroupId: groupId,
+                paymentId: params.paymentId,
+                bookingId: params.bookingId,
+                userId: null,
+                accountType: ACCOUNT_TYPES.PLATFORM,
+                entryType: ENTRY_TYPES.STRIPE_FEE_EXPENSE,
+                direction: DIRECTION.DEBIT,
+                amount: params.feeAmount,
                 currency: params.currency,
             },
         ],

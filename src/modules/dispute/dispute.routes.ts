@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { validate } from '../../middlewares/validate.js';
+import { authorize } from '../../middlewares/auth.js';
 import {
     createDisputeHandler,
     getDisputeHandler,
+    getMyDisputeHandler,
     myDisputesHandler,
     adminListDisputesHandler,
     adminCollectEvidenceHandler,
@@ -15,10 +17,11 @@ import { createDisputeSchema, resolveDisputeSchema } from './dispute.validator.j
 export const disputeRouter = Router();
 disputeRouter.post('/', validate({ body: createDisputeSchema }), createDisputeHandler);
 disputeRouter.get('/me', myDisputesHandler);
-disputeRouter.get('/:id', getDisputeHandler);
+disputeRouter.get('/:id', getMyDisputeHandler);
 
 // Admin routes (mounted at /api/v1/admin/disputes)
 export const adminDisputeRouter = Router();
+adminDisputeRouter.use(authorize('ADMIN') as any);
 adminDisputeRouter.get('/', adminListDisputesHandler);
 adminDisputeRouter.get('/:id', getDisputeHandler);
 adminDisputeRouter.post('/:id/collect-evidence', adminCollectEvidenceHandler);

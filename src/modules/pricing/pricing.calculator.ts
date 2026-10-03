@@ -9,6 +9,8 @@ export interface PricingConfigData {
     maxRatePerKm: number;
     minimumSeatPrice: number;
     roundingStrategy: string;
+    serviceFeePercent: number;
+    serviceFeeFlat: number;
 }
 
 export interface PriceCalculation {
@@ -23,6 +25,8 @@ export interface PriceCalculation {
     minAllowedPricePerSeat: number;
     maxAllowedPricePerSeat: number;
     roundingStrategy: string;
+    serviceFeePercent: number;
+    serviceFeeFlat: number;
 }
 
 export interface SegmentPriceResult {
@@ -89,6 +93,8 @@ export const calculatePrice = (distanceKm: number, config: PricingConfigData): P
         minAllowedPricePerSeat,
         maxAllowedPricePerSeat,
         roundingStrategy: config.roundingStrategy,
+        serviceFeePercent: config.serviceFeePercent,
+        serviceFeeFlat: config.serviceFeeFlat,
     };
 };
 

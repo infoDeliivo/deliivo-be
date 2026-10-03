@@ -565,12 +565,26 @@
       "get": {
         "operationId": "publishRideGetDraftPricingRecommended",
         "summary": "GET publish-ride/draft/pricing/recommended",
+        "description": "Returns the recommended price for the draft together with a `quote`: the exact money figures the publish screen renders (per seat and whole ride, each as driverNet / serviceFee / riderTotal, plus the serviceFeePercent and serviceFeeFlat used). The two are computed independently because the fee is charged once per booking, so per-seat amounts times seats can differ by a cent from the whole-ride figure. Clients must render these as given and never compute a fee themselves.",
         "tags": [
           "Publish Ride"
         ],
         "security": [
           {
             "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "basePricePerSeat",
+            "in": "query",
+            "required": false,
+            "description": "Price the driver is currently considering. The quote is built for this amount instead of the recommended one, so the screen can re-quote as the driver edits. Must be greater than 0 and at most 10000.",
+            "schema": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 10000
+            }
           }
         ],
         "responses": {

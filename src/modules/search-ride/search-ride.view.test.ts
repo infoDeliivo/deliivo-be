@@ -8,6 +8,14 @@ const mockPrisma = {
     user: {
         findUnique: jest.fn(),
     },
+    ridePricingSnapshot: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+    },
+    pricingConfig: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(null),
+    },
 };
 
 jest.mock('../../config/index.js', () => ({

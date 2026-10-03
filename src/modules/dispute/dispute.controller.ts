@@ -38,6 +38,24 @@ export const getDisputeHandler = async (req: Request, res: Response) => {
     }
 };
 
+/** Only the raiser, the passenger and the ride's driver may read a dispute; anyone else gets a 404. */
+export const getMyDisputeHandler = async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).user.id;
+        const dispute = await getDisputeById(req.params.id as string);
+        const isParty = Boolean(
+            dispute &&
+                (dispute.raisedBy === userId ||
+                    dispute.booking.passengerId === userId ||
+                    dispute.ride.driverId === userId)
+        );
+        if (!dispute || !isParty) return res.status(404).json({ success: false, error: 'Dispute not found' });
+        res.json({ success: true, data: dispute });
+    } catch {
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
 export const myDisputesHandler = async (req: Request, res: Response) => {
     try {
         const userId = (req as any).user.id;

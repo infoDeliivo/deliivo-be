@@ -251,26 +251,41 @@
             "$ref": "../components/responses/errors.yaml#/NotFound"
           },
           "409": {
-            "$ref": "../components/responses/errors.yaml#/Conflict"
+            "description": "A guard refused the verification, or it was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
           },
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
           }
         },
         "requestBody": {
-          "required": true,
+          "required": false,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "otp"
-                ],
                 "properties": {
                   "otp": {
                     "type": "string",
-                    "pattern": "^[0-9]{6}$"
+                    "pattern": "^[0-9]{6}$",
+                    "description": "Required unless force is true."
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the verification through even though a guard refuses it."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why it had to be forced. Required whenever force is true."
                   }
                 }
               }
@@ -281,7 +296,8 @@
           {
             "$ref": "../components/parameters/common.yaml#/IdPath"
           }
-        ]
+        ],
+        "description": "Verifies the pickup OTP. Sending force: true with a written overrideReason pushes it through a missing, expired, wrong or attempt-exhausted OTP and a booking in the wrong state. Forcing is only accepted while the ride is IN_PROGRESS (409 FORCE_REQUIRES_RIDE_IN_PROGRESS otherwise), writes a SUSPICIOUS ride event, warns the rider and opens a NEEDS_MANUAL_REVIEW dispute. otp may be omitted only when force is true."
       }
     },
     "/api/v1/driver/bookings/{id}/drop-otp/verify": {
@@ -325,26 +341,41 @@
             "$ref": "../components/responses/errors.yaml#/NotFound"
           },
           "409": {
-            "$ref": "../components/responses/errors.yaml#/Conflict"
+            "description": "A guard refused the verification, or it was forced while the ride was not in progress (FORCE_REQUIRES_RIDE_IN_PROGRESS).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../components/schemas/common.yaml#/ApiErrorEnvelope"
+                }
+              }
+            }
           },
           "500": {
             "$ref": "../components/responses/errors.yaml#/ServerError"
           }
         },
         "requestBody": {
-          "required": true,
+          "required": false,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "otp"
-                ],
                 "properties": {
                   "otp": {
                     "type": "string",
-                    "pattern": "^[0-9]{6}$"
+                    "pattern": "^[0-9]{6}$",
+                    "description": "Required unless force is true."
+                  },
+                  "force": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Push the verification through even though a guard refuses it."
+                  },
+                  "overrideReason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500,
+                    "description": "Why it had to be forced. Required whenever force is true."
                   }
                 }
               }
@@ -355,7 +386,8 @@
           {
             "$ref": "../components/parameters/common.yaml#/IdPath"
           }
-        ]
+        ],
+        "description": "Verifies the drop OTP. Sending force: true with a written overrideReason pushes it through a missing, expired, wrong or attempt-exhausted OTP and a booking in the wrong state. Forcing is only accepted while the ride is IN_PROGRESS (409 FORCE_REQUIRES_RIDE_IN_PROGRESS otherwise), writes a SUSPICIOUS ride event, warns the rider and opens a NEEDS_MANUAL_REVIEW dispute. otp may be omitted only when force is true."
       }
     }
   }

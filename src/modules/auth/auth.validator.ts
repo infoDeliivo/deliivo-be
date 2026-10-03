@@ -10,6 +10,7 @@ export const signupSchema = z
     method: z.enum(['email', 'phone']),
     email: z.string().email().optional(),
     phone: z.string().optional(),
+    referralCode: z.string().min(4).max(64).optional(),
     // Language the website is being used in. Free-form because browsers and the site send
     // anything from `et` to `ru-RU`; resolveRequestLocale decides what is supported.
     locale: z.string().max(20).optional(),

@@ -4,14 +4,23 @@ import { ListRidesQuery } from './publish-ride.types.js';
 import { refundPaymentIntent } from '../payments/stripe.service.js';
 import { toMinorCurrencyUnits } from '../ride-booking/booking-cancellation-policy.js';
 import { isBypassBookingPaymentMode } from '../ride-booking/booking-payment-mode.js';
+import { sumReservedSeats } from '../ride-booking/segment-capacity.utils.js';
 import { createNotification } from '../notification/notification.service.js';
-import { markBookingPaymentRefunded } from '../payments/payment.service.js';
+import {
+    markBookingPaymentRefunded,
+    netFareAmount,
+    netPlatformFeeAmount,
+} from '../payments/payment.service.js';
 import { formatBookingReference } from '../../utils/booking-reference.js';
+import { combineDepartureDateTimeInRideTimezone } from '../../utils/ride-timezone.js';
+import { isRideStartTooEarly } from '../../utils/ride-start-window.js';
+import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
 
 const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
 const UNSTARTED_RIDE_STATUSES = [RideStatus.PUBLISHED, RideStatus.SCHEDULED, RideStatus.READY_TO_START];
+// PAYMENT_PENDING is excluded: an unpaid booking holds no seat and gives the driver no
+// obligation, so it must not keep a ride from expiring or make its cancellation costly.
 const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
-    BookingStatus.PAYMENT_PENDING,
     BookingStatus.DRIVER_PENDING,
     BookingStatus.CONFIRMED,
     BookingStatus.WAITING_FOR_PICKUP,
@@ -22,23 +31,18 @@ const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
     BookingStatus.IN_PROGRESS,
 ];
 
-const combineDepartureDateTimeUtc = (departureDate: Date, departureTime: string): Date | null => {
-    const [hoursRaw, minutesRaw] = departureTime.split(':');
-    const hours = Number(hoursRaw);
-    const minutes = Number(minutesRaw);
-    if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
-        return null;
-    }
-    return new Date(Date.UTC(
-        departureDate.getUTCFullYear(),
-        departureDate.getUTCMonth(),
-        departureDate.getUTCDate(),
-        hours,
-        minutes,
-        0,
-        0,
-    ));
-};
+/**
+ * Booking columns the driver's ride views never get. The OTP codes and hashes are
+ * already omitted client-wide; this drops the rest of the OTP state and the
+ * rider's Stripe identifiers, since these bookings are spread straight into the response.
+ */
+const DRIVER_HIDDEN_BOOKING_FIELDS = {
+    pickupOtpExpiresAt: true,
+    dropOtpExpiresAt: true,
+    otpAttemptCount: true,
+    stripePaymentIntentId: true,
+    stripeChargeId: true,
+} as const;
 
 const reconcileDriverRideListStatuses = async (driverId: string) => {
     const now = new Date();
@@ -59,8 +63,13 @@ const reconcileDriverRideListStatuses = async (driverId: string) => {
     });
 
     await Promise.all(candidates.map(async (ride) => {
-        const departureAt = combineDepartureDateTimeUtc(ride.departureDate, ride.departureTime);
-        if (!departureAt || now < departureAt) return;
+        let departureAt: Date;
+        try {
+            departureAt = combineDepartureDateTimeInRideTimezone(ride.departureDate, ride.departureTime);
+        } catch {
+            return;
+        }
+        if (now < departureAt) return;
 
         const autoCloseAt = new Date(departureAt.getTime() + OVERDUE_CANCEL_AFTER_MINUTES * 60 * 1000);
         const hasActiveBookings = ride.bookings.some((booking) => ACTIVE_BOOKING_STATUSES.includes(booking.status));
@@ -88,6 +97,60 @@ const reconcileDriverRideListStatuses = async (driverId: string) => {
    ============================================================ */
 
 /* ================= GET USER RIDES ================= */
+/**
+ * The money a driver is shown for one booking, split on the backend.
+ *
+ * Under the fee-on-top model the rider's total and the driver's earning differ by the service fee,
+ * so both are sent explicitly — the client must never subtract one from the other. The Payment row
+ * wins when present: it is authoritative once charged. Amounts are shown net of anything already
+ * refunded, which is what the driver is actually owed. Bookings predating service fees have no
+ * recorded fee, which correctly reads as zero.
+ */
+const resolveDriverBookingAmounts = (
+    booking: {
+        totalPrice: number;
+        serviceFeeAmount?: number | null;
+        serviceFeePercent?: number | null;
+        payment?: {
+            amountTotal: number;
+            fareAmount: number;
+            platformFeeAmount: number;
+            refundedFareAmount: number;
+            refundedFeeAmount: number;
+            currency: string;
+        } | null;
+    },
+    rideCurrency: string
+): {
+    currency: string;
+    riderTotalAmount: number;
+    serviceFeeAmount: number;
+    driverNetAmount: number;
+    serviceFeePercent: number | null;
+} => {
+    const cents = (value: number) => Math.round(value * 100);
+
+    if (booking.payment) {
+        const refunded = cents(booking.payment.refundedFareAmount) + cents(booking.payment.refundedFeeAmount);
+        return {
+            currency: booking.payment.currency || rideCurrency,
+            riderTotalAmount: Math.max(0, cents(booking.payment.amountTotal) - refunded) / 100,
+            serviceFeeAmount: netPlatformFeeAmount(booking.payment),
+            driverNetAmount: netFareAmount(booking.payment),
+            serviceFeePercent: booking.serviceFeePercent ?? null,
+        };
+    }
+
+    const serviceFeeAmount = booking.serviceFeeAmount ?? 0;
+    return {
+        currency: rideCurrency,
+        riderTotalAmount: booking.totalPrice,
+        serviceFeeAmount,
+        driverNetAmount: (cents(booking.totalPrice) - cents(serviceFeeAmount)) / 100,
+        serviceFeePercent: booking.serviceFeePercent ?? null,
+    };
+};
+
 export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
     await reconcileDriverRideListStatuses(driverId);
 
@@ -128,7 +191,8 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                     where: {
                         status: {
                             in: [
-                                'PAYMENT_PENDING',
+                                // No PAYMENT_PENDING: an unpaid booking is not a
+                                // passenger on this ride yet.
                                 'DRIVER_PENDING',
                                 'CONFIRMED',
                                 'WAITING_FOR_PICKUP',
@@ -147,6 +211,7 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                         },
                     },
                     orderBy: { createdAt: 'desc' },
+                    omit: DRIVER_HIDDEN_BOOKING_FIELDS,
                     include: {
                         passenger: {
                             select: {
@@ -155,6 +220,16 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                                 lastName: true,
                                 phone: true,
                                 avatarUrl: true,
+                            },
+                        },
+                        payment: {
+                            select: {
+                                amountTotal: true,
+                                fareAmount: true,
+                                platformFeeAmount: true,
+                                refundedFareAmount: true,
+                                refundedFeeAmount: true,
+                                currency: true,
                             },
                         },
                     },
@@ -171,7 +246,11 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
     const now = new Date();
     const enhancedRides = rides.map((ride: any) => {
         const enhancedBookings = ride.bookings.map((booking: any) => {
-            const enhanced: any = { ...booking, bookingReference: formatBookingReference(booking.id) };
+            const enhanced: any = {
+                ...booking,
+                bookingReference: formatBookingReference(booking.id),
+                ...resolveDriverBookingAmounts(booking, ride.currency),
+            };
 
             // Add decision deadline info for DRIVER_PENDING bookings
             if (booking.status === 'DRIVER_PENDING' && booking.driverDecisionDeadlineAt) {
@@ -241,6 +320,10 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
 
         return {
             ...ride,
+            // Seats actually sold. Not totalSeats - availableSeats: that scalar is peak
+            // occupancy over the ride's segment edges, so disjoint segment bookings do
+            // not move it. See sumReservedSeats.
+            bookedSeats: sumReservedSeats(ride.bookings.filter((booking: any) => booking.status !== BookingStatus.CANCELLED)),
             bookings: enhancedBookings,
         };
     });
@@ -279,7 +362,7 @@ export const getRideById = async (driverId: string, rideId: string) => {
                 where: {
                 status: {
                     in: [
-                        'PAYMENT_PENDING',
+                        // No PAYMENT_PENDING: an unpaid booking is not a passenger yet.
                         'DRIVER_PENDING',
                         'CONFIRMED',
                         'WAITING_FOR_PICKUP',
@@ -298,6 +381,7 @@ export const getRideById = async (driverId: string, rideId: string) => {
                 },
                 },
                 orderBy: { createdAt: 'desc' },
+                omit: DRIVER_HIDDEN_BOOKING_FIELDS,
                 include: {
                     passenger: {
                         select: {
@@ -306,6 +390,16 @@ export const getRideById = async (driverId: string, rideId: string) => {
                             lastName: true,
                             phone: true,
                             avatarUrl: true,
+                        },
+                    },
+                    payment: {
+                        select: {
+                            amountTotal: true,
+                            fareAmount: true,
+                            platformFeeAmount: true,
+                            refundedFareAmount: true,
+                            refundedFeeAmount: true,
+                            currency: true,
                         },
                     },
                 },
@@ -334,7 +428,11 @@ export const getRideById = async (driverId: string, rideId: string) => {
     // Enhance bookings with decision deadline info and stopover times
     const now = new Date();
     const enhancedBookings = ride.bookings.map((booking: any) => {
-        const enhanced: any = { ...booking, bookingReference: formatBookingReference(booking.id) };
+        const enhanced: any = {
+            ...booking,
+            bookingReference: formatBookingReference(booking.id),
+            ...resolveDriverBookingAmounts(booking, ride.currency),
+        };
         const existingDriverRating = ratingByBookingId.get(booking.id);
 
         enhanced.hasDriverRatedPassenger = Boolean(existingDriverRating);
@@ -408,6 +506,8 @@ export const getRideById = async (driverId: string, rideId: string) => {
 
     return {
         ...ride,
+        // Seats actually sold — see the note in getUserRides.
+        bookedSeats: sumReservedSeats(ride.bookings.filter((booking) => booking.status !== BookingStatus.CANCELLED)),
         bookings: enhancedBookings,
     };
 };
@@ -461,6 +561,11 @@ export const cancelRide = async (driverId: string, rideId: string) => {
                 cancelledByRole: 'DRIVER',
                 cancellationReason: 'DRIVER_CANCELLED_RIDE',
                 refundPercent: 100,
+                // The seats stop being held here. Segment capacity is deliberately left
+                // alone — the ride is cancelled, so its availability no longer matters,
+                // and a per-booking release would be N extra writes. Clearing the flag is
+                // what keeps seat sums (sumReservedSeats) honest on a cancelled ride.
+                seatsReservedAt: null,
             },
         });
 
@@ -538,14 +643,14 @@ export const startRide = async (driverId: string, rideId: string) => {
 
     if (process.env.ALLOW_RIDE_SIMULATION !== 'true') {
         const [hours, minutes] = ride.departureTime.split(':').map(Number);
-        const departureAt = Date.UTC(
+        const departureAt = new Date(Date.UTC(
             ride.departureDate.getUTCFullYear(),
             ride.departureDate.getUTCMonth(),
             ride.departureDate.getUTCDate(),
             hours,
             minutes,
-        );
-        if (Date.now() < departureAt - 10 * 60 * 1000) {
+        ));
+        if (isRideStartTooEarly(departureAt)) {
             throw new Error('RIDE_TOO_EARLY');
         }
     }
@@ -599,6 +704,7 @@ export const completeRide = async (driverId: string, rideId: string) => {
             },
         });
     });
+    await awardRideCompletionRewards(rideId);
 
     // Notify confirmed passengers to rate the driver
     const completedBookings = await prisma.rideBooking.findMany({
@@ -624,4 +730,6 @@ export const completeRide = async (driverId: string, rideId: string) => {
             })
         )
     );
+
+    await Promise.all(completedBookings.map((booking) => awardBookingCompletionRewards(booking.id)));
 };

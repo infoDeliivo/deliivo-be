@@ -27,6 +27,8 @@ import { reconciliationRouter } from './reconciliation/reconciliation.routes.js'
 import safetyRouter from './safety/safety.routes.js';
 import { contentRouter, adminContentRouter } from './content/content.routes.js';
 import uploadsRouter from './uploads/uploads.routes.js';
+import rewardsRouter from './rewards/rewards.routes.js';
+import trackerRouter from './tracker/tracker.routes.js';
 
 export {
     rideRequestRouter,
@@ -64,4 +66,6 @@ export {
     contentRouter,
     adminContentRouter,
     uploadsRouter,
+    rewardsRouter,
+    trackerRouter,
 };

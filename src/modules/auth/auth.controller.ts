@@ -32,7 +32,7 @@ import { getClientIpForGeo } from '../../utils/geoip.js';
 
 type OtpPurpose = 'signup' | 'login' | 'reset_password';
 
-const shouldExposeOtp = false;
+const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE_REAL_OTP === 'true';
 
 const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
   if (purpose === 'signup') {
@@ -121,6 +121,7 @@ export const signup = async (req: Request, res: Response) => {
       method: 'email' | 'phone';
       email?: string;
       phone?: string;
+      referralCode?: string;
       locale?: string;
     };
     const rawIdentifier = method === 'email' ? email : phone;
@@ -135,7 +136,7 @@ export const signup = async (req: Request, res: Response) => {
 
     const locale = resolveRequestLocale(req.body.locale, req.header('accept-language'));
 
-    const result = await signupService(method, identifier, locale);
+    const result = await signupService(method, identifier, req.body.referralCode, locale);
     if (result.success === false) {
       return sendError(res, {
         message: result.reason || 'Failed to create user',
@@ -153,13 +154,15 @@ export const signup = async (req: Request, res: Response) => {
     }
 
     if (method === 'email') {
-      await sendMail({
-        to: identifier,
-        subject: 'Signup OTP',
-        html: signupOtpTemplate(code),
-      });
+      if (!isOtpDebugMode) {
+        await sendMail({
+          to: identifier,
+          subject: 'Signup OTP',
+          html: signupOtpTemplate(code),
+        });
+      }
     } else if (method === 'phone') {
-      if (code !== 'TWILIO_VERIFY') {
+      if (!isOtpDebugMode && code !== 'TWILIO_VERIFY') {
         const smsResult = await sendSms(identifier, signupOtpSmsTemplate(code));
         if (!smsResult.success) {
           return sendError(res, {
@@ -175,6 +178,7 @@ export const signup = async (req: Request, res: Response) => {
       message: 'Signup successful, verify OTP',
       data: {
         next: 'verify_otp',
+        ...(isOtpDebugMode ? { code } : {}),
       },
     });
   } catch (err: any) {
@@ -214,13 +218,15 @@ export const requestOtp = async (req: Request, res: Response) => {
     const template = getOtpTemplateByPurpose(purpose, code);
 
     if (method === 'email') {
-      await sendMail({
-        to: identifier,
-        subject: template.mailSubject,
-        html: template.mailTemplate,
-      });
+      if (!isOtpDebugMode) {
+        await sendMail({
+          to: identifier,
+          subject: template.mailSubject,
+          html: template.mailTemplate,
+        });
+      }
     } else if (method === 'phone') {
-      if (code !== 'TWILIO_VERIFY') {
+      if (!isOtpDebugMode && code !== 'TWILIO_VERIFY') {
         const smsResult = await sendSms(identifier, template.smsTemplate);
         if (!smsResult.success) {
           return sendError(res, {
@@ -235,6 +241,7 @@ export const requestOtp = async (req: Request, res: Response) => {
       message: 'OTP sent successfully',
       data: {
         next: 'verify_otp',
+        ...(isOtpDebugMode ? { code } : {}),
       },
     });
   } catch (err) {
@@ -342,13 +349,15 @@ export const login = async (req: Request, res: Response) => {
     const code = otp.code;
 
     if (method === 'email') {
-      await sendMail({
-        to: identifier,
-        subject: 'Login OTP',
-        html: loginOtpTemplate(code),
-      });
+      if (!isOtpDebugMode) {
+        await sendMail({
+          to: identifier,
+          subject: 'Login OTP',
+          html: loginOtpTemplate(code),
+        });
+      }
     } else if (method === 'phone') {
-      if (code !== 'TWILIO_VERIFY') {
+      if (!isOtpDebugMode && code !== 'TWILIO_VERIFY') {
         const smsResult = await sendSms(identifier, loginOtpSmsTemplate(code));
         if (!smsResult.success) {
           return sendError(res, {
@@ -363,6 +372,7 @@ export const login = async (req: Request, res: Response) => {
       message: 'OTP sent for login',
       data: {
         next: 'verify_otp',
+        ...(isOtpDebugMode ? { code } : {}),
       },
     });
   } catch (err) {
@@ -425,13 +435,15 @@ export const resendOtpCont = async (req: Request, res: Response) => {
     const template = getOtpTemplateByPurpose(purpose, result.otp);
 
     if (method === 'email') {
-      await sendMail({
-        to: identifier,
-        subject: `Resend ${template.mailSubject}`,
-        html: template.mailTemplate,
-      });
+      if (!isOtpDebugMode) {
+        await sendMail({
+          to: identifier,
+          subject: `Resend ${template.mailSubject}`,
+          html: template.mailTemplate,
+        });
+      }
     } else if (method === 'phone') {
-      if (result.otp !== 'TWILIO_VERIFY') {
+      if (!isOtpDebugMode && result.otp !== 'TWILIO_VERIFY') {
         const smsResult = await sendSms(identifier, template.smsTemplate);
         if (!smsResult.success) {
           return sendError(res, {
@@ -445,7 +457,9 @@ export const resendOtpCont = async (req: Request, res: Response) => {
     return sendSuccess(res, {
       message: result.reused ? 'OTP resent' : 'New OTP generated',
       status: HttpStatus.OK,
-      data: {},
+      data: {
+        ...(isOtpDebugMode ? { code: result.otp } : {}),
+      },
     });
   } catch {
     return sendError(res, { message: 'Server error' });

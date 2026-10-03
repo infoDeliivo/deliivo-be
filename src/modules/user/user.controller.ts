@@ -16,10 +16,17 @@ import {
 import { reportUser, blockUser, unblockUser, listBlockedUsers } from './user-safety.service.js';
 import { exportUserData, deleteUserAccount } from './user-gdpr.service.js';
 import { setPreferredLocale } from './user-locale.service.js';
+import { requestContactChangeService, verifyContactChangeService } from './user.contact.service.js';
+import type { ContactChangeError, ContactMethod } from './user.types.js';
+import { sendMail } from '../mail/mail.service.js';
+import { contactVerifyOtpTemplate } from '../mail/mail.templates.js';
+import { sendSms, contactVerifyOtpSmsTemplate } from '../sms/index.js';
 
 // Cache TTL constants
 const PROFILE_CACHE_TTL = 300; // 5 minutes
 const PUBLIC_PROFILE_CACHE_TTL = 300; // 5 minutes
+
+const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE_REAL_OTP === 'true';
 
 // ====================== GET ME (Basic) ======================
 export const getMe = async (req: AuthRequest, res: Response) => {
@@ -428,5 +435,90 @@ export const updateLocale = async (req: AuthRequest, res: Response) => {
       message: 'Server error',
       error,
     });
+  }
+};
+
+// ====================== CONTACT CHANGE (add / replace email or phone) ======================
+
+const CONTACT_ERRORS: Record<ContactChangeError, { status: HttpStatus; message: string }> = {
+  USER_NOT_FOUND: { status: HttpStatus.NOT_FOUND, message: 'User not found' },
+  CONTACT_UNCHANGED: { status: HttpStatus.BAD_REQUEST, message: 'This is already your verified contact' },
+  CONTACT_IN_USE: { status: HttpStatus.CONFLICT, message: 'This contact is already used by another account' },
+  OTP_COOLDOWN: { status: HttpStatus.TOO_MANY_REQUESTS, message: 'Please wait before requesting a new code' },
+  OTP_FAILED: { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to generate OTP' },
+  NO_PENDING_CHANGE: { status: HttpStatus.BAD_REQUEST, message: 'No pending verification for this contact, request a new code' },
+  OTP_INVALID: { status: HttpStatus.BAD_REQUEST, message: 'Invalid OTP' },
+  OTP_EXPIRED: { status: HttpStatus.BAD_REQUEST, message: 'OTP expired, request a new code' },
+  OTP_TOO_MANY_ATTEMPTS: { status: HttpStatus.TOO_MANY_REQUESTS, message: 'Too many attempts, request a new code' },
+};
+
+/**
+ * POST /api/v1/users/me/contact/request
+ * Sends an OTP to a new email/phone the user wants to add or switch to.
+ */
+export const requestContactChange = async (req: AuthRequest, res: Response) => {
+  try {
+    const { method, identifier } = req.body as { method: ContactMethod; identifier: string };
+    const result = await requestContactChangeService(req.user.id, method, identifier);
+
+    if (!result.success) {
+      return sendError(res, CONTACT_ERRORS[result.error]);
+    }
+
+    const { identifier: target, code } = result.data;
+    if (!isOtpDebugMode) {
+      if (method === 'email') {
+        await sendMail({ to: target, subject: 'Verify your email', html: contactVerifyOtpTemplate(code) });
+      } else if (code !== 'TWILIO_VERIFY') {
+        const smsResult = await sendSms(target, contactVerifyOtpSmsTemplate(code));
+        if (!smsResult.success) {
+          return sendError(res, {
+            status: HttpStatus.INTERNAL_ERROR,
+            message: smsResult.error || 'Failed to queue OTP SMS',
+          });
+        }
+      }
+    }
+
+    return sendSuccess(res, {
+      status: HttpStatus.OK,
+      message: 'Verification code sent',
+      data: { method, identifier: target, ...(isOtpDebugMode ? { code } : {}) },
+    });
+  } catch (error) {
+    logError('requestContactChange controller error', error);
+    return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Server error', error });
+  }
+};
+
+/**
+ * POST /api/v1/users/me/contact/verify
+ * Confirms the OTP and saves the email/phone as verified. Returns the updated /me payload.
+ */
+export const verifyContactChange = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user.id;
+    const { method, identifier, code } = req.body as { method: ContactMethod; identifier: string; code: string };
+    const result = await verifyContactChangeService(userId, method, identifier, code);
+
+    if (!result.success) {
+      return sendError(res, CONTACT_ERRORS[result.error]);
+    }
+
+    await Promise.all([
+      deleteCache(cacheKeys.user(userId)),
+      deleteCache(cacheKeys.userProfile(userId)),
+      deleteCache(cacheKeys.publicProfile(userId)),
+    ]);
+
+    const me = await getMeService(userId);
+    return sendSuccess(res, {
+      status: HttpStatus.OK,
+      message: method === 'email' ? 'Email verified' : 'Phone number verified',
+      data: me.user,
+    });
+  } catch (error) {
+    logError('verifyContactChange controller error', error);
+    return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Server error', error });
   }
 };

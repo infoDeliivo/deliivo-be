@@ -17,6 +17,8 @@ import {
 } from './search-ride.types.js';
 import { buildSegmentPoints, resolveSegmentView, SegmentPointRef } from './segment-view.utils.js';
 import { encodeViewToken, decodeViewToken } from './view-token.utils.js';
+import { resolveFeeTermsForRides, resolveRideFeeTerms } from '../pricing/pricing.service.js';
+import { calculateBookingPrice } from '../ride-booking/booking-price.js';
 
 import {
   calculateHaversineDistance as haversine,
@@ -330,6 +332,27 @@ type RideCoreLike = {
   status: RideStatus;
 };
 
+/**
+ * The per-seat amounts a rider is shown, from a driver fare plus that ride's fee terms.
+ *
+ * Riders browse the all-in price: showing the driver's fare and then charging more at checkout is a
+ * price change the rider never agreed to.
+ */
+const riderSeatAmounts = (
+  basePricePerSeat: number,
+  currency: string,
+  feeTerms: { serviceFeePercent: number; serviceFeeFlat: number }
+): { riderTotalPerSeat: number; serviceFeePerSeat: number } => {
+  const quote = calculateBookingPrice({
+    basePricePerSeat,
+    seatsBooked: 1,
+    currency,
+    serviceFeePercent: feeTerms.serviceFeePercent,
+    serviceFeeFlat: feeTerms.serviceFeeFlat,
+  });
+  return { riderTotalPerSeat: quote.totalPrice, serviceFeePerSeat: quote.serviceFee };
+};
+
 const mapWaypoints = (waypoints: RideWaypointLike[]): WaypointInfo[] =>
   waypoints.map((waypoint) => ({
     id: waypoint.id,
@@ -565,11 +588,17 @@ export const searchRides = async (
   });
 
   const driverTrustStats = await loadDriverTrustStats(rides.map((ride) => ride.driverId));
+  const feeTermsByRideId = await resolveFeeTermsForRides(rides.map((ride) => ride.id));
 
   // Calculate actual distances and filter by exact radius
   const ridesWithDistance: SearchRideResult[] = rides
     .map((ride) => {
       const trustStats = driverTrustStats.get(ride.driverId);
+      const seatAmounts = riderSeatAmounts(
+        ride.basePricePerSeat,
+        ride.currency,
+        feeTermsByRideId.get(ride.id) ?? { serviceFeePercent: 0, serviceFeeFlat: 0 },
+      );
       const distanceFromOrigin = haversine(
         { lat: originLat, lng: originLng },
         { lat: ride.originLat, lng: ride.originLng },
@@ -618,6 +647,8 @@ export const searchRides = async (
         departureTime: ride.departureTime,
         availableSeats: ride.availableSeats,
         basePricePerSeat: ride.basePricePerSeat,
+        riderTotalPerSeat: seatAmounts.riderTotalPerSeat,
+        serviceFeePerSeat: seatAmounts.serviceFeePerSeat,
         currency: ride.currency,
         status: ride.status,
         femaleOnly: ride.femaleOnly,
@@ -775,10 +806,16 @@ export const getAvailableRides = async (
     }
   });
   const driverTrustStats = await loadDriverTrustStats(rides.map((ride) => ride.driverId));
+  const feeTermsByRideId = await resolveFeeTermsForRides(rides.map((ride) => ride.id));
 
   return {
     rides: rides.map((ride) => {
       const trustStats = driverTrustStats.get(ride.driverId);
+      const seatAmounts = riderSeatAmounts(
+        ride.basePricePerSeat,
+        ride.currency,
+        feeTermsByRideId.get(ride.id) ?? { serviceFeePercent: 0, serviceFeeFlat: 0 },
+      );
       const hasActiveBooking = viewerId
         ? ride.bookings.some((booking) => booking.passengerId === viewerId)
         : false;
@@ -816,6 +853,8 @@ export const getAvailableRides = async (
         departureTime: ride.departureTime,
         availableSeats: ride.availableSeats,
         basePricePerSeat: ride.basePricePerSeat,
+        riderTotalPerSeat: seatAmounts.riderTotalPerSeat,
+        serviceFeePerSeat: seatAmounts.serviceFeePerSeat,
         currency: ride.currency,
         status: ride.status,
         femaleOnly: ride.femaleOnly,
@@ -900,6 +939,11 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
 
   const waypoints = mapWaypoints(ride.waypoints);
   const fullRide = buildFullRideSnapshot(ride, waypoints);
+  const detailSeatAmounts = riderSeatAmounts(
+    ride.basePricePerSeat,
+    ride.currency,
+    await resolveRideFeeTerms(ride.id),
+  );
 
   return {
     id: ride.id,
@@ -927,6 +971,8 @@ export const getRideDetails = async (rideId: string, viewerId?: string): Promise
     totalSeats: ride.totalSeats,
     availableSeats: ride.availableSeats,
     basePricePerSeat: ride.basePricePerSeat,
+    riderTotalPerSeat: detailSeatAmounts.riderTotalPerSeat,
+    serviceFeePerSeat: detailSeatAmounts.serviceFeePerSeat,
     currency: ride.currency,
     status: ride.status,
     notes: ride.notes,
@@ -1031,10 +1077,19 @@ export const getRideViewByToken = async (
     destinationLat: riderView.destinationLat,
     destinationLng: riderView.destinationLng,
     basePricePerSeat: riderView.basePricePerSeat,
+    routeDistanceMeters: riderView.routeDistanceMeters,
+    routeDurationSeconds: riderView.routeDurationSeconds,
+    departureTime: riderView.departureTime ?? ride.departureTime,
     bookingContext: riderView.bookingContext,
     segment: riderView.segment,
     segmentId: viewToken,
   };
+
+  const tokenSeatAmounts = riderSeatAmounts(
+    riderView.basePricePerSeat,
+    ride.currency,
+    await resolveRideFeeTerms(ride.id),
+  );
 
   return {
     id: ride.id,
@@ -1051,13 +1106,19 @@ export const getRideViewByToken = async (
     destinationLat: riderView.destinationLat,
     destinationLng: riderView.destinationLng,
     routePolyline: ride.routePolyline,
-    routeDistanceMeters: ride.routeDistanceMeters,
-    routeDurationSeconds: ride.routeDurationSeconds,
+    // The rider only travels part of this route, so the segment's own length and duration are
+    // reported. Handing back the full-route figures made a Tartu-to-Paide leg of a longer ride
+    // read as the whole drive.
+    routeDistanceMeters: riderView.routeDistanceMeters,
+    routeDurationSeconds: riderView.routeDurationSeconds,
     departureDate: ride.departureDate,
-    departureTime: ride.departureTime,
+    // A rider boarding at a mid-route stop leaves later than the driver did.
+    departureTime: riderView.departureTime ?? ride.departureTime,
     totalSeats: ride.totalSeats,
     availableSeats: ride.availableSeats,
     basePricePerSeat: riderView.basePricePerSeat,
+    riderTotalPerSeat: tokenSeatAmounts.riderTotalPerSeat,
+    serviceFeePerSeat: tokenSeatAmounts.serviceFeePerSeat,
     currency: ride.currency,
     status: ride.status,
     notes: ride.notes,
@@ -1315,6 +1376,9 @@ export const searchRidesAdvanced = async (
   });
 
   const enhancedDriverTrustStats = await loadDriverTrustStats(candidateRides.map((ride) => ride.driverId));
+  // Riders browse the all-in price, so every result needs its fee. Batched: one snapshot query for
+  // the whole candidate set rather than a lookup per result.
+  const feeTermsByRideId = await resolveFeeTermsForRides(candidateRides.map((ride) => ride.id));
 
   /* ------------------------------------------------------------------
        Phase 2: D_POINTS matching for each candidate ride (Spec §6-§7)
@@ -1444,6 +1508,9 @@ export const searchRidesAdvanced = async (
           destinationLat: riderView.destinationLat,
           destinationLng: riderView.destinationLng,
           basePricePerSeat: riderView.basePricePerSeat,
+          routeDistanceMeters: riderView.routeDistanceMeters,
+          routeDurationSeconds: riderView.routeDurationSeconds,
+          departureTime: riderView.departureTime ?? ride.departureTime,
           bookingContext: riderView.bookingContext,
           segment: riderView.segment,
           segmentId,
@@ -1451,7 +1518,19 @@ export const searchRidesAdvanced = async (
       : null;
 
     const riderFacingPrice = riderView?.basePricePerSeat ?? ride.basePricePerSeat;
-    if (normalizedMaxPrice && riderFacingPrice > normalizedMaxPrice) {
+    const rideFeeTerms = feeTermsByRideId.get(ride.id) ?? { serviceFeePercent: 0, serviceFeeFlat: 0 };
+    const seatQuote = calculateBookingPrice({
+      basePricePerSeat: riderFacingPrice,
+      seatsBooked: 1,
+      currency: ride.currency,
+      serviceFeePercent: rideFeeTerms.serviceFeePercent,
+      serviceFeeFlat: rideFeeTerms.serviceFeeFlat,
+    });
+
+    // Filter on the price the rider pays, not the driver's fare: a max of 10 must exclude a ride
+    // that costs 10.20 at checkout. The SQL prefilter uses the raw fare, which is a safe superset
+    // because the all-in price is never lower.
+    if (normalizedMaxPrice && seatQuote.totalPrice > normalizedMaxPrice) {
       continue;
     }
 
@@ -1488,13 +1567,18 @@ export const searchRidesAdvanced = async (
       destinationAddress: riderView?.destinationAddress ?? ride.destinationAddress,
       destinationLat: riderView?.destinationLat ?? ride.destinationLat,
       destinationLng: riderView?.destinationLng ?? ride.destinationLng,
-      routeDistanceMeters: ride.routeDistanceMeters,
-      routeDurationSeconds: ride.routeDurationSeconds,
+      // Matches the addresses above: when the rider is shown a leg of the ride, the length and
+      // duration describe that leg, not the driver's whole route.
+      routeDistanceMeters: riderView ? riderView.routeDistanceMeters : ride.routeDistanceMeters,
+      routeDurationSeconds: riderView ? riderView.routeDurationSeconds : ride.routeDurationSeconds,
       routePolyline: ride.routePolyline,
       departureDate: ride.departureDate,
-      departureTime: ride.departureTime,
+      // A rider boarding at a mid-route stop leaves later than the driver did.
+      departureTime: riderView?.departureTime ?? ride.departureTime,
       availableSeats: ride.availableSeats,
       basePricePerSeat: riderFacingPrice,
+      riderTotalPerSeat: seatQuote.totalPrice,
+      serviceFeePerSeat: seatQuote.serviceFee,
       currency: ride.currency,
       status: ride.status,
       femaleOnly: ride.femaleOnly,
@@ -1530,9 +1614,10 @@ export const searchRidesAdvanced = async (
 
     // Secondary: user-specified sort
     if (sortBy === 'price') {
+      // Sort on the displayed all-in price, or the order contradicts the numbers on screen.
       return sortOrder === 'asc'
-        ? a.basePricePerSeat - b.basePricePerSeat
-        : b.basePricePerSeat - a.basePricePerSeat;
+        ? a.riderTotalPerSeat - b.riderTotalPerSeat
+        : b.riderTotalPerSeat - a.riderTotalPerSeat;
     }
     if (sortBy === 'distance') {
       const distA = (a.distanceFromOrigin || 0) + (a.distanceFromDestination || 0);

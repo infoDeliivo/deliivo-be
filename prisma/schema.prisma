@@ -86,6 +86,33 @@ enum DlVerificationStatus {
   SUPERSEDED
 }
 
+enum TrackerProductArea {
+  WEBAPP
+  MOBILE_APP
+}
+
+enum TrackerTicketType {
+  BUG
+  STORY
+  TASK
+  CHORE
+  IMPROVEMENT
+}
+
+enum TrackerTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TrackerTicketStatus {
+  TODO
+  IN_PROGRESS
+  IN_TESTING
+  DONE
+}
+
 model User {
   id String @id @default(uuid())
 
@@ -95,6 +122,15 @@ model User {
   gender     Gender?
   dob        DateTime?
 
+  // Language the user picked on the website, captured at signup.
+  preferredLocale String? @db.VarChar(10)
+
+  // Where the user appears to connect from, derived from the request IP: city and country in one
+  // readable string, "New Delhi, IN", or bare "IN" when the offline table names no city — which
+  // is common, and means "city not known" rather than "no city". Despite the name this is no
+  // longer an ISO-3166 code; read the last comma-separated segment for the country alone.
+  detectedCountry String? @db.VarChar(120)
+
   email         String?  @unique
   phone         String?  @unique
   emailVerified Boolean  @default(false)
@@ -103,14 +139,10 @@ model User {
   avatarUrl String?
   avatarKey String?
 
-  // Language the user picked on the website, captured at signup. Null = never learned.
-  preferredLocale String? @db.VarChar(10)
-
-  // Where the user appears to connect from, derived from the request IP: city and country in one
-  // readable string, "New Delhi, IN", or bare "IN" when the offline table names no city — which
-  // is common, and means "city not known" rather than "no city". Despite the name this is no
-  // longer an ISO-3166 code; read the last comma-separated segment for the country alone.
-  detectedCountry String? @db.VarChar(120)
+  referralCode     String?  @unique
+  referredByUserId String?
+  referredBy       User?    @relation("UserReferrals", fields: [referredByUserId], references: [id])
+  referredUsers    User[]   @relation("UserReferrals")
 
   role             UserRole         @default(USER)
   isBanned         Boolean          @default(false)
@@ -166,6 +198,18 @@ model User {
   paymentMethods PaymentMethod[]
   rideRequests RideRequest[]
   rideRequestOffers RideRequestOffer[]
+  rewardCampaignsCreated RewardCampaign[] @relation("RewardCampaignCreatedBy")
+  rewardCampaignsUpdated RewardCampaign[] @relation("RewardCampaignUpdatedBy")
+  rewardReferralsSent RewardReferral[] @relation("RewardReferralReferrer")
+  rewardReferralsReceived RewardReferral[] @relation("RewardReferralReferred")
+  rewardWalletEntries RewardWalletEntry[]
+  rewardWalletEntriesCreated RewardWalletEntry[] @relation("RewardWalletEntryCreatedBy")
+  rewardSettlementBatchesCreated RewardSettlementBatch[] @relation("RewardSettlementBatchCreatedBy")
+  trackerTicketsAssigned TrackerTicket[] @relation("TrackerTicketAssignee")
+  trackerTicketsCreated TrackerTicket[] @relation("TrackerTicketCreatedBy")
+  trackerTicketsUpdated TrackerTicket[] @relation("TrackerTicketUpdatedBy")
+  trackerCommentsAuthored TrackerComment[] @relation("TrackerCommentAuthor")
+  trackerAttachmentsUploaded TrackerAttachment[] @relation("TrackerAttachmentUploader")
 
   @@index([id])
 }
@@ -299,6 +343,9 @@ enum BookingStatus {
   DRIVER_DROPPED
   IN_PROGRESS
   PAYMENT_FAILED
+  // Payment succeeded but the ride had filled up by then, so the rider was refunded.
+  // Distinct from PAYMENT_FAILED, where no money ever moved.
+  RIDE_FULL_REFUNDED
   CANCELLED
   COMPLETED
   NO_SHOW
@@ -503,7 +550,18 @@ model RideBooking {
   seatsBooked Int   @default(1)
   totalPrice  Float
 
+  // Rider-paid service fee, frozen at booking time. totalPrice = (segmentFare * seatsBooked) + serviceFeeAmount.
+  // Nullable: bookings created before service fees existed have no recorded fee.
+  serviceFeeAmount  Float?
+  serviceFeePercent Float?
+
   status BookingStatus @default(PAYMENT_PENDING)
+
+  // Set when this booking's seats were actually taken out of ride capacity. Null means
+  // no seats are held, so a release path must not hand any back — releaseSegmentSeats
+  // is not idempotent and would otherwise inflate availableSeats and oversell the ride.
+  // In stripe mode seats are reserved when the payment confirms, not at booking time.
+  seatsReservedAt DateTime?
 
   stripePaymentIntentId   String?   @unique
   stripeChargeId          String?
@@ -680,6 +738,84 @@ model NewsletterSubscriber {
   @@index([unsubscribedAt, createdAt])
 }
 
+// ============ TRACKER MODELS ============
+model TrackerTicket {
+  id                 String                @id @default(uuid())
+  productArea        TrackerProductArea
+  title              String
+  summary            String?
+  ticketType         TrackerTicketType
+  priority           TrackerTicketPriority @default(MEDIUM)
+  status             TrackerTicketStatus   @default(TODO)
+  assigneeId         String?
+  assignee           User?                 @relation("TrackerTicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assigneeName       String?
+  dueDate            DateTime?
+  description        String?
+  acceptanceCriteria String?
+  notes              String?
+  blockerReason      String?
+  releaseTarget      String?
+  externalLinksJson  Json?
+  metadataJson       Json?
+  sortOrder          Int                   @default(0)
+  createdById        String?
+  createdBy          User?                 @relation("TrackerTicketCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById        String?
+  updatedBy          User?                 @relation("TrackerTicketUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  comments           TrackerComment[]
+  attachments        TrackerAttachment[]
+  checklistItems     TrackerChecklistItem[]
+
+  @@index([productArea, status, priority, dueDate])
+  @@index([assigneeId, status])
+  @@index([createdAt])
+}
+
+model TrackerComment {
+  id        String        @id @default(uuid())
+  ticketId  String
+  ticket    TrackerTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String?
+  author    User?         @relation("TrackerCommentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  body      String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([ticketId, createdAt])
+}
+
+model TrackerAttachment {
+  id           String        @id @default(uuid())
+  ticketId     String
+  ticket       TrackerTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  label        String
+  url          String
+  mimeType     String?
+  sizeBytes    Int?
+  uploadedById String?
+  uploadedBy   User?         @relation("TrackerAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+model TrackerChecklistItem {
+  id        String        @id @default(uuid())
+  ticketId  String
+  ticket    TrackerTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  label     String
+  done      Boolean       @default(false)
+  sortOrder Int           @default(0)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([ticketId, sortOrder])
+}
+
 // ============ PAYMENT & PRICING MODELS ============
 model Payment {
   id                     String    @id @default(uuid())
@@ -689,8 +825,13 @@ model Payment {
   stripePaymentIntentId  String?   @unique
   amountTotal            Float
   currency               String
+  /// Gross amounts as charged. Immutable once written — refunds accumulate in the refunded* fields
+  /// below, so a partial refund never destroys what the rider originally paid.
   fareAmount             Float
   platformFeeAmount      Float     @default(0)
+  /// Refunded so far, split the same way as the charge. Payout owes fareAmount - refundedFareAmount.
+  refundedFareAmount     Float     @default(0)
+  refundedFeeAmount      Float     @default(0)
   status                 String    @default("CREATED") // CREATED, PAYMENT_PENDING, PAID, HELD_IN_ESCROW, PAYOUT_ELIGIBLE, TRANSFER_CREATED, PAYOUT_COMPLETED, REFUND_PENDING, REFUNDED, PAYMENT_FAILED
   failureReason          String?
   payoutEligibleAt       DateTime?
@@ -712,7 +853,7 @@ model LedgerEntry {
   bookingId     String?
   userId        String?
   accountType   String   // RIDER, DRIVER, PLATFORM, PROVIDER
-  entryType     String   // RIDER_PAYMENT_RECEIVED, DRIVER_EARNING_LIABILITY, PLATFORM_FEE_REVENUE, STRIPE_FEE_EXPENSE, REFUND_TO_RIDER, DRIVER_TRANSFER_CREATED, PAYOUT_FAILURE_REVERSAL
+  entryType     String   // RIDER_PAYMENT_RECEIVED, DRIVER_EARNING_LIABILITY, PLATFORM_FEE_REVENUE, STRIPE_FEE_EXPENSE, REFUND_TO_RIDER, DRIVER_TRANSFER_CREATED, PAYOUT_FAILURE_REVERSAL, PLATFORM_FEE_REVERSAL
   direction     String   // DEBIT, CREDIT
   amount        Float
   currency      String
@@ -794,6 +935,141 @@ model PaymentMethod {
   @@index([userId])
 }
 
+model RewardCampaign {
+  id             String   @id @default(uuid())
+  code           String   @unique
+  name           String
+  audience       String
+  triggerType    String
+  thresholdCount  Int      @default(1)
+  rewardAmount   Float
+  currency       String   @default("EUR")
+  active         Boolean  @default(true)
+  repeatable     Boolean  @default(false)
+  description    String?
+  terms          String?
+  metadataJson   Json?
+  startsAt       DateTime?
+  endsAt         DateTime?
+  createdById    String?
+  updatedById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  createdBy User? @relation("RewardCampaignCreatedBy", fields: [createdById], references: [id])
+  updatedBy User? @relation("RewardCampaignUpdatedBy", fields: [updatedById], references: [id])
+  entries   RewardWalletEntry[]
+
+  @@index([audience, triggerType, active])
+}
+
+model RewardReferral {
+  id                    String   @id @default(uuid())
+  referrerUserId        String
+  referredUserId        String   @unique
+  referralCode          String?
+  qualificationType     String?
+  qualificationSourceId String?
+  status                String   @default("PENDING")
+  firstQualifiedAt      DateTime?
+  rewardedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  referrer User @relation("RewardReferralReferrer", fields: [referrerUserId], references: [id])
+  referred User @relation("RewardReferralReferred", fields: [referredUserId], references: [id])
+  entries  RewardWalletEntry[]
+
+  @@index([referrerUserId, status])
+}
+
+model RewardWalletEntry {
+  id             String   @id @default(uuid())
+  userId         String
+  walletType     String
+  entryType      String
+  direction      String
+  amount         Float
+  currency       String   @default("EUR")
+  sourceType     String
+  sourceId       String
+  campaignId     String?
+  referralId     String?
+  description    String?
+  metadataJson   Json?
+  idempotencyKey String   @unique
+  createdById    String?
+  previousHash   String?
+  entryHash      String?
+  reversalOfEntryId String?
+  createdAt      DateTime @default(now())
+
+  user      User            @relation(fields: [userId], references: [id])
+  campaign  RewardCampaign? @relation(fields: [campaignId], references: [id])
+  referral  RewardReferral? @relation(fields: [referralId], references: [id])
+  createdBy User?           @relation("RewardWalletEntryCreatedBy", fields: [createdById], references: [id])
+  reversalOf RewardWalletEntry? @relation("RewardWalletReversal", fields: [reversalOfEntryId], references: [id])
+  reversals  RewardWalletEntry[] @relation("RewardWalletReversal")
+  settlementItem RewardSettlementItem? @relation("RewardWalletEntrySettlement")
+
+  @@index([userId, createdAt])
+  @@index([walletType, createdAt])
+  @@index([campaignId])
+  @@index([referralId])
+  @@index([reversalOfEntryId])
+}
+
+model RewardSettlementBatch {
+  id             String   @id @default(uuid())
+  batchKey       String   @unique
+  walletType     String
+  currency       String   @default("EUR")
+  sourceDate     DateTime
+  status         String   @default("OPEN") // OPEN, FUNDING_REQUESTED, SETTLED, FAILED
+  topupId        String?
+  topupStatus    String?
+  topupAmount    Float?
+  notes          String?
+  createdById    String?
+  fundingRequestedAt DateTime?
+  settledAt      DateTime?
+  failedAt       DateTime?
+  failureReason  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  createdBy User? @relation("RewardSettlementBatchCreatedBy", fields: [createdById], references: [id])
+  items     RewardSettlementItem[]
+
+  @@index([walletType, currency, status])
+  @@index([sourceDate])
+  @@index([topupId])
+}
+
+model RewardSettlementItem {
+  id                 String   @id @default(uuid())
+  settlementBatchId  String
+  rewardWalletEntryId String   @unique
+  userId             String
+  walletType         String
+  amount             Float
+  currency           String   @default("EUR")
+  status             String   @default("PENDING") // PENDING, SETTLED, REVERSED, FAILED
+  sourceType         String
+  sourceId           String
+  metadataJson       Json?
+  settledAt          DateTime?
+  reversedAt         DateTime?
+  createdAt          DateTime @default(now())
+
+  settlementBatch RewardSettlementBatch @relation(fields: [settlementBatchId], references: [id], onDelete: Cascade)
+  rewardWalletEntry RewardWalletEntry @relation("RewardWalletEntrySettlement", fields: [rewardWalletEntryId], references: [id], onDelete: Cascade)
+
+  @@index([settlementBatchId, status])
+  @@index([userId, createdAt])
+  @@index([walletType, createdAt])
+}
+
 model PricingConfig {
   id                   String    @id @default(uuid())
   regionCode           String
@@ -803,6 +1079,8 @@ model PricingConfig {
   maxRatePerKm         Float
   minimumSeatPrice     Float     @default(3.00)
   roundingStrategy     String    @default("NEAREST_EURO") // NEAREST_EURO, NEAREST_HALF_EURO
+  serviceFeePercent    Float     @default(20) // charged to the rider ON TOP of the driver's fare
+  serviceFeeFlat       Float     @default(0) // optional fixed per-booking component, also rider-paid
   active               Boolean   @default(true)
   validFrom            DateTime  @default(now())
   validTo              DateTime?
@@ -829,6 +1107,8 @@ model RidePricingSnapshot {
   maxAllowedPricePerSeat   Float
   selectedPricePerSeat     Float
   roundingStrategy         String
+  serviceFeePercent        Float    @default(0) // frozen at publish; 0 for rides published before fees existed
+  serviceFeeFlat           Float    @default(0)
   createdAt                DateTime @default(now())
 
   ride Ride @relation(fields: [rideId], references: [id])

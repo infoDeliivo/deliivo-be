@@ -60,6 +60,8 @@ type MockPricingConfig = {
     maxRatePerKm: number;
     minimumSeatPrice: number;
     roundingStrategy: string;
+    serviceFeePercent: number;
+    serviceFeeFlat: number;
     active: boolean;
     validFrom: Date;
     validTo: Date | null;
@@ -173,6 +175,8 @@ beforeAll(() => {
         maxRatePerKm: 0.12,
         minimumSeatPrice: 3.00,
         roundingStrategy: 'NEAREST_EURO',
+        serviceFeePercent: 2,
+        serviceFeeFlat: 0,
         active: true,
         validFrom: new Date('2024-01-01'),
         validTo: null,
@@ -457,6 +461,8 @@ describe('Pricing Calculator', () => {
         maxRatePerKm: 0.12,
         minimumSeatPrice: 3.00,
         roundingStrategy: 'NEAREST_EURO',
+        serviceFeePercent: 2,
+        serviceFeeFlat: 0,
     };
 
     test('calculates recommended price for 100km ride', () => {
@@ -724,6 +730,12 @@ describe('Ledger Service', () => {
 // ============================================================
 
 describe('Payout Service', () => {
+    const originalMockMode = process.env.STRIPE_CONNECT_MOCK_MODE;
+    beforeAll(() => { process.env.STRIPE_CONNECT_MOCK_MODE = 'false'; });
+    afterAll(() => {
+        if (originalMockMode === undefined) delete process.env.STRIPE_CONNECT_MOCK_MODE;
+        else process.env.STRIPE_CONNECT_MOCK_MODE = originalMockMode;
+    });
     test('processes payout for driver with eligible payments', async () => {
         // Create a fresh eligible payment
         const payment = await createPayment({

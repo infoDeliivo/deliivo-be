@@ -70,6 +70,7 @@ type InMemoryBooking = {
     paymentAmount: number | null;
     paymentCurrency: string | null;
     paymentCapturedAt: Date | null;
+    seatsReservedAt: Date | null;
     driverDecisionDeadlineAt: Date | null;
     driverDecisionAt: Date | null;
     deadlineExtendedAt: Date | null;
@@ -307,6 +308,8 @@ const buildPrismaMock = () => {
                     paymentAmount: data.paymentAmount ?? null,
                     paymentCurrency: data.paymentCurrency ?? null,
                     paymentCapturedAt: data.paymentCapturedAt ?? null,
+                    // Mirrors the real column: set when this booking's seats are held.
+                    seatsReservedAt: data.seatsReservedAt ?? null,
                     driverDecisionDeadlineAt: data.driverDecisionDeadlineAt ?? null,
                     driverDecisionAt: null,
                     deadlineExtendedAt: null,
@@ -334,6 +337,23 @@ const buildPrismaMock = () => {
                     booking.ride = { ...ride, waypoints: waypoints.filter(w => w.rideId === ride.id).sort((a, b) => a.orderIndex - b.orderIndex) };
                 }
                 return booking;
+            }),
+            updateMany: jest.fn(async ({ where, data }: any) => {
+                const matches = bookings.filter(b => {
+                    if (where.id && b.id !== where.id) return false;
+                    if (where.status?.in && !where.status.in.includes(b.status)) return false;
+                    if (where.status && typeof where.status === 'string' && b.status !== where.status) return false;
+                    if (where.seatsReservedAt?.not === null && b.seatsReservedAt === null) return false;
+                    return true;
+                });
+
+                for (const b of matches) {
+                    for (const [key, val] of Object.entries(data)) {
+                        (b as any)[key] = val;
+                    }
+                }
+
+                return { count: matches.length };
             }),
             findFirst: jest.fn(async ({ where }: any) => {
                 return bookings.find(b => {
@@ -506,12 +526,18 @@ jest.mock('../notification/notification.service.js', () => ({
 jest.mock('../payments/stripe.service.js', () => ({
     __esModule: true,
     createBookingPaymentIntent: (...args: unknown[]) => mockCreateBookingPaymentIntent(...args),
+    cancelPaymentIntent: jest.fn().mockResolvedValue({}),
     refundPaymentIntent: (...args: unknown[]) => mockRefundPaymentIntent(...args),
+    getStripeClient: jest.fn(),
 }));
 
 jest.mock('../../queue/deadline.queue.js', () => ({
     __esModule: true,
     enqueueDeadlineCheck: (...args: unknown[]) => mockEnqueueDeadlineCheck(...args),
+    enqueuePaymentExpiryCheck: jest.fn().mockResolvedValue(undefined),
+    reschedulePaymentExpiryCheck: jest.fn().mockResolvedValue(undefined),
+    bookingPaymentWindowMs: () => 15 * 60 * 1000,
+    expireUnpaidBooking: jest.fn().mockResolvedValue(false),
 }));
 
 jest.mock('../../services/fuel-price.service.js', () => ({
@@ -529,11 +555,24 @@ jest.mock('../ride-booking/booking-otp.utils.js', () => ({
 jest.mock('../pricing/pricing.service.js', () => ({
     __esModule: true,
     validateAndSnapshotPricing: jest.fn().mockResolvedValue({ valid: true, snapshotId: 'snap-mock' }),
+    // No service fee here: these cases assert segment fare arithmetic, which the fee sits on top of.
+    resolveRideFeeTerms: jest.fn().mockResolvedValue({
+        serviceFeePercent: 0,
+        serviceFeeFlat: 0,
+        source: 'ACTIVE_CONFIG',
+    }),
 }));
 
 jest.mock('../payments/payment.service.js', () => ({
     __esModule: true,
+    PAYMENT_STATUSES: {
+        CREATED: 'CREATED',
+        PAYMENT_PENDING: 'PAYMENT_PENDING',
+        PAID: 'PAID',
+    },
     createPayment: jest.fn().mockResolvedValue({ id: 'payment-mock-id' }),
+    markBookingPaymentPaid: jest.fn().mockResolvedValue({}),
+    markBookingPaymentRefunded: jest.fn().mockResolvedValue({}),
     markPaymentPending: jest.fn().mockResolvedValue({}),
     markPaymentPaid: jest.fn().mockResolvedValue({}),
 }));
@@ -544,6 +583,7 @@ jest.mock('../payments/payment.service.js', () => ({
 
 import polyline from '@mapbox/polyline';
 import * as DraftRideService from '../publish-ride/draft-ride.service';
+import { sumReservedSeats } from '../ride-booking/segment-capacity.utils';
 import { createBooking as createBookingRaw, cancelBooking } from '../ride-booking/ride-booking.service';
 
 /**
@@ -609,9 +649,24 @@ const buildCompleteDraft = (overrides: Record<string, any> = {}) => ({
     backSeatOnly: false,
     femaleOnly: false,
     notes: null,
+    // `recommendedPrice` is where a stopover's price lives: updatePricing measures each stopover
+    // against the route and embeds it on the draft, and publishing copies it to the waypoint. The
+    // draft is written straight to Redis here, so the prices are embedded the same way by hand.
     stopovers: [
-        { placeId: 'place-gatwick', address: 'Gatwick Airport', lat: 51.148, lng: -0.190 },
-        { placeId: 'place-crawley', address: 'Crawley Town', lat: 51.109, lng: -0.187 },
+        {
+            placeId: 'place-gatwick',
+            address: 'Gatwick Airport',
+            lat: 51.148,
+            lng: -0.190,
+            recommendedPrice: 12,
+        },
+        {
+            placeId: 'place-crawley',
+            address: 'Crawley Town',
+            lat: 51.109,
+            lng: -0.187,
+            recommendedPrice: 22,
+        },
     ],
     stopoverPricingByPlaceId: {
         'place-gatwick': 12,
@@ -633,7 +688,6 @@ describe('Integration: Publish → Book → Driver Actions', () => {
         idCounter = 0;
         jest.clearAllMocks();
         process.env.BOOKING_PAYMENT_MODE = 'bypass';
-        process.env.PLATFORM_FEE_PERCENT = '0';
         process.env.VIEW_TOKEN_SECRET = 'test-secret-key-32chars-long!!!';
     });
 
@@ -811,6 +865,52 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             expect(rides[0].availableSeats).toBe(0); // max occupied across all edges = 1
         });
 
+        it('counts a segment booking alongside whole-route ones', async () => {
+            // The reported regression: 3-seat ride, two seats sold over the whole route
+            // and one more over a single leg. availableSeats (peak occupancy) says the ride is full;
+            // the seats actually sold are 3, and that is what the driver must see.
+            draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 3 }));
+            await DraftRideService.publishRide('driver-1');
+
+            const rideId = rides[0].id;
+            const crawleyWp = waypoints.find(w => w.placeId === 'place-crawley')!;
+
+            await createBooking('passenger-1', { rideId, seatsBooked: 2 });
+            await createBooking('passenger-2', {
+                rideId,
+                seatsBooked: 1,
+                pickupWaypointId: crawleyWp.id,
+            });
+
+            expect(rides[0].availableSeats).toBe(0);
+            expect(sumReservedSeats(bookings)).toBe(3);
+        });
+
+        it('reports seats sold even when the legs do not overlap', async () => {
+            // Two disjoint segments on a 3-seat ride: peak occupancy is 1, so two seats
+            // still look free — correct for availability, wrong as a count of sales.
+            draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 3 }));
+            await DraftRideService.publishRide('driver-1');
+
+            const rideId = rides[0].id;
+            const gatwickWp = waypoints.find(w => w.placeId === 'place-gatwick')!;
+            const crawleyWp = waypoints.find(w => w.placeId === 'place-crawley')!;
+
+            await createBooking('passenger-1', {
+                rideId,
+                seatsBooked: 1,
+                dropoffWaypointId: gatwickWp.id,
+            });
+            await createBooking('passenger-2', {
+                rideId,
+                seatsBooked: 1,
+                pickupWaypointId: crawleyWp.id,
+            });
+
+            expect(rides[0].availableSeats).toBe(2);
+            expect(sumReservedSeats(bookings)).toBe(2);
+        });
+
         it('blocks overlapping segment when capacity is full', async () => {
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 1 }));
             await DraftRideService.publishRide('driver-1');
@@ -843,14 +943,18 @@ describe('Integration: Publish → Book → Driver Actions', () => {
         it('interpolates prices when stopovers have no explicit pricing', async () => {
             // No stopover pricing — should use interpolation
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({
-                stopoverPricingByPlaceId: {},
+                stopovers: [
+                    { placeId: 'place-gatwick', address: 'Gatwick Airport', lat: 51.148, lng: -0.190 },
+                    { placeId: 'place-crawley', address: 'Crawley Town', lat: 51.109, lng: -0.187 },
+                ],
             }));
             await DraftRideService.publishRide('driver-1');
 
             const rideId = rides[0].id;
             const gatwickWp = waypoints.find(w => w.placeId === 'place-gatwick')!;
 
-            // Interpolated: gatwick = 30 * (1/3) = 10, crawley = 30 * (2/3) = 20
+            // Interpolated between the origin and the destination, not across the meeting points:
+            // gatwick = 30 * (1/3) = 10, crawley = 30 * (2/3) = 20
             // Origin → Gatwick = 10
             const booking = await createBooking('passenger-1', {
                 rideId,
@@ -1285,8 +1389,10 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             expect(booking.pickupAddress).toBe('Gatwick Airport');
             expect(booking.dropoffAddress).toBe('Crawley Town');
             expect(booking.segmentFare).toBe(10); // 22 - 12
-            expect(booking.pickupPosition).toBe(1);
-            expect(booking.dropoffPosition).toBe(2);
+            // Positions count every point on the route: origin(0), the pickup meeting point(1),
+            // Gatwick(2), Crawley(3), the dropoff meeting point(4), destination(5).
+            expect(booking.pickupPosition).toBe(2);
+            expect(booking.dropoffPosition).toBe(3);
         });
 
         it('stores the pickup and dropoff meeting-point positions for a full-route booking', async () => {
@@ -1316,7 +1422,6 @@ describe('Integration: Publish → Book → Driver Actions', () => {
         it('publishes with meeting-point edges only and full-route booking works', async () => {
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({
                 stopovers: [],
-                stopoverPricingByPlaceId: {},
             }));
             await DraftRideService.publishRide('driver-1');
 

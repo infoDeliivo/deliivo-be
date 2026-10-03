@@ -75,12 +75,14 @@ This keeps support recovery, ride-day fallback, and dispute settlement on one sh
 
 ### Ride-Day Manual Recovery UI
 
-The rider and driver ride-day screens now expose explicit manual recovery actions when `NEXT_PUBLIC_ALLOW_RIDE_MANUAL_OVERRIDE=true`.
+The rider and driver ride-day screens expose explicit manual recovery actions. These are always available — the old `ALLOW_RIDE_MANUAL_OVERRIDE` / `NEXT_PUBLIC_ALLOW_RIDE_MANUAL_OVERRIDE` flags are gone.
 
-- Driver screen: manual start ride, manual pickup approval, manual drop-off confirmation, manual finish ride.
+Each action sends `force: true` plus a written `overrideReason` (minimum 5 characters; the request is rejected with 400 without one), and is only accepted while the ride is `IN_PROGRESS` — otherwise the API answers 409 `FORCE_REQUIRES_RIDE_IN_PROGRESS`.
+
+- Driver screen: manual pickup approval, manual no-show, manual drop-off confirmation, manual finish ride. Starting a ride cannot be forced.
 - Rider screen: manual OTP issue report, manual drop-off confirmation, and manual review request.
 
-Each action captures a short reason and writes it into the same evidence trail used by dispute settlement.
+The response carries `forced`, `overrideReason` and `skippedChecks` so the screen can show exactly which guards were overridden. Each action writes a `SUSPICIOUS` ride event into the same evidence trail used by dispute settlement, warns the other party, and — for a forced OTP or no-show — opens a `NEEDS_MANUAL_REVIEW` dispute.
 
 ### Payout Freeze
 

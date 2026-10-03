@@ -39,7 +39,9 @@ import {
   safetyRouter,
   contentRouter,
   adminContentRouter,
+  trackerRouter,
   uploadsRouter,
+  rewardsRouter,
 } from './modules/index.js';
 import docsRouter from './docs/docs.routes.js';
 
@@ -185,8 +187,11 @@ app.use('/api/v1/auth/otp/resend', ...otpLimiters);
 app.use('/api/v1/auth/otp/verify', ...otpLimiters);
 app.use('/api/v1/auth/signup', ...otpLimiters);
 app.use('/api/v1/auth/login', ...otpLimiters);
+app.use('/api/v1/users/me/contact/request', ...otpLimiters);
+app.use('/api/v1/users/me/contact/verify', ...otpLimiters);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', protect, userRouter);
+app.use('/api/v1/users', protect, rewardsRouter);
 app.use('/api/v1/publish-ride', protect, publishRideRouter);
 app.use('/api/v1/ride-requests', protect, bookingLimiter, rideRequestRouter);
 app.use('/api/v1/search-rides', searchLimiter, searchRideRouter);
@@ -207,7 +212,9 @@ app.use('/api/v1/dl-verification', dlVerificationRouter);
 app.use('/api/v1/payments', protect, paymentRouter);
 app.use('/api/v1/payments/connect', protect, paymentsConnectRouter);
 app.use('/api/v1/admin', protect, adminRouter);
+app.use('/api/v1/admin/rewards', protect, rewardsRouter);
 app.use('/api/v1/admin/content', protect, adminContentRouter);
+app.use('/api/v1/admin/tracker', protect, trackerRouter);
 app.use('/api/v1/pricing', protect, pricingRouter);
 app.use('/api/v1/payment-methods', protect, paymentMethodsRouter);
 app.use('/api/v1/admin/payouts', protect, adminPayoutRouter);

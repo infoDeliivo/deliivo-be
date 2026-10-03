@@ -7,6 +7,7 @@ import { sendSuccess, sendError, HttpStatus } from '../../utils/index.js';
 import { getCache, setCache, deleteCache } from '../../services/cache.service.js';
 import { getCurrentFuelPrice, refreshFuelPrice as refreshFuelPriceSvc } from '../../services/fuel-price.service.js';
 import { logError } from '../../utils/logger.js';
+import { rideTooEarlyMessage } from '../../utils/ride-start-window.js';
 import { getDriverPublishEligibility } from './driver-eligibility.service.js';
 import { resolvePublishError } from './publish-ride.constants.js';
 
@@ -365,7 +366,8 @@ export const updateCapacity = async (req: AuthRequest, res: Response) => {
 /* ================= STEP 11: GET RECOMMENDED PRICE ================= */
 export const getRecommendedPrice = async (req: AuthRequest, res: Response) => {
     try {
-        const recommendation = await DraftRideService.getRecommendedPrice(req.user.id);
+        const { basePricePerSeat } = req.query as { basePricePerSeat?: number };
+        const recommendation = await DraftRideService.getRecommendedPrice(req.user.id, basePricePerSeat);
 
         return sendSuccess(res, {
             message: 'Price recommendation calculated',
@@ -625,7 +627,7 @@ export const startRide = async (req: AuthRequest, res: Response) => {
             message: error.message === 'RIDE_NOT_FOUND_OR_CANNOT_START'
                 ? 'Ride not found or cannot be started'
                 : error.message === 'RIDE_TOO_EARLY'
-                    ? 'Ride cannot be started more than 10 minutes before departure'
+                    ? rideTooEarlyMessage()
                     : 'Failed to start ride',
         });
     }

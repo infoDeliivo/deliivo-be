@@ -12,6 +12,8 @@ import { manualSessionId } from '../dl-verification/dl-review.service.js';
 import { recoverPendingVeriffDecisionsForUser } from '../dl-verification/dl-verification.service.js';
 import { sendMail } from '../mail/mail.service.js';
 import { REQUIRED_DOCUMENT_TYPES, requiresFullDocumentSet } from '../vehicles/vehicle.constants.js';
+import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
+import { deleteUserAccount, hardDeleteUserAccount } from '../user/user-gdpr.service.js';
 
 const emergencyAlertSelect = {
     id: true,
@@ -51,6 +53,8 @@ const emergencyAlertSelect = {
 
 const adminUserName = (user: { firstName?: string | null; lastName?: string | null; email?: string | null }) =>
     [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'there';
+
+const HARD_DELETE_USERS_ENABLED = process.env.ADMIN_HARD_DELETE_USER_ENABLED === 'true';
 
 const htmlEscape = (value: string) =>
     value
@@ -790,6 +794,21 @@ export const setBanStatus = async (userId: string, isBanned: boolean) => {
     return updated;
 };
 
+export const deleteUser = async (userId: string, options: { mode: 'soft' | 'hard' }) => {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+    if (!user) throw new Error('USER_NOT_FOUND');
+    if (user.role === 'ADMIN') throw new Error('CANNOT_DELETE_ADMIN');
+
+    if (options.mode === 'hard') {
+        if (!HARD_DELETE_USERS_ENABLED) {
+            throw new Error('HARD_DELETE_DISABLED');
+        }
+        return hardDeleteUserAccount(userId);
+    }
+
+    return deleteUserAccount(userId);
+};
+
 /* ================= PLATFORM STATS ================= */
 export const getStats = async () => {
     const [totalUsers, totalRides, totalBookings, totalRevenue] = await Promise.all([
@@ -1248,6 +1267,11 @@ export const adminForceCompleteBooking = async (
             data: { rideId: booking.rideId, bookingId, reason, deepLink: `app://rides/${booking.rideId}` },
         }),
     ]);
+
+    await awardBookingCompletionRewards(bookingId);
+    if (rideCompleted) {
+        await awardRideCompletionRewards(booking.rideId);
+    }
 
     return {
         bookingId,
@@ -1711,4 +1735,71 @@ export const updateEmergencyAlertStatus = async (
         data,
         select: emergencyAlertSelect,
     });
+};
+
+// ============================================================
+//  FORCED RIDE ACTION REVIEW QUEUE
+// ============================================================
+
+/**
+ * Every step a driver forced through lands here: ride events are written with
+ * validationStatus SUSPICIOUS, carrying the reason they typed and the guards
+ * their override skipped.
+ */
+export const listRideOverrides = async (query: {
+    page?: number;
+    limit?: number;
+    actorId?: string;
+    rideId?: string;
+    bookingId?: string;
+    from?: string;
+    to?: string;
+}) => {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.RideEventWhereInput = { validationStatus: 'SUSPICIOUS' };
+    if (query.actorId) where.actorId = query.actorId;
+    if (query.rideId) where.rideId = query.rideId;
+    if (query.bookingId) where.bookingId = query.bookingId;
+    if (query.from || query.to) {
+        where.serverTimestamp = {
+            ...(query.from ? { gte: new Date(query.from) } : {}),
+            ...(query.to ? { lte: new Date(query.to) } : {}),
+        };
+    }
+
+    const [events, total] = await Promise.all([
+        prisma.rideEvent.findMany({
+            where,
+            skip,
+            take: limit,
+            orderBy: { serverTimestamp: 'desc' },
+            include: {
+                ride: {
+                    select: {
+                        id: true,
+                        status: true,
+                        originAddress: true,
+                        destinationAddress: true,
+                        departureDate: true,
+                        departureTime: true,
+                        driver: { select: { id: true, firstName: true, email: true, phone: true } },
+                    },
+                },
+            },
+        }),
+        prisma.rideEvent.count({ where }),
+    ]);
+
+    return {
+        overrides: events,
+        pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        },
+    };
 };

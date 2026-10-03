@@ -198,6 +198,12 @@ export interface LocationInput {
     recommendedPrice?: number;
     minPrice?: number;
     maxPrice?: number;
+    /**
+     * Price the driver explicitly chose for this stop, clamped to [minPrice, maxPrice].
+     * Kept separate from recommendedPrice, which is recomputed from distance on every pricing
+     * update and would otherwise overwrite the driver's choice.
+     */
+    driverPricePerSeat?: number;
 }
 
 export interface UpdatePickupsInput {
@@ -238,6 +244,35 @@ export interface SelectRouteInput {
 
 /* ================= PHASE 3: PRICING TYPES ================= */
 
+/**
+ * Every money figure the publish screen shows, computed on the backend.
+ *
+ * The frontend must not derive any of these: it previously multiplied a hardcoded 20% client-side,
+ * which drifted from what the backend actually charged. `perSeat` and `fullRide` are computed
+ * independently (the fee is charged once per booking, so a per-seat figure times seats can differ by
+ * a cent from the real charge) — do not multiply one into the other.
+ */
+export interface PriceQuote {
+    /** The candidate price this quote was computed for. */
+    basePricePerSeat: number;
+    seats: number;
+    currency: string;
+    /** Rate used, for display copy only. */
+    serviceFeePercent: number;
+    serviceFeeFlat: number;
+    /** A single-seat booking. */
+    perSeat: PriceQuoteAmounts;
+    /** One booking taking every seat. */
+    fullRide: PriceQuoteAmounts;
+}
+
+export interface PriceQuoteAmounts {
+    /** What the driver receives — the fee is charged on top, never deducted from this. */
+    driverNet: number;
+    serviceFee: number;
+    riderTotal: number;
+}
+
 export interface PriceRecommendation {
     recommendedPrice: number;
     minPrice: number;
@@ -255,6 +290,23 @@ export interface PriceRecommendation {
         maxRatePerKm?: number;
         pricingConfigFallback?: boolean;
     };
+    quote: PriceQuote;
+    /** Per-stopover fares for the draft's current stopovers, sorted by distance from origin. */
+    stopoverPricing?: StopoverRecommendedPrice[];
+}
+
+export interface StopoverRecommendedPrice {
+    placeId: string;
+    address: string;
+    /** Rounded to one decimal for display; the fares below use the unrounded distance. */
+    distanceFromOriginKm: number;
+    /** Distance-derived fare for this stop at the base price being quoted. */
+    recommendedPrice: number;
+    minPrice: number;
+    maxPrice: number;
+    /** The driver's own choice for this stop, when they have set one. */
+    driverPricePerSeat?: number;
+    estimatedArrivalTime?: string;
 }
 
 /* ================= STOPPER POINT SUGGESTIONS ================= */
@@ -268,6 +320,9 @@ export interface StopoverSuggestion {
     distanceFromOriginKm: number;
     distanceFromOriginMeters: number;
     types: string[];        // Google Places types (e.g. "locality", "point_of_interest")
+    // True when the place is the seat of its own administrative area (a town/parish centre)
+    // rather than a village inside someone else's. Towns are listed before villages.
+    isMajorTown?: boolean;
     pricePerSeat?: number;  // Auto-calculated based on distance + base price
     estimatedArrivalTime?: string;  // HH:MM format - calculated if departure time is set
 }

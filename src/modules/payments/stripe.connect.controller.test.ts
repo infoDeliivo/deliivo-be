@@ -523,6 +523,21 @@ describe('custom onboarding endpoints', () => {
         expect(mockSendSuccess.mock.calls[0][1].message).toBe('Bank account removed');
     });
 
+    it('answers 409 rather than 500 when the only bank account cannot be removed', async () => {
+        mockDeleteBankAccount.mockRejectedValue(
+            new Error('CONNECT_CANNOT_DELETE_ONLY_BANK_ACCOUNT')
+        );
+
+        const { req, res } = makeReqRes();
+        req.params = { externalAccountId: 'ba_1' };
+        await connectDeleteBankAccount(req, res);
+
+        expect(mockSendError.mock.calls[0][1]).toMatchObject({
+            status: 'CONFLICT',
+            error: { code: 'CONNECT_CANNOT_DELETE_ONLY_BANK_ACCOUNT' },
+        });
+    });
+
     it('resets an unfinished payout account so the driver can choose country again', async () => {
         const { req, res } = makeReqRes();
         await connectResetAccount(req, res);

@@ -46,6 +46,13 @@ router.post(
     controller.confirmBookingPaymentStatus
 );
 
+// Get back into checkout for a booking that was never paid for
+router.post(
+    '/:id/payment/resume',
+    validate({ params: bookingIdParamSchema }),
+    controller.resumeBookingPayment
+);
+
 // Extend wait for driver response
 router.post(
     '/:id/extend-wait',

@@ -87,7 +87,12 @@ export interface SearchRideResult {
 
     // Pricing & Availability
     availableSeats: number;
+    /** The driver's fare. Riders are shown `riderTotalPerSeat`, which includes the service fee. */
     basePricePerSeat: number;
+    /** What a rider actually pays per seat, fee included. Computed here so clients never derive it. */
+    riderTotalPerSeat: number;
+    /** The rider's service fee for one seat. */
+    serviceFeePerSeat: number;
     currency: string;
 
     // Status

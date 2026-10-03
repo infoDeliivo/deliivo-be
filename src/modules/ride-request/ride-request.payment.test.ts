@@ -56,6 +56,19 @@ describe('request payment bookkeeping', () => {
     expect(first.platformFeeAmount).toBe(4);
     expect(payment.upsert.mock.calls[1][0].update).toEqual({ bookingId: 'booking' });
   });
+  it('uses the stored service fee instead of deducting a percentage of the total', async () => {
+    const { db } = fixture();
+    process.env.PLATFORM_FEE_PERCENT = 'invalid';
+    await expect(ensureRequestPayment(db, { ...booking, totalPrice: 24, serviceFeeAmount: 4 })).resolves.toMatchObject({
+      amountTotal: 24, platformFeeAmount: 4, fareAmount: 20,
+    });
+  });
+  it('preserves an explicitly zero service fee', async () => {
+    const { db } = fixture();
+    await expect(ensureRequestPayment(db, { ...booking, serviceFeeAmount: 0 })).resolves.toMatchObject({
+      platformFeeAmount: 0, fareAmount: 40,
+    });
+  });
   it('does not reset an already paid payment on a retry', async () => {
     const { db } = fixture({
       id: 'payment',

@@ -15,18 +15,45 @@ const latitude = z.number().min(-90).max(90);
 const longitude = z.number().min(-180).max(180);
 const isoTimestamp = z.string().datetime({ offset: true, message: 'timestamp must be an ISO 8601 date-time string' });
 
+/** Minimum length of a written override reason — enough to be a real explanation. */
+export const OVERRIDE_REASON_MIN_LENGTH = 5;
+
+export const forceFields = {
+    force: z.boolean().optional().default(false),
+    overrideReason: z
+        .string()
+        .trim()
+        .min(OVERRIDE_REASON_MIN_LENGTH, `overrideReason must be at least ${OVERRIDE_REASON_MIN_LENGTH} characters`)
+        .max(500)
+        .optional(),
+};
+
+/** A forced action is only accepted with a written reason — it ends up in the audit trail. */
+export const refineForceReason = (
+    value: { force?: boolean; overrideReason?: string },
+    ctx: z.RefinementCtx
+) => {
+    if (value.force === true && !value.overrideReason?.trim()) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['overrideReason'],
+            message: 'overrideReason is required when force is true',
+        });
+    }
+};
+
 const rideEventFields = {
     actionId: z.string().uuid('actionId must be a UUID (client-generated for idempotency)').default(() => randomUUID()),
     lat: latitude.optional(),
     lng: longitude.optional(),
     clientTimestamp: isoTimestamp.default(() => new Date().toISOString()),
-    overrideReason: z.string().max(500).optional(),
+    ...forceFields,
 };
 
 // ============ RIDE EVENT BODY (start / finish / dropoff confirmations / missed pickup) ============
 export const rideEventSchema = z.preprocess(
     (value) => value ?? {},
-    z.object(rideEventFields)
+    z.object(rideEventFields).superRefine(refineForceReason)
 );
 
 // ============ LOCATION BODY (driver GPS ping) ============
@@ -44,8 +71,19 @@ export const verifyPickupOtpSchema = z.preprocess(
     (value) => value ?? {},
     z.object({
         ...rideEventFields,
-        otp: z.string().regex(/^[0-9]{6}$/, 'OTP must be 6 digits'),
+        // Optional only when forcing — a driver overriding the OTP has no code to send.
+        otp: z.string().regex(/^[0-9]{6}$/, 'OTP must be 6 digits').optional(),
     })
+        .superRefine(refineForceReason)
+        .superRefine((value, ctx) => {
+            if (value.force !== true && !value.otp) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: ['otp'],
+                    message: 'otp is required unless force is true',
+                });
+            }
+        })
 );
 
 // ============ OFFLINE SYNC BODY ============
@@ -59,8 +97,7 @@ export const offlineSyncSchema = z.object({
             lat: latitude.optional(),
             lng: longitude.optional(),
             clientTimestamp: isoTimestamp,
-            overrideReason: z.string().trim().min(1).max(500).optional(),
-        })
+            ...forceFields,
+        }).superRefine(refineForceReason)
     ).min(1).max(50),
 });
-

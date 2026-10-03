@@ -15,6 +15,7 @@ import {
   RouteOption,
   ComputeRoutesResult,
   PriceRecommendation,
+  PriceQuote,
   DraftSummary,
   ListDraftsQuery,
   LocationInput,
@@ -23,13 +24,17 @@ import {
   RouteLocationMode,
   StopoverPointGroup,
   RouteLocationSuggestionsResult,
+  StopoverRecommendedPrice,
 } from './publish-ride.types.js';
-import { calculateWaypointArrivalTimes } from './waypoint-time.utils.js';
+import { calculateStopoverFare, clampToRange } from './stopover-pricing.utils.js';
+import { calculateWaypointArrivalTimes, arrivalTimeAtRouteFraction } from './waypoint-time.utils.js';
 import { assertDriverCanPublish } from './driver-eligibility.service.js';
-import { DEFAULT_BALTIC_PRICING_CONFIG, getPricePreview, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { DEFAULT_BALTIC_PRICING_CONFIG, getPricePreview, resolveActiveFeeTerms, validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { calculateBookingPrice } from '../ride-booking/booking-price.js';
 import { calculatePrice, PricingConfigData } from '../pricing/pricing.calculator.js';
 import { createNotification } from '../notification/notification.service.js';
 import { googleService } from '../maps/google.service.js';
+import { GeocodeResult } from '../maps/google.types.js';
 import { isPublishDepartureTooSoon } from './publish-schedule.js';
 
 // ============================================================
@@ -45,10 +50,21 @@ const MAX_GROUP_SUGGESTIONS = 3;
 const INTRACITY_ROUTE_THRESHOLD_METERS = 25000;
 const CITY_POINT_RADIUS_METERS = Number(process.env.PUBLISH_CITY_POINT_RADIUS_METERS || '15000');
 const STOPOVER_POINT_RADIUS_METERS = Number(process.env.PUBLISH_STOPOVER_POINT_RADIUS_METERS || '15000');
-const STOPOVER_CITY_SEARCH_RADIUS_METERS = Number(process.env.PUBLISH_STOPOVER_CITY_SEARCH_RADIUS_METERS || '30000');
-const STOPOVER_ROUTE_SAMPLE_INTERVAL_METERS = Number(process.env.PUBLISH_STOPOVER_ROUTE_SAMPLE_INTERVAL_METERS || '20000');
-const STOPOVER_MAX_ROUTE_SAMPLES = Number(process.env.PUBLISH_STOPOVER_MAX_ROUTE_SAMPLES || '8');
+const STOPOVER_ROUTE_SAMPLE_INTERVAL_METERS = Number(process.env.PUBLISH_STOPOVER_ROUTE_SAMPLE_INTERVAL_METERS || '10000');
+const STOPOVER_MAX_ROUTE_SAMPLES = Number(process.env.PUBLISH_STOPOVER_MAX_ROUTE_SAMPLES || '16');
 const ROUTE_POINT_RADIUS_METERS = Number(process.env.PUBLISH_ROUTE_POINT_RADIUS_METERS || '10000');
+// A suggested town's centre may sit a few km off the road even when the road crosses the town.
+// Defaults to the same corridor save/publish enforce, so nothing suggested can be rejected later.
+const STOPOVER_CORRIDOR_MAX_METERS = Number(
+  process.env.PUBLISH_STOPOVER_CORRIDOR_MAX_METERS || String(ROUTE_POINT_RADIUS_METERS),
+);
+// Towns this close to either end of the route are the origin/destination city itself.
+const STOPOVER_ENDPOINT_EXCLUSION_METERS = 5000;
+// Google Geocoding types that count as a town for stopover purposes.
+const STOPOVER_LOCALITY_TYPES = ['locality', 'postal_town', 'administrative_area_level_3'];
+// Administrative wrappers Google appends to a seat town's name across EE/LV/LT.
+const ADMIN_AREA_SUFFIX_PATTERN =
+  /\s+(rural\s+municipality|city\s+municipality|district\s+municipality|municipality|parish|county|district|city|town|vald|linn|novads|rajonas)$/i;
 const BALTIC_COUNTRY_CODES = new Set(['EE', 'LV', 'LT']);
 const EUROPE_COUNTRY_CODES = new Set([
   'AL', 'AD', 'AT', 'BY', 'BE', 'BA', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
@@ -120,7 +136,7 @@ export const assertDriverHasNoOverlappingRide = async (
   departureDate: Date,
   departureTime: string,
   routeDurationSeconds?: number | null,
-  db: Prisma.TransactionClient = prisma,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
   excludeRideId?: string,
 ) => {
   const draftStart = combineDepartureDateTimeUtc(departureDate, departureTime);
@@ -697,12 +713,38 @@ function distanceFromRouteMeters(
   point: { lat: number; lng: number },
   encodedPolyline: string,
 ): number {
-  const path = decodePolyline(encodedPolyline);
-  let minimumDistance = Number.POSITIVE_INFINITY;
+  return distanceFromPathMeters(point, decodePolyline(encodedPolyline));
+}
+
+/**
+ * Shortest distance in meters from a point to an already-decoded route path.
+ * Prefer this over distanceFromRouteMeters in loops — it avoids re-decoding the polyline
+ * once per candidate.
+ */
+function distanceFromPathMeters(
+  point: { lat: number; lng: number },
+  path: { lat: number; lng: number }[],
+): number {
+  return projectOntoPath(point, path).offRouteMeters;
+}
+
+/**
+ * Project a point onto a decoded route path.
+ * Returns how far off the route it lies and how far along the route its closest point is —
+ * the along-route figure is what orders suggestions and prices them.
+ */
+function projectOntoPath(
+  point: { lat: number; lng: number },
+  path: { lat: number; lng: number }[],
+): { offRouteMeters: number; alongRouteMeters: number } {
+  let offRouteMeters = Number.POSITIVE_INFINITY;
+  let alongRouteMeters = 0;
+  let travelled = 0;
 
   for (let index = 0; index < path.length - 1; index += 1) {
     const start = path[index];
     const end = path[index + 1];
+    const segmentLength = haversineDistance(start, end);
     const meanLatitude = ((start.lat + end.lat + point.lat) / 3) * Math.PI / 180;
     const longitudeScale = Math.cos(meanLatitude);
     const segmentX = (end.lng - start.lng) * longitudeScale;
@@ -717,10 +759,17 @@ function distanceFromRouteMeters(
       lat: start.lat + ratio * (end.lat - start.lat),
       lng: start.lng + ratio * (end.lng - start.lng),
     };
-    minimumDistance = Math.min(minimumDistance, haversineDistance(point, projection));
+
+    const distance = haversineDistance(point, projection);
+    if (distance < offRouteMeters) {
+      offRouteMeters = distance;
+      alongRouteMeters = travelled + ratio * segmentLength;
+    }
+
+    travelled += segmentLength;
   }
 
-  return minimumDistance;
+  return { offRouteMeters, alongRouteMeters };
 }
 
 /**
@@ -770,8 +819,58 @@ function selectEvenlySpacedRouteSamples<T>(points: T[], maxSamples: number): T[]
   return selected;
 }
 
+/**
+ * Town name from a reverse-geocoded locality: prefer the locality address component,
+ * fall back to the first part of the formatted address.
+ */
+const localityName = (locality: GeocodeResult): string => {
+  const component = locality.address_components?.find((candidate) =>
+    candidate.types.some((type) => STOPOVER_LOCALITY_TYPES.includes(type)),
+  );
+  return component?.long_name || locality.formatted_address?.split(',')[0] || '';
+};
+
+interface NearbySearchPlace {
+  place_id: string;
+  name: string;
+  vicinity?: string;
+  types?: string[];
+  geometry: { location: { lat: number; lng: number } };
+}
+
+interface NearbySearchResponse {
+  results?: NearbySearchPlace[];
+}
+
+/**
+ * The town an administrative area is named after: "Põltsamaa Parish" -> "Põltsamaa",
+ * "Paide City" -> "Paide", "Kėdainiai District Municipality" -> "Kėdainiai".
+ * Returns null when nothing is left to look up.
+ */
+const seatTownNameFromAdminArea = (adminAreaLevel2: string | null): string | null => {
+  if (!adminAreaLevel2) return null;
+  const base = adminAreaLevel2
+    .replace(ADMIN_AREA_SUFFIX_PATTERN, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return base.length > 1 ? base : null;
+};
+
+/**
+ * Whether a locality is the seat of its own administrative area (a town) rather than a
+ * village inside another town's area. Google names the area after its seat, so "Põltsamaa"
+ * in "Põltsamaa Parish" is a town while "Vorbuse" in "Tartu City" is a village. This is the
+ * only town-vs-village signal Google exposes for a locality: viewport size and nearby-POI
+ * counts were both measured and carry no signal.
+ */
+const isAdministrativeSeat = (localityName: string, adminAreaLevel2: string | null): boolean => {
+  if (!localityName || !adminAreaLevel2) return false;
+  const normalise = (value: string) => value.trim().toLowerCase();
+  return normalise(adminAreaLevel2).startsWith(normalise(localityName));
+};
+
 const toSuggestion = (
-  place: any,
+  place: NearbySearchPlace,
   origin: { lat: number; lng: number },
 ): StopoverSuggestion => {
   const distFromOrigin = haversineDistance(
@@ -825,14 +924,14 @@ const fetchNearbySuggestions = async (
   url.searchParams.set('key', GOOGLE_API_KEY);
 
   const response = await fetch(url.toString());
-  const data = (await response.json()) as any;
+  const data = (await response.json()) as NearbySearchResponse;
   if (!data.results || !Array.isArray(data.results)) {
     return [];
   }
 
   return data.results
     .slice(0, options.maxResults ?? MAX_GROUP_SUGGESTIONS)
-    .map((place: any) => toSuggestion(place, origin));
+    .map((place) => toSuggestion(place, origin));
 };
 
 const buildAreaSuggestions = async (
@@ -906,7 +1005,8 @@ export const getStopoversAlongRoute = async (
     throw new Error('INVALID_POLYLINE');
   }
 
-  // 2. Sample points along the route densely enough to catch key cities near the corridor.
+  // 2. Sample points along the route. Every sample sits ON the road, so the town a sample
+  //    resolves to is by definition a town the route passes through.
   const sampledPoints = samplePointsAlongRoute(decodedPoints, STOPOVER_ROUTE_SAMPLE_INTERVAL_METERS);
 
   if (sampledPoints.length === 0) {
@@ -918,94 +1018,145 @@ export const getStopoversAlongRoute = async (
     };
   }
 
-  // 3. Query Google Places Nearby Search for each sampled point
-  const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+  // 3. Reverse geocode each sampled point to the locality containing it.
   const allSuggestions: StopoverSuggestion[] = [];
   const seenPlaceIds = new Set<string>();
+  const seenNames = new Set<string>();
 
   // Limit API calls while spreading lookups across the whole route.
   const pointsToQuery = selectEvenlySpacedRouteSamples(sampledPoints, STOPOVER_MAX_ROUTE_SAMPLES);
+  const routeLengthMeters =
+    draft.routeDistanceMeters || sampledPoints[sampledPoints.length - 1].distanceFromOrigin;
+
+  // Administrative areas the route crosses, keyed by the seat town Google names them after.
+  // These are the recognisable towns near the road even when the road bypasses them.
+  const seatTownCandidates = new Map<string, string | null>();
 
   for (const point of pointsToQuery) {
     try {
-      const url = new URL('https://maps.googleapis.com/maps/api/place/nearbysearch/json');
-      url.searchParams.set('location', `${point.lat},${point.lng}`);
-      url.searchParams.set('radius', String(STOPOVER_CITY_SEARCH_RADIUS_METERS));
-      url.searchParams.set('type', 'locality'); // cities/towns
-      url.searchParams.set('key', GOOGLE_API_KEY);
+      const resolved = await googleService.reverseGeocodeLocality(point.lat, point.lng);
+      const locality = resolved?.locality;
 
-      const response = await fetch(url.toString());
-      const data = (await response.json()) as any;
-
-      if (data.results && Array.isArray(data.results)) {
-        for (const place of data.results.slice(0, 5)) {
-          if (seenPlaceIds.has(place.place_id)) continue;
-          const routeDistanceMeters = distanceFromRouteMeters(
-            { lat: place.geometry.location.lat, lng: place.geometry.location.lng },
-            draft.routePolyline,
-          );
-          if (routeDistanceMeters > STOPOVER_CITY_SEARCH_RADIUS_METERS) continue;
-          seenPlaceIds.add(place.place_id);
-
-          const distFromOrigin = haversineDistance(
-            { lat: draft.originLat!, lng: draft.originLng! },
-            { lat: place.geometry.location.lat, lng: place.geometry.location.lng },
-          );
-
-          allSuggestions.push({
-            placeId: place.place_id,
-            name: place.name,
-            address: place.vicinity || place.name,
-            lat: place.geometry.location.lat,
-            lng: place.geometry.location.lng,
-            distanceFromOriginKm: Math.round((distFromOrigin / 1000) * 10) / 10,
-            distanceFromOriginMeters: Math.round(distFromOrigin),
-            types: place.types || [],
-          });
-        }
+      const seatTown = seatTownNameFromAdminArea(resolved?.adminAreaLevel2 || null);
+      if (seatTown && !seatTownCandidates.has(seatTown)) {
+        seatTownCandidates.set(seatTown, resolved?.countryCode || null);
       }
+
+      if (!locality?.place_id || !locality.geometry?.location) continue;
+
+      // Only real towns — never gas stations, junctions or generic POIs.
+      const types = locality.types || [];
+      if (!types.some((type) => STOPOVER_LOCALITY_TYPES.includes(type))) continue;
+
+      if (seenPlaceIds.has(locality.place_id)) continue;
+      if (locality.place_id === draft.originPlaceId || locality.place_id === draft.destinationPlaceId) continue;
+
+      const name = localityName(locality);
+      const nameKey = name.toLowerCase();
+      // Consecutive samples inside one town resolve to the same locality.
+      if (seenNames.has(nameKey)) continue;
+
+      // The town's centre is not the sampled road point — keep it only if the centre is
+      // still inside the corridor that save and publish enforce.
+      const townCenter = { lat: locality.geometry.location.lat, lng: locality.geometry.location.lng };
+      if (distanceFromPathMeters(townCenter, decodedPoints) > STOPOVER_CORRIDOR_MAX_METERS) continue;
+
+      // Distance along the road to the sample, not straight-line from origin: this orders the
+      // suggestions and drives their price.
+      const alongRouteMeters = point.distanceFromOrigin;
+      if (alongRouteMeters < STOPOVER_ENDPOINT_EXCLUSION_METERS) continue;
+      if (routeLengthMeters - alongRouteMeters < STOPOVER_ENDPOINT_EXCLUSION_METERS) continue;
+
+      seenPlaceIds.add(locality.place_id);
+      seenNames.add(nameKey);
+
+      allSuggestions.push({
+        placeId: locality.place_id,
+        name,
+        address: locality.formatted_address || name,
+        lat: townCenter.lat,
+        lng: townCenter.lng,
+        distanceFromOriginKm: Math.round((alongRouteMeters / 1000) * 10) / 10,
+        distanceFromOriginMeters: Math.round(alongRouteMeters),
+        types,
+        isMajorTown: isAdministrativeSeat(name, resolved?.adminAreaLevel2 || null),
+      });
     } catch (err) {
-      // Skip failed queries silently, continue with other points
-            logWarn('Places API error for point', { point, error: err instanceof Error ? err.message : err });
+      // Skip failed lookups silently, continue with other points
+      logWarn('Reverse geocode error for route point', { point, error: err instanceof Error ? err.message : err });
     }
   }
 
-  // 4. Sort by route order, preferring locality/city results before generic places.
+  // 4. Resolve each crossed administrative area to its seat town. The road often bypasses
+  //    the town it is named for (Põltsamaa, Paide on Tallinn–Tartu), so sampling alone only
+  //    ever finds villages. A name that is not a real locality (a bare county) resolves to
+  //    null and is dropped.
+  for (const [seatTown, countryCode] of seatTownCandidates) {
+    if (seenNames.has(seatTown.toLowerCase())) continue;
+
+    try {
+      const town = await googleService.geocodeLocality(seatTown, countryCode);
+      if (!town?.place_id || !town.geometry?.location) continue;
+      if (seenPlaceIds.has(town.place_id)) continue;
+      if (town.place_id === draft.originPlaceId || town.place_id === draft.destinationPlaceId) continue;
+
+      const townCenter = { lat: town.geometry.location.lat, lng: town.geometry.location.lng };
+      const { offRouteMeters, alongRouteMeters } = projectOntoPath(townCenter, decodedPoints);
+      if (offRouteMeters > STOPOVER_CORRIDOR_MAX_METERS) continue;
+      if (alongRouteMeters < STOPOVER_ENDPOINT_EXCLUSION_METERS) continue;
+      if (routeLengthMeters - alongRouteMeters < STOPOVER_ENDPOINT_EXCLUSION_METERS) continue;
+
+      const name = localityName(town) || seatTown;
+      if (seenNames.has(name.toLowerCase())) continue;
+
+      seenPlaceIds.add(town.place_id);
+      seenNames.add(name.toLowerCase());
+
+      allSuggestions.push({
+        placeId: town.place_id,
+        name,
+        address: town.formatted_address || name,
+        lat: townCenter.lat,
+        lng: townCenter.lng,
+        distanceFromOriginKm: Math.round((alongRouteMeters / 1000) * 10) / 10,
+        distanceFromOriginMeters: Math.round(alongRouteMeters),
+        types: town.types || [],
+        isMajorTown: true,
+      });
+    } catch (err) {
+      logWarn('Seat town lookup failed', { seatTown, error: err instanceof Error ? err.message : err });
+    }
+  }
+
+  // 5. Towns first, then villages; each group in route order. Drivers pick the recognisable
+  //    stop, and Estonian localities are village-level so both kinds come back mixed.
   allSuggestions.sort((a, b) => {
-    const aLocality = a.types?.includes('locality') ? 0 : 1;
-    const bLocality = b.types?.includes('locality') ? 0 : 1;
-    if (aLocality !== bLocality) return aLocality - bLocality;
+    const aRank = a.isMajorTown ? 0 : 1;
+    const bRank = b.isMajorTown ? 0 : 1;
+    if (aRank !== bRank) return aRank - bRank;
     return a.distanceFromOriginMeters - b.distanceFromOriginMeters;
   });
 
-  // 5. Calculate arrival times if departure time and duration are available
+  // 6. Route totals used for pricing and arrival times
   const totalDistanceKm = (draft.routeDistanceMeters || 0) / 1000;
   const totalDurationSeconds = draft.routeDurationSeconds || 0;
 
-  let arrivalTimes: string[] = [];
-  if (draft.departureTime && totalDurationSeconds > 0 && allSuggestions.length > 0) {
-    // Create a temporary waypoint list: origin + suggestions + destination
-    const waypointCount = allSuggestions.length + 2;
-    arrivalTimes = calculateWaypointArrivalTimes(
-      draft.departureTime,
-      totalDurationSeconds,
-      waypointCount,
-    );
-  }
+  // 7. Auto-calculate per-stopper pricing and arrival times. Both derive from the town's own
+  //    along-route distance, so they stay correct while the list is ordered towns-first.
+  for (const suggestion of allSuggestions) {
+    if (totalDistanceKm <= 0) continue;
+    const distanceRatio = suggestion.distanceFromOriginKm / totalDistanceKm;
 
-  // 6. Auto-calculate per-stopper pricing and assign arrival times
-  for (let i = 0; i < allSuggestions.length; i++) {
-    const suggestion = allSuggestions[i];
-
-    // Calculate price if base price exists
-    if (draft.basePricePerSeat && totalDistanceKm > 0) {
-      const distanceRatio = suggestion.distanceFromOriginKm / totalDistanceKm;
+    if (draft.basePricePerSeat) {
       suggestion.pricePerSeat = Math.round(draft.basePricePerSeat * distanceRatio * 100) / 100;
     }
 
-    // Assign arrival time (index + 1 because index 0 is origin)
-    if (arrivalTimes.length > 0) {
-      suggestion.estimatedArrivalTime = arrivalTimes[i + 1];
+    if (draft.departureTime && totalDurationSeconds > 0) {
+      suggestion.estimatedArrivalTime = arrivalTimeAtRouteFraction(
+        draft.departureTime,
+        totalDurationSeconds,
+        distanceRatio,
+      );
     }
   }
 
@@ -1179,16 +1330,8 @@ const DEFAULT_DISTANCE_PRICING_CONFIG: PricingConfigData = DEFAULT_BALTIC_PRICIN
 
 export const getRecommendedPrice = async (
   driverId: string,
-): Promise<
-  PriceRecommendation & {
-    stopoverPricing?: {
-      placeId: string;
-      address: string;
-      distanceFromOriginKm: number;
-      recommendedPrice: number;
-    }[];
-  }
-> => {
+  candidateBasePricePerSeat?: number,
+): Promise<PriceRecommendation> => {
   const draft = await getDraft(driverId);
 
   if (!draft.routeDistanceMeters) {
@@ -1215,16 +1358,16 @@ export const getRecommendedPrice = async (
   const recommendedPrice = calculation.recommendedPricePerSeat;
   const maxPrice = calculation.maxAllowedPricePerSeat;
 
+  // The price the driver is actually looking at: their own candidate once they have typed one,
+  // otherwise the recommendation. Everything below — the quote and the per-stopover fares — is
+  // priced off this single value, so the preview cannot disagree with what updatePricing saves.
+  const quotedBasePrice =
+    candidateBasePricePerSeat !== undefined && candidateBasePricePerSeat > 0
+      ? candidateBasePricePerSeat
+      : recommendedPrice;
+
   // Calculate per-stopper pricing and arrival times if stopovers exist
-  let stopoverPricing:
-    | {
-        placeId: string;
-        address: string;
-        distanceFromOriginKm: number;
-        recommendedPrice: number;
-        estimatedArrivalTime?: string;
-      }[]
-    | undefined;
+  let stopoverPricing: StopoverRecommendedPrice[] | undefined;
 
   if (draft.stopovers && draft.stopovers.length > 0 && draft.originLat && draft.originLng) {
     // Calculate arrival times if departure time is set
@@ -1243,15 +1386,23 @@ export const getRecommendedPrice = async (
         { lat: draft.originLat!, lng: draft.originLng! },
         { lat: stopover.lat, lng: stopover.lng },
       );
-      const distFromOriginKm = Math.round((distFromOrigin / 1000) * 10) / 10;
-      const ratio = distFromOriginKm / distanceKm;
-      const stopPrice = Math.round(recommendedPrice * ratio * 100) / 100;
+      const distFromOriginKm = distFromOrigin / 1000;
+      const fare = calculateStopoverFare(quotedBasePrice, distFromOriginKm, distanceKm);
 
       return {
         placeId: stopover.placeId,
         address: stopover.address,
-        distanceFromOriginKm: distFromOriginKm,
-        recommendedPrice: stopPrice,
+        // Rounded for display only — the fares above are priced off the unrounded distance.
+        distanceFromOriginKm: Math.round(distFromOriginKm * 10) / 10,
+        recommendedPrice: fare.recommendedPrice,
+        minPrice: fare.minPrice,
+        maxPrice: fare.maxPrice,
+        // Re-clamped against the range for the price currently being quoted: the driver may have
+        // set this stop's fare and then moved the base price, which shifts the whole range.
+        driverPricePerSeat:
+          stopover.driverPricePerSeat !== undefined
+            ? clampToRange(stopover.driverPricePerSeat, fare.minPrice, fare.maxPrice)
+            : undefined,
         estimatedArrivalTime: arrivalTimes.length > 0 ? arrivalTimes[index + 1] : undefined,
       };
     });
@@ -1260,11 +1411,49 @@ export const getRecommendedPrice = async (
     stopoverPricing.sort((a, b) => a.distanceFromOriginKm - b.distanceFromOriginKm);
   }
 
+  const currency = calculation.currency || draft.currency || 'EUR';
+
+  // Every amount the publish screen shows is computed here, with the same function that prices the
+  // rider's real booking, so the driver-facing promise cannot drift from what the rider is charged.
+  const feeTerms = await resolveActiveFeeTerms(calculation.regionCode);
+  const seats = draft.totalSeats && draft.totalSeats > 0 ? draft.totalSeats : 1;
+
+  const priceFor = (seatsBooked: number) =>
+    calculateBookingPrice({
+      basePricePerSeat: quotedBasePrice,
+      seatsBooked,
+      currency,
+      serviceFeePercent: feeTerms.serviceFeePercent,
+      serviceFeeFlat: feeTerms.serviceFeeFlat,
+    });
+
+  const perSeatBreakdown = priceFor(1);
+  const fullRideBreakdown = priceFor(seats);
+
+  const quote: PriceQuote = {
+    basePricePerSeat: quotedBasePrice,
+    seats,
+    currency,
+    serviceFeePercent: feeTerms.serviceFeePercent,
+    serviceFeeFlat: feeTerms.serviceFeeFlat,
+    perSeat: {
+      driverNet: perSeatBreakdown.subtotal,
+      serviceFee: perSeatBreakdown.serviceFee,
+      riderTotal: perSeatBreakdown.totalPrice,
+    },
+    fullRide: {
+      driverNet: fullRideBreakdown.subtotal,
+      serviceFee: fullRideBreakdown.serviceFee,
+      riderTotal: fullRideBreakdown.totalPrice,
+    },
+  };
+
   return {
     recommendedPrice,
     minPrice,
     maxPrice,
-    currency: calculation.currency || draft.currency || 'EUR',
+    currency,
+    quote,
     breakdown: {
       estimatedRouteCost: Math.round(estimatedRouteCost * 100) / 100,
       distanceKm: Math.round(distanceKm * 10) / 10,
@@ -1308,19 +1497,26 @@ export const updatePricing = async (
         { lat: stopover.lat, lng: stopover.lng },
       );
       const distFromOriginKm = distFromOrigin / 1000;
-      const distanceRatio = distFromOriginKm / totalDistanceKm;
 
-      // Calculate prices based on base price and distance ratio
-      const stopoverBasePrice = input.basePricePerSeat * distanceRatio;
-      const recommendedPrice = Math.round(stopoverBasePrice * 100) / 100;
-      const minPrice = Math.round(stopoverBasePrice * 0.8 * 100) / 100;
-      const maxPrice = Math.round(stopoverBasePrice * 1.67 * 100) / 100; // 250/150 = 1.67
+      // Same helper the recommended-price preview uses, so the driver is saving the exact fares
+      // they were shown on the price step.
+      const fare = calculateStopoverFare(input.basePricePerSeat, distFromOriginKm, totalDistanceKm);
+
+      // The driver's own fare for this stop wins over the distance-derived one, held inside the
+      // range so a stop can never be priced above the full ride or below the floor. Omitting the
+      // stop from stopoverPricing keeps whatever they set before; sending it clears or replaces it.
+      const chosen = input.stopoverPricing?.find((item) => item.placeId === stopover.placeId);
+      const driverPricePerSeat =
+        chosen !== undefined
+          ? clampToRange(chosen.pricePerSeat, fare.minPrice, fare.maxPrice)
+          : stopover.driverPricePerSeat !== undefined
+            ? clampToRange(stopover.driverPricePerSeat, fare.minPrice, fare.maxPrice)
+            : undefined;
 
       return {
         ...stopover,
-        recommendedPrice,
-        minPrice,
-        maxPrice,
+        ...fare,
+        driverPricePerSeat,
       };
     });
   }
@@ -1673,7 +1869,8 @@ export const publishRide = async (driverId: string) => {
       lng: s.lng,
       waypointType: 'STOPOVER' as const,
       orderIndex: i + 50,
-      pricePerSeat: s.recommendedPrice ?? null, // Use embedded recommendedPrice
+      // The driver's own fare for this stop, falling back to the distance-derived one.
+      pricePerSeat: s.driverPricePerSeat ?? s.recommendedPrice ?? null,
     }));
 
     // Sort all waypoints by orderIndex

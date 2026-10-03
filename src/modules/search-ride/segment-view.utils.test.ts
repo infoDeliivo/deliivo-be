@@ -1,3 +1,5 @@
+import polyline from '@mapbox/polyline';
+
 import { buildSegmentPoints, resolveSegmentView } from './segment-view.utils.js';
 
 describe('resolveSegmentView', () => {
@@ -102,6 +104,97 @@ describe('resolveSegmentView', () => {
         const result = resolveSegmentView(rideWithNullPrice, points, 'origin', 'waypoint:wp-b');
         expect(result).not.toBeNull();
         expect(result?.basePricePerSeat).toBe(10);
+    });
+
+    it('interpolates unpriced stopovers between their priced neighbours, not across meeting points', () => {
+        // Publishing requires a meeting point at each end, so the waypoint list normally carries a
+        // PICKUP at the origin and a DROPOFF at the destination. Spreading the interpolation over
+        // those too gave every unpriced stopover a share of the ride it does not cover: with one
+        // pickup and one dropoff present, B came out at 30 * 2/5 = 12 instead of 30 * 1/3 = 10.
+        const rideWithMeetingPoints = {
+            ...ride,
+            waypoints: [
+                {
+                    id: 'wp-pickup',
+                    placeId: 'place-p',
+                    address: 'Pickup',
+                    lat: 1,
+                    lng: 1,
+                    waypointType: 'PICKUP',
+                    orderIndex: 0,
+                    pricePerSeat: 0,
+                },
+                {
+                    id: 'wp-b',
+                    placeId: 'place-b',
+                    address: 'B',
+                    lat: 2,
+                    lng: 2,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 50,
+                    pricePerSeat: null,
+                },
+                {
+                    id: 'wp-c',
+                    placeId: 'place-c',
+                    address: 'C',
+                    lat: 3,
+                    lng: 3,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 51,
+                    pricePerSeat: null,
+                },
+                {
+                    id: 'wp-dropoff',
+                    placeId: 'place-d2',
+                    address: 'Dropoff',
+                    lat: 4,
+                    lng: 4,
+                    waypointType: 'DROPOFF',
+                    orderIndex: 100,
+                    pricePerSeat: 30,
+                },
+            ],
+        };
+
+        const points = buildSegmentPoints(rideWithMeetingPoints);
+
+        expect(points[2].cumulativePrice).toBe(10);
+        expect(points[3].cumulativePrice).toBe(20);
+    });
+
+    it('interpolates between whatever prices are known, so a priced stopover anchors its neighbours', () => {
+        const rideWithOnePricedStopover = {
+            ...ride,
+            waypoints: [
+                {
+                    id: 'wp-b',
+                    placeId: 'place-b',
+                    address: 'B',
+                    lat: 2,
+                    lng: 2,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 50,
+                    pricePerSeat: null,
+                },
+                {
+                    id: 'wp-c',
+                    placeId: 'place-c',
+                    address: 'C',
+                    lat: 3,
+                    lng: 3,
+                    waypointType: 'STOPOVER',
+                    orderIndex: 51,
+                    pricePerSeat: 24,
+                },
+            ],
+        };
+
+        const points = buildSegmentPoints(rideWithOnePricedStopover);
+
+        // B sits halfway between the origin (0) and C (24), not at a share of the whole fare.
+        expect(points[1].cumulativePrice).toBe(12);
+        expect(points[2].cumulativePrice).toBe(24);
     });
 
     it('interpolates single stopover without price as midpoint', () => {
@@ -226,5 +319,78 @@ describe('resolveSegmentView', () => {
             pickupWaypointId: 'wp-pickup',
             dropoffWaypointId: 'wp-dropoff',
         });
+    });
+});
+
+describe('segment route metrics', () => {
+    // A straight run from (0,0) to (0,4), with stops at every whole degree along it, so a leg's
+    // share of the route is obvious by inspection.
+    const straightRide = {
+        id: 'ride-2',
+        originPlaceId: 'place-a',
+        originAddress: 'A',
+        originLat: 0,
+        originLng: 0,
+        destinationPlaceId: 'place-d',
+        destinationAddress: 'D',
+        destinationLat: 0,
+        destinationLng: 4,
+        basePricePerSeat: 40,
+        routePolyline: polyline.encode([[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]]),
+        routeDistanceMeters: 400_000,
+        routeDurationSeconds: 14_400,
+        departureTime: '08:00',
+        waypoints: [
+            {
+                id: 'wp-b',
+                placeId: 'place-b',
+                address: 'B',
+                lat: 0,
+                lng: 1,
+                waypointType: 'STOPOVER',
+                orderIndex: 50,
+                pricePerSeat: 10,
+            },
+            {
+                id: 'wp-c',
+                placeId: 'place-c',
+                address: 'C',
+                lat: 0,
+                lng: 3,
+                waypointType: 'STOPOVER',
+                orderIndex: 51,
+                pricePerSeat: 30,
+            },
+        ],
+    };
+
+    it('reports the leg the rider travels, not the whole route', () => {
+        const points = buildSegmentPoints(straightRide);
+        const result = resolveSegmentView(straightRide, points, 'waypoint:wp-b', 'waypoint:wp-c');
+
+        // B -> C is half of a four-degree route.
+        expect(result?.routeDistanceMeters).toBe(200_000);
+        expect(result?.routeDurationSeconds).toBe(7_200);
+        // B is a quarter of the way along a four-hour drive that leaves at 08:00.
+        expect(result?.departureTime).toBe('09:00');
+    });
+
+    it('keeps the ride figures when the rider travels end to end', () => {
+        const points = buildSegmentPoints(straightRide);
+        const result = resolveSegmentView(straightRide, points, 'origin', 'destination');
+
+        expect(result?.routeDistanceMeters).toBe(400_000);
+        expect(result?.routeDurationSeconds).toBe(14_400);
+        expect(result?.departureTime).toBe('08:00');
+    });
+
+    it('reports nothing rather than the full route when the ride has no geometry', () => {
+        const withoutPolyline = { ...straightRide, routePolyline: null };
+        const points = buildSegmentPoints(withoutPolyline);
+        const result = resolveSegmentView(withoutPolyline, points, 'waypoint:wp-b', 'waypoint:wp-c');
+
+        expect(result?.routeDistanceMeters).toBeNull();
+        expect(result?.routeDurationSeconds).toBeNull();
+        expect(result?.departureTime).toBeNull();
     });
 });

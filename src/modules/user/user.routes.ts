@@ -38,6 +38,18 @@ router.post(
   userController.completeOnBoardingStep1 as unknown as express.RequestHandler,
 );
 
+// Add or replace email/phone: OTP goes to the new value, saved only once verified
+router.post(
+  '/me/contact/request',
+  validate({ body: schemas.contactRequestSchema }),
+  userController.requestContactChange as unknown as express.RequestHandler,
+);
+router.post(
+  '/me/contact/verify',
+  validate({ body: schemas.contactVerifySchema }),
+  userController.verifyContactChange as unknown as express.RequestHandler,
+);
+
 // Avatar upload now uses the presigned flow: POST /api/v1/uploads/presign then
 // POST /api/v1/uploads/confirm with target=avatar.
 

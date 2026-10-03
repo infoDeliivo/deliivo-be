@@ -22,6 +22,22 @@ export default async function globalTeardown(): Promise<void> {
 
     console.log(`[e2e teardown] Cleaning up test data for run ${state.runId}...`);
 
+    // Payment, Dispute, TrackingLink and RidePricingSnapshot have no cascade on
+    // their ride/booking relations, so they have to go first or deleting the
+    // users fails on a foreign key and every test row is left behind.
+    const testUser = { email: { endsWith: '@test.local' } };
+    const testBooking = {
+      OR: [{ passenger: testUser }, { ride: { driver: testUser } }],
+    };
+
+    await prisma.payoutItem.deleteMany({ where: { payment: { booking: testBooking } } });
+    await prisma.payment.deleteMany({ where: { booking: testBooking } });
+    await prisma.trackingLink.deleteMany({ where: { booking: testBooking } });
+    await prisma.dispute.deleteMany({ where: { booking: testBooking } });
+    await prisma.ridePricingSnapshot.deleteMany({
+      where: { ride: { driver: testUser } },
+    });
+
     // Delete all users whose emails match the test domain for this run.
     // Cascade deletes handle: rides, bookings, ratings, notifications, tokens, etc.
     const deleted = await prisma.user.deleteMany({

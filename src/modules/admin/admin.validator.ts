@@ -8,6 +8,11 @@ export const userIdParamSchema = z.object({
     id: z.string().uuid('A valid user id is required'),
 });
 
+export const adminDeleteUserSchema = z.object({
+    confirm: z.literal(true),
+    mode: z.enum(['soft', 'hard']).default('soft'),
+});
+
 export const rejectVehicleSchema = z.object({
     // The reason is shown to the driver verbatim in the rejection notification, so it
     // must actually say something.
@@ -60,3 +65,13 @@ export const adminVerificationEmailSchema = z.object({
 });
 
 export type AdminVerificationEmailInput = z.infer<typeof adminVerificationEmailSchema>;
+
+export const rideOverrideQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    actorId: z.string().uuid('actorId must be a UUID').optional(),
+    rideId: z.string().uuid('rideId must be a UUID').optional(),
+    bookingId: z.string().uuid('bookingId must be a UUID').optional(),
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+});

@@ -9,17 +9,17 @@ import {
   assertDriverHasNoOverlappingRide,
   detectBlockedRoute,
 } from '../publish-ride/draft-ride.service.js';
-import { validateAndSnapshotPricing } from '../pricing/pricing.service.js';
+import { validateAndSnapshotPricing, resolveRideFeeTerms } from '../pricing/pricing.service.js';
+import { calculateBookingPrice } from '../ride-booking/booking-price.js';
 import { createNotification } from '../notification/notification.service.js';
 import { calculateAgeYears, MINIMUM_BOOKING_AGE_YEARS } from '../../utils/age.js';
 import {
   createBooking,
   getBookingById,
   applyStripePaymentSucceededToBooking,
-  calculateBookingPrice,
 } from '../ride-booking/ride-booking.service.js';
 import { cancelPaymentIntent, getStripeClient } from '../payments/stripe.service.js';
-import { releaseSegmentSeats } from '../ride-booking/segment-capacity.utils.js';
+import { releaseBookingSeats } from '../ride-booking/segment-capacity.utils.js';
 import { assertRequestWindow, assertOfferFits } from './ride-request.policy.js';
 import { ensureRequestPayment } from './ride-request.payment.js';
 
@@ -234,16 +234,17 @@ export async function requestDetails(id: string, userId: string, admin = false) 
     isOwner: owner,
     status:
       request.status === 'OPEN' && request.expiresAt < new Date() ? 'EXPIRED' : request.status,
-    offers: (owner || admin ? request.offers : ownOffers).map((offer) => ({
+    offers: await Promise.all((owner || admin ? request.offers : ownOffers).map(async (offer) => ({
       ...offer,
       status: offer.status === 'OPEN' && offer.expiresAt < new Date() ? 'EXPIRED' : offer.status,
-      price: calculateBookingPrice(
-        offer.ride.basePricePerSeat,
-        request.seats,
-        request.luggage,
-        offer.ride.currency,
-      ),
-    })),
+      price: calculateBookingPrice({
+        basePricePerSeat: offer.ride.basePricePerSeat,
+        seatsBooked: request.seats,
+        luggageCount: request.luggage,
+        currency: offer.ride.currency,
+        ...await resolveRideFeeTerms(offer.rideId),
+      }),
+    }))),
   };
 }
 
@@ -459,7 +460,8 @@ export async function expireRequestCheckouts() {
             },
           });
           if (updated.count)
-            await releaseSegmentSeats(tx, {
+            await releaseBookingSeats(tx, {
+              bookingId: booking.id,
               rideId: booking.rideId,
               seatsBooked: booking.seatsBooked,
               pickupPosition: booking.pickupPosition,

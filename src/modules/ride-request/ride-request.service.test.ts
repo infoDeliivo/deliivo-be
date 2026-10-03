@@ -26,7 +26,7 @@ jest.mock('../payments/stripe.service.js', () => ({
   cancelPaymentIntent: jest.fn(),
   getStripeClient: () => ({ paymentIntents: { retrieve: mockRetrieve } }),
 }));
-jest.mock('../ride-booking/segment-capacity.utils.js', () => ({ releaseSegmentSeats: jest.fn() }));
+jest.mock('../ride-booking/segment-capacity.utils.js', () => ({ releaseBookingSeats: jest.fn() }));
 
 import {
   expireRequestCheckouts,
@@ -42,7 +42,7 @@ import {
   applyStripePaymentSucceededToBooking,
   createBooking,
 } from '../ride-booking/ride-booking.service.js';
-import { releaseSegmentSeats } from '../ride-booking/segment-capacity.utils.js';
+import { releaseBookingSeats } from '../ride-booking/segment-capacity.utils.js';
 import { ensureRequestPayment } from './ride-request.payment.js';
 import { getBookingById } from '../ride-booking/ride-booking.service.js';
 
@@ -120,7 +120,7 @@ describe('request checkout reconciliation', () => {
     expect((cancelPaymentIntent as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
       mockDb.$transaction.mock.invocationCallOrder[0],
     );
-    expect(releaseSegmentSeats).toHaveBeenCalledTimes(1);
+    expect(releaseBookingSeats).toHaveBeenCalledTimes(1);
     expect(mockDb.ride.update).toHaveBeenCalledWith({
       where: { id: 'ride' },
       data: { status: 'CANCELLED' },
@@ -137,14 +137,14 @@ describe('request checkout reconciliation', () => {
       status: 'succeeded',
     });
     expect(cancelPaymentIntent).not.toHaveBeenCalled();
-    expect(releaseSegmentSeats).not.toHaveBeenCalled();
+    expect(releaseBookingSeats).not.toHaveBeenCalled();
   });
   it('keeps reservations when Stripe cancellation is inconclusive', async () => {
     (cancelPaymentIntent as jest.Mock).mockRejectedValueOnce(new Error('Stripe unavailable'));
     const warning = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expireRequestCheckouts();
     expect(mockDb.$transaction).not.toHaveBeenCalled();
-    expect(releaseSegmentSeats).not.toHaveBeenCalled();
+    expect(releaseBookingSeats).not.toHaveBeenCalled();
     expect(warning).toHaveBeenCalled();
     warning.mockRestore();
   });
@@ -152,12 +152,12 @@ describe('request checkout reconciliation', () => {
     mockRetrieve.mockResolvedValue({ id: 'pi_test', status: 'canceled' });
     await expireRequestCheckouts();
     expect(cancelPaymentIntent).not.toHaveBeenCalled();
-    expect(releaseSegmentSeats).toHaveBeenCalledTimes(1);
+    expect(releaseBookingSeats).toHaveBeenCalledTimes(1);
   });
   it('does not release seats twice when another worker won the booking transition', async () => {
     mockDb.rideBooking.updateMany.mockResolvedValue({ count: 0 });
     await expireRequestCheckouts();
-    expect(releaseSegmentSeats).not.toHaveBeenCalled();
+    expect(releaseBookingSeats).not.toHaveBeenCalled();
     expect(mockDb.ride.update).not.toHaveBeenCalled();
   });
   it('cleans up failed initialization without a payment intent', async () => {
@@ -178,7 +178,7 @@ describe('request checkout reconciliation', () => {
     ]);
     await expireRequestCheckouts();
     expect(mockRetrieve).not.toHaveBeenCalled();
-    expect(releaseSegmentSeats).toHaveBeenCalledTimes(1);
+    expect(releaseBookingSeats).toHaveBeenCalledTimes(1);
   });
   it('rejects checkout by a different rider before invoking payment', async () => {
     mockDb.rideRequestOffer.findUnique.mockResolvedValue({ request: { riderId: 'owner' } });
@@ -208,7 +208,7 @@ describe('request checkout reconciliation', () => {
         where: expect.objectContaining({ stripePaymentIntentId: null, payment: { is: null } }),
       }),
     );
-    expect(releaseSegmentSeats).not.toHaveBeenCalled();
+    expect(releaseBookingSeats).not.toHaveBeenCalled();
     expect(mockDb.ride.update).not.toHaveBeenCalled();
     // On retry the intent is visible and must be cancelled before release.
     mockDb.rideRequestOffer.findMany.mockResolvedValueOnce([
@@ -221,7 +221,7 @@ describe('request checkout reconciliation', () => {
     ]);
     await expireRequestCheckouts();
     expect(cancelPaymentIntent).toHaveBeenCalledWith('pi_linked_after_scan');
-    expect(releaseSegmentSeats).toHaveBeenCalledTimes(1);
+    expect(releaseBookingSeats).toHaveBeenCalledTimes(1);
   });
   it('also compares the fallback payment-record intent before releasing seats', async () => {
     mockDb.rideRequestOffer.findMany.mockResolvedValueOnce([

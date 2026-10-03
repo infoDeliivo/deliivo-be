@@ -119,6 +119,12 @@ export const listRidesQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(100).default(10),
 });
 
+/* ================= PRICE RECOMMENDATION QUERY ================= */
+// The publish screen re-quotes as the driver edits the price, since it may not compute fees itself.
+export const recommendedPriceQuerySchema = z.object({
+    basePricePerSeat: z.coerce.number().positive().max(10000).optional(),
+});
+
 /* ================= RIDE ID PARAM SCHEMA ================= */
 export const rideIdParamSchema = z.object({
     id: z.string().uuid('Invalid ride ID'),

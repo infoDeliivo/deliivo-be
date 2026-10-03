@@ -62,6 +62,28 @@ export const unbanUser = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const deleteUser = async (req: AuthRequest, res: Response) => {
+    try {
+        const mode = req.body?.mode === 'hard' ? 'hard' : 'soft';
+        const result = await AdminService.deleteUser(req.params.id as string, { mode });
+        return sendSuccess(res, {
+            message: mode === 'hard' ? 'User permanently deleted' : 'User soft-deleted',
+            data: result,
+        });
+    } catch (error: any) {
+        if (error.message === 'USER_NOT_FOUND') {
+            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+        }
+        if (error.message === 'CANNOT_DELETE_ADMIN') {
+            return sendError(res, { status: HttpStatus.FORBIDDEN, message: 'Cannot delete an admin account' });
+        }
+        if (error.message === 'HARD_DELETE_DISABLED') {
+            return sendError(res, { status: HttpStatus.CONFLICT, message: 'Hard delete is disabled' });
+        }
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to delete user' });
+    }
+};
+
 export const requireVeriffForUser = async (req: AuthRequest, res: Response) => {
     try {
         const result = await AdminService.requireVeriffForUser(req.params.id as string, req.user?.id ?? null);
@@ -155,6 +177,23 @@ export const getMonitoringTrends = async (_req: AuthRequest, res: Response) => {
 };
 
 /* ================= RIDE HISTORY ================= */
+export const listRideOverrides = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await AdminService.listRideOverrides({
+            page: req.query.page ? Number(req.query.page) : undefined,
+            limit: req.query.limit ? Number(req.query.limit) : undefined,
+            actorId: req.query.actorId as string | undefined,
+            rideId: req.query.rideId as string | undefined,
+            bookingId: req.query.bookingId as string | undefined,
+            from: req.query.from as string | undefined,
+            to: req.query.to as string | undefined,
+        });
+        return sendSuccess(res, { message: 'Forced ride actions fetched', data: result });
+    } catch {
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch forced ride actions' });
+    }
+};
+
 export const listRides = async (req: AuthRequest, res: Response) => {
     try {
         const result = await AdminService.listRides({
@@ -365,6 +404,8 @@ export const createPricingConfig = async (req: AuthRequest, res: Response) => {
             maxRatePerKm: req.body.maxRatePerKm,
             minimumSeatPrice: req.body.minimumSeatPrice,
             roundingStrategy: req.body.roundingStrategy,
+            serviceFeePercent: req.body.serviceFeePercent,
+            serviceFeeFlat: req.body.serviceFeeFlat,
             active: req.body.active,
             validFrom: req.body.validFrom,
             validTo: req.body.validTo ?? null,
@@ -392,6 +433,8 @@ export const updatePricingConfig = async (req: AuthRequest, res: Response) => {
             maxRatePerKm: req.body.maxRatePerKm,
             minimumSeatPrice: req.body.minimumSeatPrice,
             roundingStrategy: req.body.roundingStrategy,
+            serviceFeePercent: req.body.serviceFeePercent,
+            serviceFeeFlat: req.body.serviceFeeFlat,
             active: req.body.active,
             validFrom: req.body.validFrom,
             validTo: req.body.validTo ?? undefined,
