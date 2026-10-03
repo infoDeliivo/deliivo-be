@@ -10,6 +10,11 @@ const colors = {
   dark: '#1a1a2e',
   gray: '#6b7280',
   white: '#ffffff',
+  text: '#374151',
+  border: '#f3e8dc',
+  divider: '#f3f4f6',
+  orangeBorder: '#fed7aa', // primary-200
+  orangeText: '#c2410c', // primary-700, readable on orangeLight
 } as const;
 
 const fontStack = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
@@ -34,47 +39,59 @@ type LayoutOptions = {
   preheader: string;
   heading: string;
   body: string;
+  // Short label above the heading that says why this email was sent, e.g. "Sign up".
+  purpose?: string;
   main?: string;
   note?: string;
 };
 
-const emailLayout = ({ preheader, heading, body, main = '', note = '' }: LayoutOptions) => `
+const emailLayout = ({ preheader, heading, body, purpose, main = '', note = '' }: LayoutOptions) => {
+  const siteUrl = appBaseUrl().replace(/\/$/, '');
+  const footerLink = (label: string, href: string) =>
+    `<a href="${escapeHtml(href)}" target="_blank" style="color: ${colors.gray}; text-decoration: underline">${label}</a>`;
+
+  // No <title>: some webmail clients render it as visible text above the email.
+  return `
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light only" />
-    <title>${heading}</title>
   </head>
   <body style="margin: 0; padding: 0; background-color: ${colors.cream}">
     <div style="display: none; max-height: 0; overflow: hidden; opacity: 0">${preheader}</div>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: ${colors.cream}">
       <tr>
-        <td align="center" style="padding: 32px 16px">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; background-color: ${colors.white}; border-radius: 16px; overflow: hidden">
+        <td align="center" style="padding: 40px 16px">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 560px; background-color: ${colors.white}; border: 1px solid ${colors.border}; border-radius: 16px; overflow: hidden">
             <tr>
-              <td style="height: 6px; line-height: 6px; font-size: 0; background-color: ${colors.orange}">&nbsp;</td>
+              <td style="height: 4px; line-height: 4px; font-size: 0; background-color: ${colors.orange}">&nbsp;</td>
             </tr>
             <tr>
-              <td style="padding: 32px 32px 0; font-family: ${fontStack}">
-                <img src="${escapeHtml(mailLogoUrl())}" width="112" height="39" alt="Deliivo" style="display: block; width: 112px; height: 39px; border: 0; font-size: 20px; font-weight: 800; color: ${colors.orangeDark}" />
+              <td style="padding: 28px 40px 24px; border-bottom: 1px solid ${colors.divider}">
+                <img src="${escapeHtml(mailLogoUrl())}" width="112" height="39" alt="Deliivo" style="display: block; width: 112px; height: 39px; border: 0; font-family: ${fontStack}; font-size: 20px; font-weight: 800; color: ${colors.orangeDark}" />
               </td>
             </tr>
             <tr>
-              <td style="padding: 24px 32px 32px; font-family: ${fontStack}; color: ${colors.dark}">
-                <h1 style="margin: 0 0 12px; font-size: 22px; font-weight: 700; color: ${colors.dark}">${heading}</h1>
-                <p style="margin: 0; font-size: 15px; line-height: 1.6; color: ${colors.dark}">${body}</p>
+              <td style="padding: 36px 40px 40px; font-family: ${fontStack}; color: ${colors.dark}">
+                ${purpose ? `<div style="margin: 0 0 14px"><span style="display: inline-block; padding: 4px 12px; border-radius: 999px; background-color: ${colors.orangeLight}; border: 1px solid ${colors.orangeBorder}; font-family: ${fontStack}; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; color: ${colors.orangeText}">${purpose}</span></div>` : ''}
+                <h1 style="margin: 0 0 12px; font-family: ${fontStack}; font-size: 24px; line-height: 1.3; font-weight: 700; color: ${colors.dark}">${heading}</h1>
+                <p style="margin: 0; font-family: ${fontStack}; font-size: 15px; line-height: 1.6; color: ${colors.text}">${body}</p>
                 ${main}
-                ${note ? `<p style="margin: 24px 0 0; font-size: 13px; line-height: 1.6; color: ${colors.gray}">${note}</p>` : ''}
+                ${note ? `<p style="margin: 28px 0 0; font-family: ${fontStack}; font-size: 13px; line-height: 1.6; color: ${colors.gray}">${note}</p>` : ''}
+                <p style="margin: 28px 0 0; font-family: ${fontStack}; font-size: 15px; line-height: 1.6; color: ${colors.text}">Thanks,<br />The Deliivo team</p>
               </td>
             </tr>
           </table>
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 560px">
             <tr>
-              <td align="center" style="padding: 24px 16px; font-family: ${fontStack}; font-size: 12px; line-height: 1.6; color: ${colors.gray}">
+              <td align="center" style="padding: 24px 16px 0; font-family: ${fontStack}; font-size: 12px; line-height: 1.8; color: ${colors.gray}">
+                ${footerLink('Help', `mailto:${supportEmailAddress()}`)} &nbsp;&middot;&nbsp;
+                ${footerLink('Privacy', `${siteUrl}/privacy`)} &nbsp;&middot;&nbsp;
+                ${footerLink('Terms', `${siteUrl}/terms`)}<br />
                 You received this email because of activity on your Deliivo account.<br />
-                &copy; ${new Date().getFullYear()} Deliivo
+                &copy; ${new Date().getFullYear()} Deliivo. All rights reserved.
               </td>
             </tr>
           </table>
@@ -84,13 +101,20 @@ const emailLayout = ({ preheader, heading, body, main = '', note = '' }: LayoutO
   </body>
 </html>
 `;
+};
 
+// Email clients strip JavaScript, so a real copy-to-clipboard button is impossible.
+// Instead, `user-select: all` selects the whole code on one tap or click, and the plain
+// "verification code" wording lets Gmail and iOS Mail show their own native Copy button.
 const otpBox = (otp: string) => `
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 24px">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px">
     <tr>
-      <td align="center" style="padding: 20px; background-color: ${colors.orangeLight}; border: 1px solid ${colors.orangeDark}; border-radius: 12px">
-        <div style="font-family: ${fontStack}; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: ${colors.orange}">${escapeHtml(otp)}</div>
-        <div style="margin-top: 8px; font-family: ${fontStack}; font-size: 13px; color: ${colors.gray}">Expires in ${OTP_EXPIRY_MINUTES} minutes.</div>
+      <td align="center" style="padding: 24px 16px; background-color: ${colors.orangeLight}; border: 1px solid ${colors.orangeBorder}; border-radius: 12px">
+        <div style="font-family: ${fontStack}; font-size: 12px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: ${colors.gray}">Your verification code</div>
+        <div style="margin-top: 10px; font-family: ${fontStack}; font-size: 36px; line-height: 1.2; font-weight: 700; letter-spacing: 10px; color: ${colors.dark}">
+          <span style="-webkit-user-select: all; user-select: all">${escapeHtml(otp)}</span>
+        </div>
+        <div style="margin-top: 10px; font-family: ${fontStack}; font-size: 13px; color: ${colors.gray}">Expires in ${OTP_EXPIRY_MINUTES} minutes &middot; Tap or select the code to copy it</div>
       </td>
     </tr>
   </table>
@@ -114,6 +138,7 @@ const supportLine = (supportEmail?: string) => `Not you? Contact ${supportLink(s
 export const loginOtpTemplate = (otp: string) =>
   emailLayout({
     preheader: `Use ${escapeHtml(otp)} to sign in. It expires in ${OTP_EXPIRY_MINUTES} minutes.`,
+    purpose: 'Sign in',
     heading: 'Your sign-in code',
     body: 'Enter this code to sign in to your Deliivo account.',
     main: otpBox(otp),
@@ -123,6 +148,7 @@ export const loginOtpTemplate = (otp: string) =>
 export const signupOtpTemplate = (otp: string) =>
   emailLayout({
     preheader: `Your code is ${escapeHtml(otp)}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`,
+    purpose: 'Sign up',
     heading: 'Verify your email',
     body: 'Enter this code in Deliivo to finish creating your account.',
     main: otpBox(otp),
@@ -132,6 +158,7 @@ export const signupOtpTemplate = (otp: string) =>
 export const contactVerifyOtpTemplate = (otp: string) =>
   emailLayout({
     preheader: `Your code is ${escapeHtml(otp)}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`,
+    purpose: 'Email verification',
     heading: 'Confirm this email address',
     body: 'Enter this code to add this email address to your Deliivo account.',
     main: otpBox(otp),
@@ -142,13 +169,15 @@ export const otpSuccessTemplate = (purpose: 'login' | 'signup', supportEmail?: s
   purpose === 'login'
     ? emailLayout({
         preheader: 'You signed in just now.',
-        heading: 'New sign-in',
+        purpose: 'Sign in',
+    heading: 'New sign-in',
         body: 'You signed in to your Deliivo account.',
         note: supportLine(supportEmail),
       })
     : emailLayout({
         preheader: "You're all set.",
-        heading: 'Email verified',
+        purpose: 'Sign up',
+    heading: 'Email verified',
         body: 'Your email is confirmed.',
         note: supportLine(supportEmail),
       });
@@ -156,6 +185,7 @@ export const otpSuccessTemplate = (purpose: 'login' | 'signup', supportEmail?: s
 export const signupWelcomeTemplate = (name?: string, appUrl?: string, supportEmail?: string) =>
   emailLayout({
     preheader: 'Your account is ready. Finish your profile to get started.',
+    purpose: 'Welcome',
     heading: name ? `Welcome, ${escapeHtml(name)}!` : 'Welcome to Deliivo!',
     body: 'Your account is ready. Complete your profile to book your first ride or start driving.',
     main: ctaButton('Open Deliivo', appUrl ?? appBaseUrl()),
@@ -165,6 +195,7 @@ export const signupWelcomeTemplate = (name?: string, appUrl?: string, supportEma
 export const resetOtpTemplate = (otp: string) =>
   emailLayout({
     preheader: `Your reset code is ${escapeHtml(otp)}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`,
+    purpose: 'Password reset',
     heading: 'Reset your password',
     body: 'We received a request to reset your password. Enter this code to choose a new one.',
     main: otpBox(otp),
@@ -174,6 +205,7 @@ export const resetOtpTemplate = (otp: string) =>
 export const passwordChangedTemplate = (changedAt: Date, supportEmail?: string) =>
   emailLayout({
     preheader: 'If this was you, no action is needed.',
+    purpose: 'Security alert',
     heading: 'Password changed',
     body: `The password for your Deliivo account was changed on ${escapeHtml(changedAt.toUTCString())}.`,
     note: supportLine(supportEmail),
