@@ -16,6 +16,23 @@ const breakdown = (overrides: Partial<PriceBreakdown> = {}): PriceBreakdown => (
 });
 
 describe('resolvePaymentSplit', () => {
+    it('allocates the approved 20 percent rider fee without reducing a EUR 10 driver fare', () => {
+        const priced = calculateBookingPrice({
+            basePricePerSeat: 10,
+            seatsBooked: 1,
+            serviceFeePercent: 20,
+            serviceFeeFlat: 0,
+        });
+
+        expect(priced.serviceFee).toBe(2);
+        expect(resolvePaymentSplit(priced)).toEqual({
+            amountTotal: 12,
+            fareAmount: 10,
+            platformFeeAmount: 2,
+            currency: 'EUR',
+        });
+    });
+
     it('gives the driver the full fare they set and the platform only the rider surcharge', () => {
         const split = resolvePaymentSplit(breakdown());
 
