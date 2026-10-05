@@ -187,6 +187,14 @@ describe('TC-CONNECT-007 — Submitting personal details', () => {
     expect(res.status).toBe(400);
   });
 
+  it('accepts a phone-only driver who leaves email blank', async () => {
+    const withoutEmail: Partial<typeof validDetails> = { ...validDetails };
+    delete withoutEmail.email;
+    const res = await da.put('/payments/connect/details', withoutEmail);
+    // Validation must pass; a 500 only means Stripe is not configured here.
+    expect(res.status).not.toBe(400);
+  });
+
   it('rejects a submission missing required fields', async () => {
     const res = await da.put('/payments/connect/details', { firstName: 'Test' });
     expect(res.status).toBe(400);
@@ -254,5 +262,31 @@ describe('TC-CONNECT-009 — Recording terms acceptance', () => {
     const { api } = await import('../helpers/api.client');
     const res = await api.post('/payments/connect/terms', { accepted: true });
     expect(res.status).toBe(401);
+  });
+});
+
+// ── TC-CONNECT-010: Choosing the payout country ──────────────────────────────
+describe('TC-CONNECT-010 — Payout country on first requirements fetch', () => {
+  it('refuses an unsupported country before any Stripe account is opened', async () => {
+    const res = await pa.get('/payments/connect/requirements', { country: 'US' });
+    expect(res.status).toBe(400);
+    expect(res.data.error?.code).toBe('CONNECT_COUNTRY_UNSUPPORTED');
+  });
+
+  it('opens a Lithuanian account, or names what Stripe refused', async () => {
+    const res = await pa.get('/payments/connect/requirements', { country: 'LT' });
+    if (res.status === 500) {
+      // A Stripe rejection must reach the client: a bare message is what left the LT failure
+      // undiagnosable from a screenshot.
+      expect(res.data.message).toBe('Failed to fetch Stripe Connect requirements');
+      if (res.data.error) expect(typeof res.data.error.message).toBe('string');
+      console.warn('TC-CONNECT-010: Stripe rejected LT —', res.data.error?.message ?? 'Stripe not configured');
+      return;
+    }
+    expect(res.status).toBe(200);
+    const body = res.data.data ?? res.data;
+    expect(typeof body.accountId).toBe('string');
+    // Stripe fixes the country at creation; an account opened earlier keeps its own.
+    expect(typeof body.country).toBe('string');
   });
 });

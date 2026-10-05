@@ -83,7 +83,9 @@ const countrySchema = z
 export const connectPersonalDetailsSchema = z.object({
     firstName: requiredText('First name', 100),
     lastName: requiredText('Last name', 100),
-    email: z.string().trim().email('Enter a valid email address'),
+    // Drivers can sign up with a phone number alone and Stripe does not require an email for an
+    // individual, so a blank one is allowed; a non-blank one must still be valid.
+    email: z.string().trim().email('Enter a valid email address').or(z.literal('')).nullish(),
     phone: phoneSchema,
     dob: dobSchema,
     address: z.object({

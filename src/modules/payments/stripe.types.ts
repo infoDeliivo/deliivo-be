@@ -39,7 +39,7 @@ export interface ConnectAccountSessionResult {
 export interface ConnectPersonalDetails {
     firstName: string;
     lastName: string;
-    email: string;
+    email?: string | null;
     phone?: string | null;
     dob: { day: number; month: number; year: number };
     address: {
