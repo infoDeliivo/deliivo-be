@@ -1,6 +1,7 @@
 // @ts-ignore — stripe v21 types bundled via package exports; not resolved by "Node" moduleResolution
 import Stripe from 'stripe';
 import { STRIPE_CURRENCY_DEFAULT, STRIPE_METADATA_KEYS } from './stripe.constants.js';
+import { logError } from '../../utils/logger.js';
 import {
     ConnectAccountPrefill,
     ConnectAccountSessionResult,
@@ -120,8 +121,10 @@ const DEFAULT_SUPPORTED_CONNECT_COUNTRIES = [
 
 const readSupportedConnectCountries = (): Set<string> => {
     const configured = process.env.STRIPE_CONNECT_SUPPORTED_COUNTRIES;
+    // Whitespace is stripped before splitting: a value wrapped across lines in the host's env editor
+    // ("G\n  B") must still read as GB rather than silently dropping the country.
     const values = configured
-        ? configured.split(',').map((value) => value.trim().toUpperCase()).filter(Boolean)
+        ? configured.replace(/\s+/g, '').split(',').map((value) => value.toUpperCase()).filter(Boolean)
         : DEFAULT_SUPPORTED_CONNECT_COUNTRIES;
     return new Set(values.filter((value) => /^[A-Z]{2}$/.test(value)));
 };
@@ -163,15 +166,16 @@ const cleanDob = (
 };
 
 /**
- * Creates a connected account using the Stripe v2 Core Accounts API.
+ * Creates a controller-based connected account on the v1 Accounts API.
  *
- * Driver accounts are created as Recipient Configuration accounts — they only need to
- * receive transfers (payouts), not collect payments. `dashboard: 'none'` keeps requirement
- * collection with the platform, which is what lets the custom onboarding UI file details itself.
+ * `requirement_collection: 'application'` with no Stripe dashboard keeps requirement collection
+ * with the platform, which is what lets the custom onboarding UI file details itself. Drivers only
+ * receive transfers, so `transfers` is the one capability requested.
  *
- * Creation is the only v2 call in this module: retrieve/update/delete, bank accounts, terms and
- * documents all stay on the v1 REST endpoints (`stripe.accounts.*`), which accept a v2 account id
- * and answer in the v1 shape.
+ * This deliberately stays on v1. The v2 Core Accounts API refuses a recipient-configuration account
+ * without a contact email ("configuration.recipient: ... the Account must have a contact email"),
+ * and drivers can sign up with a phone number alone. v1 creates the same account without one:
+ * Stripe then does not list an email among the requirements at all.
  */
 const createConnectedAccount = async (
     userId: string,
@@ -186,49 +190,54 @@ const createConnectedAccount = async (
     const country = readConnectAccountCountry(prefill);
 
     // Prefill only what Stripe will accept; anything malformed is left for onboarding to collect.
-    const individual: Stripe.V2.Core.AccountCreateParams.Identity.Individual = {
-        ...(firstName ? { given_name: firstName } : {}),
-        ...(lastName ? { surname: lastName } : {}),
+    const individual: Stripe.AccountCreateParams.Individual = {
+        ...(firstName ? { first_name: firstName } : {}),
+        ...(lastName ? { last_name: lastName } : {}),
         ...(email ? { email } : {}),
         ...(phone ? { phone } : {}),
-        ...(dob ? { date_of_birth: { day: dob.day, month: dob.month, year: dob.year } } : {}),
+        ...(dob ? { dob } : {}),
     };
 
-    const account = await stripe.v2.core.accounts.create({
-        display_name: [firstName, lastName].filter(Boolean).join(' ') || undefined,
-        contact_email: email,
-        dashboard: 'none',
-        defaults: {
-            responsibilities: {
-                fees_collector: 'application',
-                losses_collector: 'application',
-            },
+    const account = await stripe.accounts.create({
+        ...(country ? { country } : {}),
+        controller: {
+            stripe_dashboard: { type: 'none' },
+            fees: { payer: 'application' },
+            losses: { payments: 'application' },
+            requirement_collection: 'application',
         },
-        configuration: {
-            recipient: {
-                capabilities: {
-                    stripe_balance: {
-                        stripe_transfers: { requested: true },
-                    },
-                },
-            },
-        },
-        identity: {
-            ...(country ? { country } : {}),
-            entity_type: 'individual',
-            ...(Object.keys(individual).length > 0 ? { individual } : {}),
-        },
-        metadata: { userId },
-    });
-
-    // The v2 create endpoint has no business_profile field, so patch it immediately via the
-    // v1 update endpoint. Stripe requires business_profile.url before payouts are enabled.
-    await stripe.accounts.update(account.id, {
+        business_type: 'individual',
         business_profile: buildBusinessProfile(),
+        capabilities: {
+            transfers: { requested: true },
+        },
+        ...(email ? { email } : {}),
+        ...(Object.keys(individual).length > 0 ? { individual } : {}),
+        metadata: { userId },
     });
 
     return account.id;
 };
+
+/**
+ * Accounts opened before APP_BASE_URL was configured are missing business_profile.url, which
+ * Stripe needs before it enables payouts. getConnectRequirements re-applies the profile while
+ * Stripe still lists it as due. A failure is logged, not thrown: the requirements are still worth
+ * returning, and the next fetch retries.
+ */
+const applyBusinessProfile = async (accountId: string): Promise<void> => {
+    try {
+        await getStripeClient().accounts.update(accountId, {
+            business_profile: buildBusinessProfile(),
+        });
+    } catch (error) {
+        logError('[STRIPE_CONNECT] business_profile patch failed', error, { accountId });
+    }
+};
+
+const isBusinessProfileDue = (account: Stripe.Account): boolean =>
+    [...(account.requirements?.currently_due ?? []), ...(account.requirements?.past_due ?? [])]
+        .some((entry) => entry.startsWith('business_profile.'));
 
 /**
  * Returns the driver's connected account, creating it on first use. The custom onboarding flow
@@ -354,6 +363,11 @@ export const getConnectRequirements = async (accountId: string): Promise<Connect
     const stripe = getStripeClient();
     const account = await stripe.accounts.retrieve(accountId);
 
+    if (readRequirementCollection(account) === 'application' && isBusinessProfileDue(account)) {
+        await applyBusinessProfile(accountId);
+        return toRequirements(await stripe.accounts.retrieve(accountId));
+    }
+
     return toRequirements(account);
 };
 
@@ -382,14 +396,16 @@ export const updateConnectPersonalDetails = async (
     }
 
     const country = existing.country ?? details.address.country;
+    // Optional: phone-only drivers have no email, and sending a blank one would be rejected.
+    const email = cleanEmail(details.email);
 
     const account = await stripe.accounts.update(accountId, {
         business_type: 'individual',
-        email: details.email,
+        ...(email ? { email } : {}),
         individual: {
             first_name: details.firstName,
             last_name: details.lastName,
-            email: details.email,
+            ...(email ? { email } : {}),
             phone: cleanPhone(details.phone),
             dob: details.dob,
             address: {

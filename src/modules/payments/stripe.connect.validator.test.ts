@@ -59,6 +59,20 @@ describe('connectPersonalDetailsSchema', () => {
         expect(result.data?.address.country).toBe('DE');
     });
 
+    /** Drivers can sign up with a phone number alone; Stripe does not need an email for them. */
+    it('accepts a submission with no email or a blank one', () => {
+        const withoutEmail: Partial<typeof validDetails> = { ...validDetails };
+        delete withoutEmail.email;
+
+        expect(connectPersonalDetailsSchema.safeParse(withoutEmail).success).toBe(true);
+        expect(connectPersonalDetailsSchema.safeParse({ ...validDetails, email: '' }).success).toBe(true);
+        expect(connectPersonalDetailsSchema.safeParse({ ...validDetails, email: null }).success).toBe(true);
+    });
+
+    it('still rejects an email that is filled in but malformed', () => {
+        expect(connectPersonalDetailsSchema.safeParse({ ...validDetails, email: 'not-an-email' }).success).toBe(false);
+    });
+
     it('rejects something that is not a two-letter country code', () => {
         const result = connectPersonalDetailsSchema.safeParse({
             ...validDetails,
