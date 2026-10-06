@@ -381,35 +381,6 @@ describe('ride operations force override', () => {
         );
     });
 
-    it('flags only riders the driver did not drop off when forcing a finish', async () => {
-        mockPrisma.ride.findUnique.mockResolvedValue({
-            ...buildRide(),
-            bookings: [
-                { id: 'booking-dropped', status: BookingStatus.DROP_PENDING, passengerId: 'rider-dropped' },
-                { id: BOOKING_ID, status: BookingStatus.ONBOARD, passengerId: PASSENGER_ID },
-            ],
-        });
-        mockPrisma.ride.update.mockResolvedValue({
-            id: RIDE_ID, status: RideStatus.COMPLETED, actualEndTime: new Date(),
-        });
-
-        await finishRide(DRIVER_ID, RIDE_ID, rideEvent(FORCED));
-
-        // Both are still named for the admin, but only the rider still in the car is warned/flagged.
-        expect(writtenEvent().metadataJson).toEqual(expect.objectContaining({
-            danglingBookings: [
-                { bookingId: 'booking-dropped', status: BookingStatus.DROP_PENDING },
-                { bookingId: BOOKING_ID, status: BookingStatus.ONBOARD },
-            ],
-        }));
-        expect(mockCreateNotification).toHaveBeenCalledWith(
-            expect.objectContaining({ userId: PASSENGER_ID, type: 'booking.forced_action' })
-        );
-        expect(mockCreateNotification).not.toHaveBeenCalledWith(
-            expect.objectContaining({ userId: 'rider-dropped', type: 'booking.forced_action' })
-        );
-    });
-
     it('still refuses to finish over open bookings without force', async () => {
         mockPrisma.ride.findUnique.mockResolvedValue({
             ...buildRide(),

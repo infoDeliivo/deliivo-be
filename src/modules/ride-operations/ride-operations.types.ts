@@ -42,13 +42,6 @@ export const NON_TERMINAL_BOOKING_STATES: BookingStatus[] = [
     BookingStatus.IN_PROGRESS,
 ];
 
-// The driver has confirmed the drop-off; only the rider's own confirmation is outstanding.
-// Still non-terminal (the booking is not COMPLETED), but the rider is no longer in the car.
-export const DRIVER_DROPPED_OFF_STATES: BookingStatus[] = [
-    BookingStatus.DROP_PENDING,
-    BookingStatus.DRIVER_DROPPED,
-];
-
 export type LocationInput = {
     lat: number;
     lng: number;

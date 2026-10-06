@@ -11,7 +11,6 @@ import {
     RIDE_TRANSITIONS,
     TERMINAL_BOOKING_STATES,
     NON_TERMINAL_BOOKING_STATES,
-    DRIVER_DROPPED_OFF_STATES,
     WAIT_TIME_MINUTES,
     GEOFENCE_RADIUS_METERS,
     LocationInput,
@@ -1025,10 +1024,8 @@ export const finishRide = async (driverId: string, rideId: string, input: RideEv
             : {},
     });
 
-    // Each rider left mid-flight gets warned and their booking flagged for review. A rider the
-    // driver already dropped off (only their own confirmation is missing) is not left mid-flight,
-    // so is not flagged: they confirm, or support settles it, without a dispute.
-    for (const dangling of force.forced ? nonTerminalBookings.filter((b) => !DRIVER_DROPPED_OFF_STATES.includes(b.status)) : []) {
+    // Each rider left mid-flight gets warned and their booking flagged for review.
+    for (const dangling of force.forced ? nonTerminalBookings : []) {
         await handleForcedAction({
             context: force,
             action: 'RIDE_FINISHED',
