@@ -15,6 +15,7 @@ import { formatBookingReference } from '../../utils/booking-reference.js';
 import { combineDepartureDateTimeInRideTimezone } from '../../utils/ride-timezone.js';
 import { isRideStartTooEarly } from '../../utils/ride-start-window.js';
 import { noShowAvailableAt } from '../ride-operations/no-show-window.js';
+import { resolveBookingStops } from './driver-booking-stops.js';
 import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
 
 const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
@@ -273,54 +274,8 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                 enhanced.noShowAvailableAt = noShowAvailableAt(booking.waitTimerStartedAt);
             }
 
-            // Add pickup/dropoff location info with arrival times
-            if (booking.pickupWaypointId || booking.dropoffWaypointId) {
-                const pickupWaypoint = ride.waypoints.find((w: any) => w.id === booking.pickupWaypointId);
-                const dropoffWaypoint = ride.waypoints.find((w: any) => w.id === booking.dropoffWaypointId);
-
-                enhanced.pickupLocation = pickupWaypoint ? {
-                    address: pickupWaypoint.address,
-                    placeId: pickupWaypoint.placeId,
-                    lat: pickupWaypoint.lat,
-                    lng: pickupWaypoint.lng,
-                    estimatedArrivalTime: (pickupWaypoint as any).estimatedArrivalTime,
-                } : {
-                    address: ride.originAddress,
-                    placeId: ride.originPlaceId,
-                    lat: ride.originLat,
-                    lng: ride.originLng,
-                    estimatedArrivalTime: ride.departureTime,
-                };
-
-                enhanced.dropoffLocation = dropoffWaypoint ? {
-                    address: dropoffWaypoint.address,
-                    placeId: dropoffWaypoint.placeId,
-                    lat: dropoffWaypoint.lat,
-                    lng: dropoffWaypoint.lng,
-                    estimatedArrivalTime: (dropoffWaypoint as any).estimatedArrivalTime,
-                } : {
-                    address: ride.destinationAddress,
-                    placeId: ride.destinationPlaceId,
-                    lat: ride.destinationLat,
-                    lng: ride.destinationLng,
-                    estimatedArrivalTime: ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF')?.estimatedArrivalTime || null,
-                };
-            } else {
-                enhanced.pickupLocation = {
-                    address: ride.originAddress,
-                    placeId: ride.originPlaceId,
-                    lat: ride.originLat,
-                    lng: ride.originLng,
-                    estimatedArrivalTime: ride.departureTime,
-                };
-                enhanced.dropoffLocation = {
-                    address: ride.destinationAddress,
-                    placeId: ride.destinationPlaceId,
-                    lat: ride.destinationLat,
-                    lng: ride.destinationLng,
-                    estimatedArrivalTime: ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF')?.estimatedArrivalTime || null,
-                };
-            }
+            // Where the rider actually gets on and off (their booked snapshot first).
+            Object.assign(enhanced, resolveBookingStops(ride, booking));
 
             return enhanced;
         });
@@ -464,54 +419,8 @@ export const getRideById = async (driverId: string, rideId: string) => {
             enhanced.noShowAvailableAt = noShowAvailableAt(booking.waitTimerStartedAt);
         }
 
-        // Add pickup/dropoff location info with arrival times
-        if (booking.pickupWaypointId || booking.dropoffWaypointId) {
-            const pickupWaypoint = ride.waypoints.find((w: any) => w.id === booking.pickupWaypointId);
-            const dropoffWaypoint = ride.waypoints.find((w: any) => w.id === booking.dropoffWaypointId);
-
-            enhanced.pickupLocation = pickupWaypoint ? {
-                address: pickupWaypoint.address,
-                placeId: pickupWaypoint.placeId,
-                lat: pickupWaypoint.lat,
-                lng: pickupWaypoint.lng,
-                estimatedArrivalTime: (pickupWaypoint as any).estimatedArrivalTime,
-            } : {
-                address: ride.originAddress,
-                placeId: ride.originPlaceId,
-                lat: ride.originLat,
-                lng: ride.originLng,
-                estimatedArrivalTime: ride.departureTime,
-            };
-
-            enhanced.dropoffLocation = dropoffWaypoint ? {
-                address: dropoffWaypoint.address,
-                placeId: dropoffWaypoint.placeId,
-                lat: dropoffWaypoint.lat,
-                lng: dropoffWaypoint.lng,
-                estimatedArrivalTime: (dropoffWaypoint as any).estimatedArrivalTime,
-            } : {
-                address: ride.destinationAddress,
-                placeId: ride.destinationPlaceId,
-                lat: ride.destinationLat,
-                lng: ride.destinationLng,
-                estimatedArrivalTime: (ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF') as any)?.estimatedArrivalTime || null,
-            };
-        } else {
-            enhanced.pickupLocation = {
-                address: ride.originAddress,
-                placeId: ride.originPlaceId,
-                lat: ride.originLat,
-                lng: ride.originLng,
-                estimatedArrivalTime: ride.departureTime,
-            };
-            enhanced.dropoffLocation = {
-                address: ride.destinationAddress,
-                placeId: ride.destinationPlaceId,
-                lat: ride.destinationLat,
-                lng: ride.destinationLng,
-                estimatedArrivalTime: (ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF') as any)?.estimatedArrivalTime || null,
-            };
-        }
+        // Where the rider actually gets on and off (their booked snapshot first).
+        Object.assign(enhanced, resolveBookingStops(ride, booking));
 
         return enhanced;
     });

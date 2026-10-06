@@ -1,6 +1,6 @@
 /**
  * E2E — Seat capacity is counted for the whole ride
- * Covers: TC-SEATS-001 through TC-SEATS-005
+ * Covers: TC-SEATS-001 through TC-SEATS-006 (006: driver sees the rider's own drop-off)
  *
  * Reported bug: a driver offers 3 seats, all 3 are booked, and another rider can still
  * book. The ride has a stopover (A → B → C). Three riders booking only A → B must fill the
@@ -143,6 +143,22 @@ describe('Seat capacity counts the whole ride', () => {
       bookingIds.push(String(body(res).id));
     }
     expect(await availableSeats()).toBe(0);
+  });
+
+  run('TC-SEATS-006: the driver sees each A→B rider getting off at the stopover, not the ride destination', async () => {
+    const detail = body(await da.get(`/publish-ride/${rideId}`));
+    const bookings = (detail.bookings ?? (detail.ride as Record<string, unknown> | undefined)?.bookings ?? []) as Array<{
+      id: string;
+      dropoffLocation?: { address: string; isFullRoute?: boolean };
+      pickupLocation?: { isFullRoute?: boolean };
+    }>;
+    const segmentBookings = bookings.filter((booking) => bookingIds.includes(booking.id));
+    expect(segmentBookings).toHaveLength(3);
+    for (const booking of segmentBookings) {
+      expect(booking.dropoffLocation?.isFullRoute).toBe(false);
+      expect(booking.dropoffLocation?.address).not.toBe(ROUTE.destinationAddress);
+      expect(booking.pickupLocation?.isFullRoute).toBe(true);
+    }
   });
 
   run('TC-SEATS-003: a 4th rider is refused on every route, including legs nobody booked', async () => {
