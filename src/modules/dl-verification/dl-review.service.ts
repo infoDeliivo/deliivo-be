@@ -248,14 +248,19 @@ export const approveDlDocument = async (userId: string, adminId: string | null) 
 
   if (!user) throw new Error('USER_NOT_FOUND');
 
-  const [record] = await prisma.$transaction([
-    prisma.dlVerification.update({
-      where: { veriffSessionId: manualSessionId(userId) },
+  // Approval is idempotent. Re-approving an approved licence (double click, a retry, or the
+  // same driver approved from both the queue and the user page) used to re-run the update and
+  // re-send the "licence approved" notification and email each time. The status guard makes
+  // the transition happen, and the driver be told, exactly once.
+  const now = new Date();
+  const transitioned = await prisma.$transaction(async (tx) => {
+    const updated = await tx.dlVerification.updateMany({
+      where: { veriffSessionId: manualSessionId(userId), status: { not: 'APPROVED' } },
       data: {
         status: 'APPROVED',
         declineReason: null,
         reviewedById: adminId,
-        reviewedAt: new Date(),
+        reviewedAt: now,
         verifiedName: [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || null,
         verifiedDob: user.dob ? user.dob.toISOString().slice(0, 10) : null,
         verifiedGender: user.gender ?? null,
@@ -264,9 +269,19 @@ export const approveDlDocument = async (userId: string, adminId: string | null) 
         genderMatch: true,
         decisionPayload: payload('APPROVED', { adminId }),
       },
-    }),
-    prisma.user.update({ where: { id: userId }, data: { dlVerified: true } }),
-  ]);
+    });
+    // Keep the flag in step either way: an approved row with dlVerified false is repaired here.
+    await tx.user.update({ where: { id: userId }, data: { dlVerified: true } });
+    return updated.count > 0;
+  });
+
+  const record = await prisma.dlVerification.findUniqueOrThrow({
+    where: { veriffSessionId: manualSessionId(userId) },
+  });
+
+  if (!transitioned) {
+    return { record, dlVerified: true, alreadyApproved: true };
+  }
 
   logWarn('DL_MANUAL_APPROVED', { adminId, targetUserId: userId });
   await notifyVerificationDecision(user, {
@@ -277,7 +292,7 @@ export const approveDlDocument = async (userId: string, adminId: string | null) 
     data: { userId, status: 'APPROVED', source: 'MANUAL_REVIEW' },
   });
 
-  return { record, dlVerified: true };
+  return { record, dlVerified: true, alreadyApproved: false };
 };
 
 /**
