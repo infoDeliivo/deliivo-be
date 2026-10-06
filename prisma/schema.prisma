@@ -147,6 +147,15 @@ model User {
   role             UserRole         @default(USER)
   isBanned         Boolean          @default(false)
 
+  // Admin archive: a reversible removal. The row and its PII stay intact so an admin can
+  // restore the account; while set, login is refused and the `banned:<id>` Redis key blocks
+  // live tokens. Only an archived user can be purged (permanently deleted).
+  archivedAt    DateTime?
+  archivedById  String?
+  archivedBy    User?     @relation("UsersArchived", fields: [archivedById], references: [id], onDelete: SetNull)
+  usersArchived User[]    @relation("UsersArchived")
+  archiveReason String?   @db.VarChar(500)
+
   onboardingStatus OnboardingStatus @default(PENDING)
   isVerified       Boolean          @default(false)
   dlVerified       Boolean          @default(false)
@@ -212,6 +221,29 @@ model User {
   trackerAttachmentsUploaded TrackerAttachment[] @relation("TrackerAttachmentUploader")
 
   @@index([id])
+  @@index([archivedAt])
+}
+
+enum AdminUserAuditAction {
+  ARCHIVE
+  RESTORE
+  PURGE
+}
+
+// Who archived, restored or purged which account. `targetUserId` and `actorId` are plain
+// strings, not relations, so the row outlives a purge of the target: after a purge this is
+// the only record that the account existed.
+model AdminUserAuditLog {
+  id             String               @id @default(uuid())
+  action         AdminUserAuditAction
+  targetUserId   String
+  targetSnapshot Json
+  actorId        String
+  reason         String?              @db.VarChar(500)
+  createdAt      DateTime             @default(now())
+
+  @@index([targetUserId])
+  @@index([createdAt])
 }
 
 model TravelPreference {

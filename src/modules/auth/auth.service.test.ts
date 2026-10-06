@@ -24,7 +24,7 @@ jest.mock('../rewards/rewards.service.js', () => ({
   ensureUserReferralCode: jest.fn(),
 }));
 
-import { verifyOtpService } from './auth.service.js';
+import { loginService, verifyOtpService } from './auth.service.js';
 
 type UserRow = {
   id: string;
@@ -36,6 +36,7 @@ type UserRow = {
   phoneVerified: boolean;
   isBanned: boolean;
   onboardingStatus: string;
+  archivedAt: Date | null;
 };
 
 const buildUser = (overrides: Partial<UserRow> = {}): UserRow => ({
@@ -48,6 +49,7 @@ const buildUser = (overrides: Partial<UserRow> = {}): UserRow => ({
   phoneVerified: false,
   isBanned: false,
   onboardingStatus: 'PENDING',
+  archivedAt: null,
   ...overrides,
 });
 
@@ -146,5 +148,38 @@ describe('verifyOtpService channel verification flags', () => {
 
     expect(result).toEqual({ success: false, reason: 'USER_NOT_FOUND' });
     expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('archived accounts cannot sign in', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGenerateTokens.mockResolvedValue({ accessToken: 'a', refreshToken: 'r' });
+  });
+
+  it('refuses the OTP login request for an archived account', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue(buildUser({ isVerified: true, archivedAt: new Date() }));
+
+    const result = await loginService('phone', '+447700900000');
+
+    expect(result).toMatchObject({ success: false, reason: 'USER_ARCHIVED' });
+  });
+
+  it('issues no tokens when an archived account verifies an OTP', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue(buildUser({ isVerified: true, archivedAt: new Date() }));
+
+    const result = await verifyOtpService('+447700900000', '123456', 'login', 'phone');
+
+    expect(result).toEqual({ success: false, reason: 'USER_ARCHIVED' });
+    expect(mockGenerateTokens).not.toHaveBeenCalled();
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('still lets a live account log in', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue(buildUser({ isVerified: true }));
+
+    const result = await loginService('phone', '+447700900000');
+
+    expect(result).toMatchObject({ success: true });
   });
 });

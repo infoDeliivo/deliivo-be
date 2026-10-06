@@ -2,10 +2,12 @@ import { Router } from 'express';
 import { authorize } from '../../middlewares/auth.js';
 import { validate } from '../../middlewares/validate.js';
 import * as adminController from './admin.controller.js';
+import * as adminUserArchiveController from './admin-user-archive.controller.js';
 import { pricingConfigCreateSchema, pricingConfigIdSchema, pricingConfigUpdateSchema } from '../pricing/pricing.validator.js';
 import {
     adminForceCompleteBookingSchema,
-    adminDeleteUserSchema,
+    adminArchiveUserSchema,
+    adminPurgeUserSchema,
     adminVerificationEmailSchema,
     adminOpenBookingDisputeSchema,
     bookingIdParamSchema,
@@ -25,7 +27,9 @@ const router = Router();
 // authorize('ADMIN') enforces admin-only access
 router.use(authorize('ADMIN') as any);
 
-router.get('/users', adminController.listUsers as any);
+router.get('/users', asyncHandler<AuthRequest>(adminController.listUsers));
+// Declared before /users/:id so "countries" is not taken for a user id.
+router.get('/users/countries', asyncHandler<AuthRequest>(adminController.listUserCountries));
 router.get('/users/:id', adminController.getUserDetails as any);
 router.get('/rides', adminController.listRides as any);
 router.get(
@@ -38,10 +42,22 @@ router.get('/sos', adminController.listEmergencyAlerts as any);
 router.post('/sos/:id/status', adminController.updateEmergencyAlertStatus as any);
 router.post('/users/:id/ban', adminController.banUser as any);
 router.post('/users/:id/unban', adminController.unbanUser as any);
+// Archive is the reversible removal; purge (permanent) works only on an archived user.
+// See admin-user-archive.service.ts.
 router.post(
-    '/users/:id/delete',
-    validate({ params: userIdParamSchema, body: adminDeleteUserSchema }),
-    adminController.deleteUser as any,
+    '/users/:id/archive',
+    validate({ params: userIdParamSchema, body: adminArchiveUserSchema }),
+    asyncHandler<AuthRequest>(adminUserArchiveController.archiveUser),
+);
+router.post(
+    '/users/:id/restore',
+    validate({ params: userIdParamSchema }),
+    asyncHandler<AuthRequest>(adminUserArchiveController.restoreUser),
+);
+router.post(
+    '/users/:id/purge',
+    validate({ params: userIdParamSchema, body: adminPurgeUserSchema }),
+    asyncHandler<AuthRequest>(adminUserArchiveController.purgeUser),
 );
 router.post(
     '/users/:id/require-veriff',

@@ -8,10 +8,48 @@ export const userIdParamSchema = z.object({
     id: z.string().uuid('A valid user id is required'),
 });
 
-export const adminDeleteUserSchema = z.object({
-    confirm: z.literal(true),
-    mode: z.enum(['soft', 'hard']).default('soft'),
+const queryBoolean = z.enum(['true', 'false']).transform((value) => value === 'true');
+
+export const adminListUsersQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    search: z.string().trim().max(200).optional(),
+    status: z.enum(['active', 'banned', 'archived', 'all']).optional(),
+    // Legacy filter, kept for existing callers; `status` supersedes it.
+    isBanned: queryBoolean.optional(),
+    role: z.string().trim().max(20).optional(),
+    dlVerified: queryBoolean.optional(),
+    country: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z]{2}$/, 'country must be an ISO 3166-1 alpha-2 code')
+        .transform((value) => value.toUpperCase())
+        .optional(),
 });
+
+export type AdminListUsersQuery = z.infer<typeof adminListUsersQuerySchema>;
+
+export const adminUserCountriesQuerySchema = adminListUsersQuerySchema.pick({ status: true });
+
+export type AdminUserCountriesQuery = z.infer<typeof adminUserCountriesQuerySchema>;
+
+export const adminArchiveUserSchema = z.object({
+    reason: z
+        .string()
+        .trim()
+        .max(500, 'Archive reason must be 500 characters or fewer')
+        .optional()
+        .transform((value) => value || null),
+});
+
+export type AdminArchiveUserInput = z.infer<typeof adminArchiveUserSchema>;
+
+export const adminPurgeUserSchema = z.object({
+    // The target's phone, or its email when it has no phone.
+    confirmIdentifier: z.string().trim().min(3, "Type the user's phone or email to confirm").max(254),
+});
+
+export type AdminPurgeUserInput = z.infer<typeof adminPurgeUserSchema>;
 
 export const rejectVehicleSchema = z.object({
     // The reason is shown to the driver verbatim in the rejection notification, so it

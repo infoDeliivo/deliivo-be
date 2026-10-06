@@ -13,7 +13,6 @@ import { recoverPendingVeriffDecisionsForUser } from '../dl-verification/dl-veri
 import { sendMail } from '../mail/mail.service.js';
 import { REQUIRED_DOCUMENT_TYPES, requiresFullDocumentSet } from '../vehicles/vehicle.constants.js';
 import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
-import { deleteUserAccount, hardDeleteUserAccount } from '../user/user-gdpr.service.js';
 
 const emergencyAlertSelect = {
     id: true,
@@ -53,8 +52,6 @@ const emergencyAlertSelect = {
 
 const adminUserName = (user: { firstName?: string | null; lastName?: string | null; email?: string | null }) =>
     [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'there';
-
-const HARD_DELETE_USERS_ENABLED = process.env.ADMIN_HARD_DELETE_USER_ENABLED === 'true';
 
 const htmlEscape = (value: string) =>
     value
@@ -97,13 +94,57 @@ const notifyAdminVerificationChange = async (
 };
 
 /* ================= LIST USERS ================= */
+export type AdminUserStatusFilter = 'active' | 'banned' | 'archived' | 'all';
+
+/**
+ * Where-clause for the admin status pills. Without an explicit status the list hides
+ * archived accounts (so the legacy `isBanned` filter keeps its meaning); `all` is the only
+ * way to see archived and live accounts together.
+ */
+export const userStatusWhere = (status: AdminUserStatusFilter | undefined): Prisma.UserWhereInput => {
+    switch (status) {
+        case 'active':
+            return { archivedAt: null, isBanned: false };
+        case 'banned':
+            return { archivedAt: null, isBanned: true };
+        case 'archived':
+            return { archivedAt: { not: null } };
+        case 'all':
+            return {};
+        default:
+            return { archivedAt: null };
+    }
+};
+
+/**
+ * `detectedCountry` is "City, CC" or a bare "CC" (see the schema), so a country filter
+ * matches the trailing segment rather than the whole value.
+ */
+export const userCountryWhere = (country: string): Prisma.UserWhereInput => {
+    const code = country.trim().toUpperCase();
+    return {
+        OR: [
+            { detectedCountry: { equals: code, mode: 'insensitive' } },
+            { detectedCountry: { endsWith: `, ${code}`, mode: 'insensitive' } },
+        ],
+    };
+};
+
+/** The ISO-2 country of a `detectedCountry` value, or null when it does not end in one. */
+export const countryCodeOf = (detectedCountry: string | null): string | null => {
+    const code = detectedCountry?.split(',').pop()?.trim().toUpperCase();
+    return code && /^[A-Z]{2}$/.test(code) ? code : null;
+};
+
 export const listUsers = async (query: {
     page?: number;
     limit?: number;
     search?: string;
+    status?: AdminUserStatusFilter;
     isBanned?: boolean;
     role?: string;
     dlVerified?: boolean;
+    country?: string;
 }) => {
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(100, Math.max(1, query.limit ?? 20));
@@ -111,7 +152,10 @@ export const listUsers = async (query: {
 
     // Typed rather than `any`: an untyped where silently compiles against columns that
     // no longer exist and only fails at runtime.
-    const where: Prisma.UserWhereInput = {};
+    // Independent conditions are ANDed so the search OR and the country OR do not overwrite
+    // each other.
+    const and: Prisma.UserWhereInput[] = [userStatusWhere(query.status)];
+    const where: Prisma.UserWhereInput = { AND: and };
     if (query.search) {
         where.OR = [
             { firstName: { contains: query.search, mode: 'insensitive' } },
@@ -134,6 +178,9 @@ export const listUsers = async (query: {
     if (typeof query.dlVerified === 'boolean') {
         where.dlVerified = query.dlVerified;
     }
+    if (query.country) {
+        and.push(userCountryWhere(query.country));
+    }
 
     const [users, total] = await Promise.all([
         prisma.user.findMany({
@@ -144,16 +191,19 @@ export const listUsers = async (query: {
             select: {
                 id: true,
                 firstName: true,
+                lastName: true,
                 salutation: true,
                 gender: true,
                 email: true,
                 phone: true,
                 preferredLocale: true,
+                detectedCountry: true,
                 role: true,
                 isBanned: true,
                 isVerified: true,
                 dlVerified: true,
                 onboardingStatus: true,
+                archivedAt: true,
                 createdAt: true,
             },
         }),
@@ -168,6 +218,31 @@ export const listUsers = async (query: {
             limit,
             totalPages: Math.ceil(total / limit),
         },
+    };
+};
+
+/**
+ * Countries that actually have users, for the admin country filter. Grouped on the raw
+ * `detectedCountry` (bounded by distinct cities) and folded to ISO-2 here, because the
+ * column mixes "City, CC" and bare "CC".
+ */
+export const listUserCountries = async (query: { status?: AdminUserStatusFilter }) => {
+    const groups = await prisma.user.groupBy({
+        by: ['detectedCountry'],
+        where: { AND: [userStatusWhere(query.status), { detectedCountry: { not: null } }] },
+        _count: { _all: true },
+    });
+
+    const counts = new Map<string, number>();
+    for (const group of groups) {
+        const code = countryCodeOf(group.detectedCountry);
+        if (code) counts.set(code, (counts.get(code) ?? 0) + group._count._all);
+    }
+
+    return {
+        countries: [...counts.entries()]
+            .map(([code, count]) => ({ code, count }))
+            .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
     };
 };
 
@@ -297,6 +372,9 @@ export const getUserDetails = async (userId: string) => {
         where: { id: userId },
         select: {
             id: true,
+            archivedAt: true,
+            archiveReason: true,
+            archivedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
             firstName: true,
             lastName: true,
             salutation: true,
@@ -774,9 +852,11 @@ export const sendDriverVerificationEmail = async (
 
 /* ================= BAN / UNBAN USER ================= */
 export const setBanStatus = async (userId: string, isBanned: boolean) => {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true, archivedAt: true } });
     if (!user) throw new Error('USER_NOT_FOUND');
     if (user.role === 'ADMIN') throw new Error('CANNOT_BAN_ADMIN');
+    // Unbanning would drop the Redis key that keeps an archived account locked out.
+    if (user.archivedAt) throw new Error('USER_ARCHIVED');
 
     const updated = await prisma.user.update({
         where: { id: userId },
@@ -794,25 +874,10 @@ export const setBanStatus = async (userId: string, isBanned: boolean) => {
     return updated;
 };
 
-export const deleteUser = async (userId: string, options: { mode: 'soft' | 'hard' }) => {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
-    if (!user) throw new Error('USER_NOT_FOUND');
-    if (user.role === 'ADMIN') throw new Error('CANNOT_DELETE_ADMIN');
-
-    if (options.mode === 'hard') {
-        if (!HARD_DELETE_USERS_ENABLED) {
-            throw new Error('HARD_DELETE_DISABLED');
-        }
-        return hardDeleteUserAccount(userId);
-    }
-
-    return deleteUserAccount(userId);
-};
-
 /* ================= PLATFORM STATS ================= */
 export const getStats = async () => {
     const [totalUsers, totalRides, totalBookings, totalRevenue] = await Promise.all([
-        prisma.user.count(),
+        prisma.user.count({ where: { archivedAt: null } }),
         prisma.ride.count(),
         prisma.rideBooking.count(),
         prisma.rideBooking.aggregate({

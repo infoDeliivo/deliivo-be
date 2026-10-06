@@ -176,7 +176,13 @@ const CANCELLABLE_RIDE_STATUSES: RideStatus[] = [
     RideStatus.IN_PROGRESS,
 ];
 
-export const deleteUserAccount = async (userId: string) => {
+/**
+ * Ends everything a user has in flight without touching their profile: drops their ride
+ * requests, cancels the rides they drive and the bookings they hold (full refund, seats
+ * released), and revokes their refresh tokens. Shared by account deletion and admin archive,
+ * so both apply the same refund and seat accounting.
+ */
+export const cancelUserActivity = async (userId: string): Promise<void> => {
     if (await prisma.rideRequestOffer.count({ where: { status: 'SELECTED', OR: [{ driverId: userId }, { request: { riderId: userId } }] } })) {
         throw new Error('A ride request payment is still being processed. Please retry account deletion after checkout expires.');
     }
@@ -299,6 +305,10 @@ export const deleteUserAccount = async (userId: string) => {
 
     // 3. Revoke all refresh tokens
     await prisma.refreshToken.deleteMany({ where: { userId } });
+};
+
+export const deleteUserAccount = async (userId: string) => {
+    await cancelUserActivity(userId);
 
     // 4. Anonymise the user record (zero out PII; keep ID + timestamps for referential integrity)
     await prisma.user.update({
@@ -473,6 +483,9 @@ export const hardDeleteUserAccount = async (userId: string) => {
         });
     } catch (error) {
         logError('[USER] hard delete cleanup failed after anonymization', error, { userId });
+        // The row is anonymised but still present; callers that must know whether the purge
+        // completed (admin purge audit) read this flag instead of assuming success.
+        return { deleted: true, hardDeleted: false };
     }
 
     return { deleted: true, hardDeleted: true };
