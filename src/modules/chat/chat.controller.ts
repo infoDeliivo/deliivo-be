@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import * as ChatService from './chat.service.js';
+import { deliverChatMessage } from './chat-notification.service.js';
 import { AuthRequest } from '../../middlewares/authMiddleware.js';
 import { sendSuccess, sendError, HttpStatus, logError } from '../../utils/index.js';
 import type { ImagePayload, LocationPayload } from './chat.types.js';
@@ -66,6 +67,7 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
 export const sendMessage = async (req: AuthRequest, res: Response) => {
     try {
         const message = await ChatService.sendMessage(req.user.id, req.body);
+        await deliverChatMessage(message);
 
         return sendSuccess(res, {
             status: HttpStatus.CREATED,
@@ -123,6 +125,7 @@ export const sendImage = async (req: AuthRequest, res: Response) => {
             type: 'IMAGE',
             payloadJson: imagePayload as any,
         });
+        await deliverChatMessage(message);
 
         return sendSuccess(res, {
             status: HttpStatus.CREATED,
@@ -171,6 +174,7 @@ export const sendLocation = async (req: AuthRequest, res: Response) => {
             type: 'LOCATION',
             payloadJson: locationPayload as any,
         });
+        await deliverChatMessage(message);
 
         return sendSuccess(res, {
             status: HttpStatus.CREATED,
