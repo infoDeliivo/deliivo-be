@@ -6,18 +6,37 @@ const mockPrisma = {
         count: jest.fn(),
         upsert: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
     },
     user: {
         findUnique: jest.fn(),
         update: jest.fn(),
     },
-    $transaction: jest.fn((operations: unknown[]) => Promise.all(operations)),
+    $transaction: jest.fn(),
 };
 
 jest.mock('../../config/index.js', () => ({
     __esModule: true,
     prisma: mockPrisma,
 }));
+
+const mockCreateNotification = jest.fn().mockResolvedValue(undefined);
+const mockSendMail = jest.fn().mockResolvedValue(undefined);
+jest.mock('../notification/notification.service.js', () => ({
+    __esModule: true,
+    createNotification: (...args: unknown[]) => mockCreateNotification(...args),
+}));
+jest.mock('../mail/mail.service.js', () => ({
+    __esModule: true,
+    sendMail: (...args: unknown[]) => mockSendMail(...args),
+}));
+
+/** Supports both $transaction forms: an array of operations and an interactive callback. */
+const runTransaction = (input: unknown) =>
+    typeof input === 'function'
+        ? (input as (tx: typeof mockPrisma) => unknown)(mockPrisma)
+        : Promise.all(input as unknown[]);
 
 import {
     submitDlDocument,
@@ -53,7 +72,9 @@ beforeEach(() => {
     mockPrisma.dlVerification.findUnique.mockResolvedValue(actionableRow);
     // Default: no APPROVED row anywhere, so the verified-elsewhere guard stays shut.
     mockPrisma.dlVerification.findFirst.mockResolvedValue(null);
-    mockPrisma.$transaction.mockImplementation((operations: unknown[]) => Promise.all(operations));
+    mockPrisma.$transaction.mockImplementation(runTransaction);
+    mockPrisma.dlVerification.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.dlVerification.findUniqueOrThrow.mockResolvedValue({ id: 'rec-1', status: 'APPROVED' });
 });
 
 describe('manualSessionId', () => {
@@ -131,24 +152,26 @@ describe('submitDlDocument', () => {
 });
 
 describe('approveDlDocument', () => {
+    const approvalWrite = () => mockPrisma.dlVerification.updateMany.mock.calls[0][0];
+
     it('verifies the driver and stamps who reviewed it', async () => {
         const result = await approveDlDocument(USER, 'admin-1');
 
         expect(result.dlVerified).toBe(true);
-        expect(mockPrisma.dlVerification.update).toHaveBeenCalledWith(
-            expect.objectContaining({
-                where: { veriffSessionId: MANUAL_KEY },
-                data: expect.objectContaining({
-                    status: 'APPROVED',
-                    declineReason: null,
-                    reviewedById: 'admin-1',
-                    nameMatch: true,
-                    dobMatch: true,
-                    genderMatch: true,
-                }),
+        expect(result.alreadyApproved).toBe(false);
+        expect(approvalWrite()).toEqual(expect.objectContaining({
+            // The status guard is what makes approval happen, and notify, once.
+            where: { veriffSessionId: MANUAL_KEY, status: { not: 'APPROVED' } },
+            data: expect.objectContaining({
+                status: 'APPROVED',
+                declineReason: null,
+                reviewedById: 'admin-1',
+                nameMatch: true,
+                dobMatch: true,
+                genderMatch: true,
             }),
-        );
-        expect(mockPrisma.dlVerification.update.mock.calls[0][0].data.reviewedAt).toBeInstanceOf(Date);
+        }));
+        expect(approvalWrite().data.reviewedAt).toBeInstanceOf(Date);
         expect(mockPrisma.user.update).toHaveBeenCalledWith({
             where: { id: USER },
             data: { dlVerified: true },
@@ -158,7 +181,7 @@ describe('approveDlDocument', () => {
     it('copies the identity from the profile — a human read the document against it', async () => {
         await approveDlDocument(USER, 'admin-1');
 
-        expect(mockPrisma.dlVerification.update.mock.calls[0][0].data).toMatchObject({
+        expect(approvalWrite().data).toMatchObject({
             verifiedName: 'Grace Hopper',
             verifiedDob: '1985-03-09',
             verifiedGender: 'FEMALE',
@@ -169,7 +192,27 @@ describe('approveDlDocument', () => {
         await approveDlDocument(USER, 'admin-1');
 
         expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
-        expect(mockPrisma.$transaction.mock.calls[0][0]).toHaveLength(2);
+    });
+
+    it('tells the driver once: one notification and one email', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({ ...profile, email: 'grace@test.local' });
+
+        await approveDlDocument(USER, 'admin-1');
+
+        expect(mockCreateNotification).toHaveBeenCalledTimes(1);
+        expect(mockCreateNotification).toHaveBeenCalledWith(expect.objectContaining({ type: 'verification.licence.approved' }));
+        expect(mockSendMail).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not notify again when the licence is already approved (double click, retry, second screen)', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({ ...profile, email: 'grace@test.local' });
+        mockPrisma.dlVerification.updateMany.mockResolvedValue({ count: 0 });
+
+        const result = await approveDlDocument(USER, 'admin-1');
+
+        expect(result).toMatchObject({ dlVerified: true, alreadyApproved: true });
+        expect(mockCreateNotification).not.toHaveBeenCalled();
+        expect(mockSendMail).not.toHaveBeenCalled();
     });
 });
 

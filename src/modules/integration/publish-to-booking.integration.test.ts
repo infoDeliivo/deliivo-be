@@ -152,6 +152,36 @@ const mockRedis = {
 let idCounter = 0;
 const nextId = (prefix: string) => `${prefix}-${++idCounter}`;
 
+// Whole-ride seat count: seats held by bookings with seatsReservedAt, optionally excluding one.
+const aggregateHeldSeats = async ({ where }: any) => ({
+    _sum: {
+        seatsBooked: bookings
+            .filter(b => b.rideId === where.rideId
+                && b.seatsReservedAt !== null
+                && (!where.id?.not || b.id !== where.id.not))
+            .reduce((total, b) => total + b.seatsBooked, 0),
+    },
+});
+
+// Guarded booking write shared by the transactional and plain clients.
+const updateManyBookings = async ({ where, data }: any) => {
+    const matches = bookings.filter(b => {
+        if (where.id && b.id !== where.id) return false;
+        if (where.status?.in && !where.status.in.includes(b.status)) return false;
+        if (where.status && typeof where.status === 'string' && b.status !== where.status) return false;
+        if (where.seatsReservedAt?.not === null && b.seatsReservedAt === null) return false;
+        return true;
+    });
+
+    for (const b of matches) {
+        for (const [key, val] of Object.entries(data)) {
+            (b as any)[key] = val;
+        }
+    }
+
+    return { count: matches.length };
+};
+
 // Build a Prisma-like transaction mock that operates on in-memory state
 const buildPrismaMock = () => {
     const txProxy = {
@@ -282,6 +312,7 @@ const buildPrismaMock = () => {
                     return true;
                 });
                 for (const sc of matching) {
+                    if (where.occupiedSeats?.gte !== undefined && sc.occupiedSeats < where.occupiedSeats.gte) continue;
                     if (data.occupiedSeats?.increment) sc.occupiedSeats += data.occupiedSeats.increment;
                     if (data.occupiedSeats?.decrement) sc.occupiedSeats -= data.occupiedSeats.decrement;
                 }
@@ -338,23 +369,8 @@ const buildPrismaMock = () => {
                 }
                 return booking;
             }),
-            updateMany: jest.fn(async ({ where, data }: any) => {
-                const matches = bookings.filter(b => {
-                    if (where.id && b.id !== where.id) return false;
-                    if (where.status?.in && !where.status.in.includes(b.status)) return false;
-                    if (where.status && typeof where.status === 'string' && b.status !== where.status) return false;
-                    if (where.seatsReservedAt?.not === null && b.seatsReservedAt === null) return false;
-                    return true;
-                });
-
-                for (const b of matches) {
-                    for (const [key, val] of Object.entries(data)) {
-                        (b as any)[key] = val;
-                    }
-                }
-
-                return { count: matches.length };
-            }),
+            updateMany: jest.fn(updateManyBookings),
+            aggregate: jest.fn(aggregateHeldSeats),
             findFirst: jest.fn(async ({ where }: any) => {
                 return bookings.find(b => {
                     if (where.id && b.id !== where.id) return false;
@@ -426,6 +442,8 @@ const mockPrisma: any = {
         findFirst: jest.fn(async ({ where }: any) => vehicles.find(v => v.userId === where.userId && !v.deletedAt) ?? null),
     },
     rideBooking: {
+        updateMany: jest.fn(updateManyBookings),
+        aggregate: jest.fn(aggregateHeldSeats),
         findFirst: jest.fn(async ({ where }: any) => {
             const b = bookings.find(bk => {
                 if (where.id && bk.id !== where.id) return false;
@@ -834,9 +852,10 @@ describe('Integration: Publish → Book → Driver Actions', () => {
     //  SEGMENT CAPACITY: Non-overlapping bookings
     // =========================================
 
-    describe('Segment Capacity: Non-overlapping bookings succeed', () => {
-        it('allows two non-overlapping segment bookings on a 1-seat ride', async () => {
-            // 1-seat ride: only 1 passenger per segment
+    describe('Whole-ride capacity: every booking takes its seats for the whole ride', () => {
+        it('refuses a second booking on a non-overlapping leg of a 1-seat ride', async () => {
+            // The car has one passenger seat. A rider on the first leg holds it for the
+            // whole ride, so a rider on the last leg is refused.
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 1 }));
             await DraftRideService.publishRide('driver-1');
 
@@ -852,23 +871,22 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             });
             expect(booking1.totalPrice).toBe(12); // origin → gatwick = 12
 
-            // Passenger 2 books Crawley → Destination (edge 2→3 only)
-            const booking2 = await createBooking('passenger-2', {
-                rideId,
-                seatsBooked: 1,
-                pickupWaypointId: crawleyWp.id,
-            });
-            expect(booking2.totalPrice).toBe(8); // destination(30) - crawley(22) = 8
+            expect(rides[0].availableSeats).toBe(0);
 
-            // Both bookings succeed — non-overlapping segments
-            expect(bookings).toHaveLength(2);
-            expect(rides[0].availableSeats).toBe(0); // max occupied across all edges = 1
+            // Passenger 2 tries Crawley → Destination: no shared leg, but the ride is full.
+            await expect(
+                createBooking('passenger-2', {
+                    rideId,
+                    seatsBooked: 1,
+                    pickupWaypointId: crawleyWp.id,
+                })
+            ).rejects.toThrow('INSUFFICIENT_SEATS');
+            expect(bookings).toHaveLength(1);
         });
 
         it('counts a segment booking alongside whole-route ones', async () => {
-            // The reported regression: 3-seat ride, two seats sold over the whole route
-            // and one more over a single leg. availableSeats (peak occupancy) says the ride is full;
-            // the seats actually sold are 3, and that is what the driver must see.
+            // 3-seat ride, two seats sold over the whole route and one more over a single
+            // leg: the ride is full and the seats sold are 3.
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 3 }));
             await DraftRideService.publishRide('driver-1');
 
@@ -886,9 +904,8 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             expect(sumReservedSeats(bookings)).toBe(3);
         });
 
-        it('reports seats sold even when the legs do not overlap', async () => {
-            // Two disjoint segments on a 3-seat ride: peak occupancy is 1, so two seats
-            // still look free — correct for availability, wrong as a count of sales.
+        it('counts disjoint legs against the whole ride', async () => {
+            // Two riders on legs that do not overlap still take two of the three seats.
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 3 }));
             await DraftRideService.publishRide('driver-1');
 
@@ -907,8 +924,29 @@ describe('Integration: Publish → Book → Driver Actions', () => {
                 pickupWaypointId: crawleyWp.id,
             });
 
-            expect(rides[0].availableSeats).toBe(2);
+            expect(rides[0].availableSeats).toBe(1);
             expect(sumReservedSeats(bookings)).toBe(2);
+        });
+
+        it('three riders on the first leg fill the ride for every route (A→B fills A→C and B→C)', async () => {
+            draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 3 }));
+            await DraftRideService.publishRide('driver-1');
+
+            const rideId = rides[0].id;
+            const gatwickWp = waypoints.find(w => w.placeId === 'place-gatwick')!;
+            const crawleyWp = waypoints.find(w => w.placeId === 'place-crawley')!;
+            users.push({ id: 'passenger-3', name: 'Dave', avatarUrl: null, tosAcceptedAt: new Date(), privacyAcceptedAt: new Date(), dob: new Date('1990-01-01T00:00:00.000Z'), isBanned: false, dlVerified: false, salutation: 'MR', gender: 'MALE', stripeOnboardingComplete: false });
+            users.push({ id: 'passenger-4', name: 'Erin', avatarUrl: null, tosAcceptedAt: new Date(), privacyAcceptedAt: new Date(), dob: new Date('1990-01-01T00:00:00.000Z'), isBanned: false, dlVerified: false, salutation: 'MS', gender: 'FEMALE', stripeOnboardingComplete: false });
+
+            for (const passengerId of ['passenger-1', 'passenger-2', 'passenger-3']) {
+                await createBooking(passengerId, { rideId, seatsBooked: 1, dropoffWaypointId: gatwickWp.id });
+            }
+            expect(rides[0].availableSeats).toBe(0);
+
+            await expect(
+                createBooking('passenger-4', { rideId, seatsBooked: 1, pickupWaypointId: crawleyWp.id })
+            ).rejects.toThrow('INSUFFICIENT_SEATS');
+            await expect(createBooking('passenger-4', { rideId, seatsBooked: 1 })).rejects.toThrow('INSUFFICIENT_SEATS');
         });
 
         it('blocks overlapping segment when capacity is full', async () => {
@@ -1313,7 +1351,7 @@ describe('Integration: Publish → Book → Driver Actions', () => {
     // =========================================
 
     describe('Multi-booking capacity scenarios', () => {
-        it('three passengers fill a 3-seat ride on different segments', async () => {
+        it('seats on different segments add up against the whole ride', async () => {
             draftStore[DRAFT_KEY] = JSON.stringify(buildCompleteDraft({ totalSeats: 3 }));
             await DraftRideService.publishRide('driver-1');
 
@@ -1337,11 +1375,12 @@ describe('Integration: Publish → Book → Driver Actions', () => {
             // Edge 3→4 (crawley → dropoff point): 1 (only P1)
             expect(segmentCapacities.find(e => e.fromPosition === 3)!.occupiedSeats).toBe(1);
 
-            // P3: crawley → destination, 2 seats should succeed (edge 3→4 has only 1)
-            await createBooking('passenger-3', { rideId, seatsBooked: 2, pickupWaypointId: crawleyWp.id });
-
-            expect(segmentCapacities.find(e => e.fromPosition === 3)!.occupiedSeats).toBe(3);
+            // 1 + 2 = 3 seats held: the ride is full, so a crawley → destination rider is
+            // refused even though that leg only carries P1.
             expect(rides[0].availableSeats).toBe(0);
+            await expect(
+                createBooking('passenger-3', { rideId, seatsBooked: 1, pickupWaypointId: crawleyWp.id })
+            ).rejects.toThrow('INSUFFICIENT_SEATS');
         });
 
         it('rejects booking when one edge in range is full', async () => {

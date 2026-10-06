@@ -1,4 +1,4 @@
-import { BookingStatus } from '@prisma/client';
+import { BookingStatus, RideStatus } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { SubmitRatingInput, SubmittedRating } from './ratings.types.js';
 
@@ -14,6 +14,28 @@ const rateableBookingStatuses: BookingStatus[] = [
   BookingStatus.NO_SHOW,
   BookingStatus.DRIVER_MISSED_PICKUP,
 ];
+
+/**
+ * Bookings the driver accepted, so the rider was part of the trip. Once the ride itself is
+ * completed these are rateable too, whatever step the booking stopped at: a rider the driver
+ * never marked as dropped off (still ONBOARD, DROP_PENDING, ...) must not be impossible to rate.
+ * Requests that never became trips (pending, unpaid, rejected, cancelled) stay excluded.
+ */
+export const acceptedBookingStatuses: BookingStatus[] = [
+  BookingStatus.CONFIRMED,
+  BookingStatus.WAITING_FOR_PICKUP,
+  BookingStatus.DRIVER_ARRIVED,
+  BookingStatus.OTP_PENDING,
+  BookingStatus.IN_PROGRESS,
+  BookingStatus.ONBOARD,
+  BookingStatus.DROP_PENDING,
+  BookingStatus.DRIVER_DROPPED,
+  BookingStatus.DISPUTED,
+];
+
+export const isBookingRateable = (bookingStatus: BookingStatus, rideStatus: RideStatus | null | undefined): boolean =>
+  rateableBookingStatuses.includes(bookingStatus)
+  || (rideStatus === RideStatus.COMPLETED && acceptedBookingStatuses.includes(bookingStatus));
 
 export const submitBookingRating = async (
   raterId: string,
@@ -36,13 +58,14 @@ export const submitBookingRating = async (
       ride: {
         select: {
           driverId: true,
+          status: true,
         },
       },
     },
   });
 
   if (!booking) throw new Error('BOOKING_NOT_FOUND');
-  if (!rateableBookingStatuses.includes(booking.status)) throw new Error('BOOKING_NOT_COMPLETED');
+  if (!isBookingRateable(booking.status, booking.ride.status)) throw new Error('BOOKING_NOT_COMPLETED');
 
   // Check rater is participant (passenger or driver)
   const isPassenger = booking.passengerId === raterId;

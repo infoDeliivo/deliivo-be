@@ -6,6 +6,7 @@ import { deleteCache, deleteCachePattern } from '../../services/cache.service.js
 import * as RideOpsService from './ride-operations.service.js';
 import { rideTooEarlyMessage } from '../../utils/ride-start-window.js';
 import { FORCE_REQUIRES_RIDE_IN_PROGRESS } from './force-override.js';
+import { WAIT_TIME_MINUTES } from './ride-operations.types.js';
 
 const cacheKeys = {
     bookingPattern: (id: string) => `booking:${id}:*`,
@@ -59,7 +60,10 @@ const mapRideOpsError = (error: Error) => {
         case 'BOOKING_NOT_DROP_PENDING':
             return { status: HttpStatus.CONFLICT, message: 'Booking is not awaiting drop-off confirmation' };
         case 'WAIT_TIME_NOT_ELAPSED':
-            return { status: HttpStatus.CONFLICT, message: 'Required wait time has not elapsed yet' };
+            return {
+                status: HttpStatus.CONFLICT,
+                message: `The rider has ${WAIT_TIME_MINUTES} minutes after you arrive. You can mark a no-show once the wait is over.`,
+            };
         case 'PICKUP_OTP_NOT_AVAILABLE':
             return { status: HttpStatus.BAD_REQUEST, message: 'Pickup OTP is not available for this booking' };
         case 'PICKUP_OTP_EXPIRED':

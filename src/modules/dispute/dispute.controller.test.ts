@@ -1,4 +1,5 @@
 const mockGetDisputeById = jest.fn();
+const mockListDisputes = jest.fn();
 
 jest.mock('./dispute.service.js', () => ({
     __esModule: true,
@@ -6,7 +7,7 @@ jest.mock('./dispute.service.js', () => ({
     createDispute: jest.fn(),
     collectEvidence: jest.fn(),
     evaluateDispute: jest.fn(),
-    listDisputes: jest.fn(),
+    listDisputes: (...args: unknown[]) => mockListDisputes(...args),
     getUserDisputes: jest.fn(),
 }));
 
@@ -15,7 +16,7 @@ jest.mock('./dispute-settlement.service.js', () => ({
     settleDispute: jest.fn(),
 }));
 
-import { getMyDisputeHandler } from './dispute.controller.js';
+import { adminListDisputesHandler, getMyDisputeHandler } from './dispute.controller.js';
 
 const dispute = {
     id: 'dispute-1',
@@ -53,5 +54,30 @@ describe('getMyDisputeHandler', () => {
         mockGetDisputeById.mockResolvedValue(null);
         const res = await call('rider-1');
         expect(res.status).toHaveBeenCalledWith(404);
+    });
+});
+
+describe('adminListDisputesHandler', () => {
+    const list = async (query: Record<string, string>) => {
+        const req = { query } as unknown as Parameters<typeof adminListDisputesHandler>[0];
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+        await adminListDisputesHandler(req, res as unknown as Parameters<typeof adminListDisputesHandler>[1]);
+        return res;
+    };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockListDisputes.mockResolvedValue({ disputes: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } });
+    });
+
+    it('passes a trimmed search and numeric paging to the service', async () => {
+        await list({ search: '  Tallinn ', page: '2', limit: '10', status: 'OPEN' });
+        expect(mockListDisputes).toHaveBeenCalledWith({ search: 'Tallinn', page: 2, limit: 10, status: 'OPEN' });
+    });
+
+    it('rejects an out-of-range limit with 400 instead of querying', async () => {
+        const res = await list({ limit: '1000' });
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(mockListDisputes).not.toHaveBeenCalled();
     });
 });

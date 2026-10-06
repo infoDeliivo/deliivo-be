@@ -121,6 +121,7 @@ jest.mock('../../config/index.js', () => ({
             findFirst: jest.fn(({ where }) => {
                 const d = disputes.find(x =>
                     x.bookingId === where.bookingId &&
+                    (where.raisedBy ? x.raisedBy === where.raisedBy : true) &&
                     (where.status?.in ? where.status.in.includes(x.status) : true)
                 );
                 return Promise.resolve(d ?? null);
@@ -273,6 +274,24 @@ describe('Dispute Service', () => {
             bookingId: BOOKING_ID,
             raisedBy: RIDER_ID,
             reason: 'Another reason',
+        })).rejects.toThrow('DISPUTE_ALREADY_EXISTS');
+    });
+
+    test('lets the driver open their own dispute on the booking the rider already disputed', async () => {
+        const driverDispute = await createDispute({
+            rideId: RIDE_ID,
+            bookingId: BOOKING_ID,
+            raisedBy: DRIVER_ID,
+            reason: 'Rider was abusive',
+        });
+        expect(driverDispute.status).toBe('OPEN');
+        expect(disputes.filter(d => d.bookingId === BOOKING_ID)).toHaveLength(2);
+
+        await expect(createDispute({
+            rideId: RIDE_ID,
+            bookingId: BOOKING_ID,
+            raisedBy: DRIVER_ID,
+            reason: 'Again',
         })).rejects.toThrow('DISPUTE_ALREADY_EXISTS');
     });
 

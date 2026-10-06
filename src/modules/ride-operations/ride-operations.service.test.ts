@@ -322,6 +322,17 @@ describe('ride operations force override', () => {
         ).rejects.toThrow('WAIT_TIME_NOT_ELAPSED');
     });
 
+    it('lets the driver mark a no-show without force once the 10-minute wait is over', async () => {
+        mockPrisma.rideBooking.findUnique.mockResolvedValue(
+            buildBooking({ status: BookingStatus.DRIVER_ARRIVED, waitTimerStartedAt: new Date(Date.now() - 10 * 60_000 - 1000) })
+        );
+
+        const result = await markNoShow(DRIVER_ID, { ...rideEvent(), bookingId: BOOKING_ID });
+
+        expect(result.status).toBe(BookingStatus.NO_SHOW);
+        expect(result.skippedChecks ?? []).toEqual([]);
+    });
+
     // ---------- drop-off ----------
 
     it('forces a drop-off for a passenger who never boarded', async () => {

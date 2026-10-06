@@ -14,6 +14,8 @@ import {
 import { formatBookingReference } from '../../utils/booking-reference.js';
 import { combineDepartureDateTimeInRideTimezone } from '../../utils/ride-timezone.js';
 import { isRideStartTooEarly } from '../../utils/ride-start-window.js';
+import { noShowAvailableAt } from '../ride-operations/no-show-window.js';
+import { resolveBookingStops } from './driver-booking-stops.js';
 import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
 
 const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
@@ -266,63 +268,22 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                 };
             }
 
-            // Add pickup/dropoff location info with arrival times
-            if (booking.pickupWaypointId || booking.dropoffWaypointId) {
-                const pickupWaypoint = ride.waypoints.find((w: any) => w.id === booking.pickupWaypointId);
-                const dropoffWaypoint = ride.waypoints.find((w: any) => w.id === booking.dropoffWaypointId);
-
-                enhanced.pickupLocation = pickupWaypoint ? {
-                    address: pickupWaypoint.address,
-                    placeId: pickupWaypoint.placeId,
-                    lat: pickupWaypoint.lat,
-                    lng: pickupWaypoint.lng,
-                    estimatedArrivalTime: (pickupWaypoint as any).estimatedArrivalTime,
-                } : {
-                    address: ride.originAddress,
-                    placeId: ride.originPlaceId,
-                    lat: ride.originLat,
-                    lng: ride.originLng,
-                    estimatedArrivalTime: ride.departureTime,
-                };
-
-                enhanced.dropoffLocation = dropoffWaypoint ? {
-                    address: dropoffWaypoint.address,
-                    placeId: dropoffWaypoint.placeId,
-                    lat: dropoffWaypoint.lat,
-                    lng: dropoffWaypoint.lng,
-                    estimatedArrivalTime: (dropoffWaypoint as any).estimatedArrivalTime,
-                } : {
-                    address: ride.destinationAddress,
-                    placeId: ride.destinationPlaceId,
-                    lat: ride.destinationLat,
-                    lng: ride.destinationLng,
-                    estimatedArrivalTime: ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF')?.estimatedArrivalTime || null,
-                };
-            } else {
-                enhanced.pickupLocation = {
-                    address: ride.originAddress,
-                    placeId: ride.originPlaceId,
-                    lat: ride.originLat,
-                    lng: ride.originLng,
-                    estimatedArrivalTime: ride.departureTime,
-                };
-                enhanced.dropoffLocation = {
-                    address: ride.destinationAddress,
-                    placeId: ride.destinationPlaceId,
-                    lat: ride.destinationLat,
-                    lng: ride.destinationLng,
-                    estimatedArrivalTime: ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF')?.estimatedArrivalTime || null,
-                };
+            // When the driver may mark this rider a no-show, so the UI can count down to the
+            // same instant markNoShow enforces.
+            if (booking.status === 'DRIVER_ARRIVED') {
+                enhanced.noShowAvailableAt = noShowAvailableAt(booking.waitTimerStartedAt);
             }
+
+            // Where the rider actually gets on and off (their booked snapshot first).
+            Object.assign(enhanced, resolveBookingStops(ride, booking));
 
             return enhanced;
         });
 
         return {
             ...ride,
-            // Seats actually sold. Not totalSeats - availableSeats: that scalar is peak
-            // occupancy over the ride's segment edges, so disjoint segment bookings do
-            // not move it. See sumReservedSeats.
+            // Seats actually sold. Capacity is counted for the whole ride, so this equals
+            // totalSeats - availableSeats. See sumReservedSeats.
             bookedSeats: sumReservedSeats(ride.bookings.filter((booking: any) => booking.status !== BookingStatus.CANCELLED)),
             bookings: enhancedBookings,
         };
@@ -452,54 +413,14 @@ export const getRideById = async (driverId: string, rideId: string) => {
             };
         }
 
-        // Add pickup/dropoff location info with arrival times
-        if (booking.pickupWaypointId || booking.dropoffWaypointId) {
-            const pickupWaypoint = ride.waypoints.find((w: any) => w.id === booking.pickupWaypointId);
-            const dropoffWaypoint = ride.waypoints.find((w: any) => w.id === booking.dropoffWaypointId);
-
-            enhanced.pickupLocation = pickupWaypoint ? {
-                address: pickupWaypoint.address,
-                placeId: pickupWaypoint.placeId,
-                lat: pickupWaypoint.lat,
-                lng: pickupWaypoint.lng,
-                estimatedArrivalTime: (pickupWaypoint as any).estimatedArrivalTime,
-            } : {
-                address: ride.originAddress,
-                placeId: ride.originPlaceId,
-                lat: ride.originLat,
-                lng: ride.originLng,
-                estimatedArrivalTime: ride.departureTime,
-            };
-
-            enhanced.dropoffLocation = dropoffWaypoint ? {
-                address: dropoffWaypoint.address,
-                placeId: dropoffWaypoint.placeId,
-                lat: dropoffWaypoint.lat,
-                lng: dropoffWaypoint.lng,
-                estimatedArrivalTime: (dropoffWaypoint as any).estimatedArrivalTime,
-            } : {
-                address: ride.destinationAddress,
-                placeId: ride.destinationPlaceId,
-                lat: ride.destinationLat,
-                lng: ride.destinationLng,
-                estimatedArrivalTime: (ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF') as any)?.estimatedArrivalTime || null,
-            };
-        } else {
-            enhanced.pickupLocation = {
-                address: ride.originAddress,
-                placeId: ride.originPlaceId,
-                lat: ride.originLat,
-                lng: ride.originLng,
-                estimatedArrivalTime: ride.departureTime,
-            };
-            enhanced.dropoffLocation = {
-                address: ride.destinationAddress,
-                placeId: ride.destinationPlaceId,
-                lat: ride.destinationLat,
-                lng: ride.destinationLng,
-                estimatedArrivalTime: (ride.waypoints.find((w: any) => w.waypointType === 'DROPOFF') as any)?.estimatedArrivalTime || null,
-            };
+        // When the driver may mark this rider a no-show, so the UI can count down to the
+        // same instant markNoShow enforces.
+        if (booking.status === 'DRIVER_ARRIVED') {
+            enhanced.noShowAvailableAt = noShowAvailableAt(booking.waitTimerStartedAt);
         }
+
+        // Where the rider actually gets on and off (their booked snapshot first).
+        Object.assign(enhanced, resolveBookingStops(ride, booking));
 
         return enhanced;
     });

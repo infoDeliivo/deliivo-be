@@ -230,6 +230,71 @@ describe('submitBookingRating', () => {
         ).rejects.toThrow('BOOKING_NOT_COMPLETED');
     });
 
+    it.each([BookingStatus.ONBOARD, BookingStatus.DROP_PENDING, BookingStatus.DRIVER_DROPPED])(
+        'lets the driver rate a %s rider once the ride is completed',
+        async (status) => {
+            mockPrisma.rideBooking.findUnique.mockResolvedValue({
+                id: 'booking-open',
+                rideId: 'ride-done',
+                status,
+                passengerId: 'passenger-open',
+                ride: { driverId: 'driver-done', status: 'COMPLETED' },
+            });
+            mockPrisma.rideRating.findUnique.mockResolvedValue(null);
+            const tx = {
+                rideRating: {
+                    create: jest.fn().mockResolvedValue({
+                        id: 'rating-open',
+                        bookingId: 'booking-open',
+                        rideId: 'ride-done',
+                        raterId: 'driver-done',
+                        rateeId: 'passenger-open',
+                        stars: 4,
+                        reviewText: null,
+                        createdAt: new Date('2026-10-07T12:00:00.000Z'),
+                    }),
+                },
+                userRatingStats: {
+                    findUnique: jest.fn().mockResolvedValue(null),
+                    create: jest.fn().mockResolvedValue({}),
+                    update: jest.fn(),
+                },
+            };
+            mockPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+            const result = await submitBookingRating('driver-done', 'booking-open', { stars: 4 });
+
+            expect(result.rateeId).toBe('passenger-open');
+        },
+    );
+
+    it('still refuses an in-progress booking while the ride is not completed', async () => {
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            id: 'booking-live',
+            rideId: 'ride-live',
+            status: BookingStatus.ONBOARD,
+            passengerId: 'passenger-live',
+            ride: { driverId: 'driver-live', status: 'IN_PROGRESS' },
+        });
+
+        await expect(submitBookingRating('driver-live', 'booking-live', { stars: 4 })).rejects.toThrow('BOOKING_NOT_COMPLETED');
+    });
+
+    it.each([BookingStatus.CANCELLED, BookingStatus.PAYMENT_FAILED, BookingStatus.DRIVER_PENDING])(
+        'never makes a %s request rateable, even after the ride completed',
+        async (status) => {
+            mockPrisma.rideBooking.findUnique.mockResolvedValue({
+                id: 'booking-never',
+                rideId: 'ride-done',
+                status,
+                passengerId: 'passenger-never',
+                ride: { driverId: 'driver-done', status: 'COMPLETED' },
+            });
+
+            await expect(submitBookingRating('driver-done', 'booking-never', { stars: 1 })).rejects.toThrow('BOOKING_NOT_COMPLETED');
+        },
+    );
+
     it('rejects users not part of the booking', async () => {
         mockPrisma.rideBooking.findUnique.mockResolvedValue({
             id: 'booking-5',

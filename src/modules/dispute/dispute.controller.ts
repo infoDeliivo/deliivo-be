@@ -9,6 +9,11 @@ import {
 } from './dispute.service.js';
 import { settleDispute, DisputeResolution } from './dispute-settlement.service.js';
 import { DISPUTE_STATUSES } from './dispute.constants.js';
+import { adminListDisputesQuerySchema } from './dispute.validator.js';
+
+/** Another dispute on the same booking was already settled as a full refund. */
+const BOOKING_ALREADY_REFUNDED_MESSAGE =
+    'This booking was already fully refunded through another dispute, so the driver cannot be paid out. Resolve this dispute as REFUND instead.';
 
 export const createDisputeHandler = async (req: Request, res: Response) => {
     try {
@@ -68,13 +73,16 @@ export const myDisputesHandler = async (req: Request, res: Response) => {
 
 // Admin handlers
 export const adminListDisputesHandler = async (req: Request, res: Response) => {
-    try {
-        const { status, page, limit } = req.query as any;
-        const result = await listDisputes({
-            status,
-            page: page ? Number(page) : undefined,
-            limit: limit ? Number(limit) : undefined,
+    const parsed = adminListDisputesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+        return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: parsed.error.issues.map((issue) => ({ field: issue.path.join('.'), message: issue.message })),
         });
+    }
+    try {
+        const result = await listDisputes(parsed.data);
         res.json({ success: true, data: result });
     } catch {
         res.status(500).json({ success: false, error: 'Internal server error' });
@@ -120,6 +128,9 @@ export const adminEvaluateHandler = async (req: Request, res: Response) => {
         if (err.message === 'EVIDENCE_NOT_COLLECTED') {
             return res.status(400).json({ success: false, error: 'Collect evidence first' });
         }
+        if (err.message === 'BOOKING_ALREADY_REFUNDED') {
+            return res.status(409).json({ success: false, error: BOOKING_ALREADY_REFUNDED_MESSAGE });
+        }
         res.status(500).json({ success: false, error: err.message });
     }
 };
@@ -141,6 +152,9 @@ export const adminResolveHandler = async (req: Request, res: Response) => {
         }
         if (err.message === 'DISPUTE_ALREADY_RESOLVED') {
             return res.status(409).json({ success: false, error: 'Dispute already resolved' });
+        }
+        if (err.message === 'BOOKING_ALREADY_REFUNDED') {
+            return res.status(409).json({ success: false, error: BOOKING_ALREADY_REFUNDED_MESSAGE });
         }
         res.status(500).json({ success: false, error: err.message });
     }

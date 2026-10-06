@@ -186,6 +186,13 @@ export const settleDispute = async (input: SettlementInput) => {
             ? DISPUTE_STATUSES.RESOLVED_REFUND
             : DISPUTE_STATUSES.RESOLVED_SPLIT;
     } else if (input.resolution === 'PAYOUT') {
+        // The rider and the driver can each have a dispute open on the same booking. If the
+        // other one was already settled as a full refund, paying the driver now would pay out a
+        // fare the rider got back. Partial (SPLIT) refunds are fine: payout already owes only
+        // fareAmount - refundedFareAmount.
+        if (existingRefund && (booking.refundPercent ?? 0) >= 100) {
+            throw new Error('BOOKING_ALREADY_REFUNDED');
+        }
         if (payment) {
             await prisma.payment.update({
                 where: { id: payment.id },

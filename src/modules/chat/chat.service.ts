@@ -15,7 +15,7 @@ const normalizePair = (id1: string, id2: string): [string, string] => {
 /**
  * Generate a preview string for the conversation list based on message type.
  */
-const getMessagePreview = (type: string, text?: string | null): string => {
+export const getMessagePreview = (type: string, text?: string | null): string => {
     switch (type) {
         case 'IMAGE':
             return text ? `📷 ${text.substring(0, 80)}` : '📷 Image';

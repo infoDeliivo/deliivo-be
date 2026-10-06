@@ -20,6 +20,7 @@ import {
     ConfirmDropoffInput,
 } from './ride-operations.types.js';
 import { haversineDistance } from './geofence.utils.js';
+import { noShowAvailableAt } from './no-show-window.js';
 import {
     createForceContext,
     assertForceAllowedOnRide,
@@ -678,13 +679,11 @@ export const markNoShow = async (driverId: string, input: MarkNoShowInput) => {
         'BOOKING_NOT_AT_PICKUP'
     );
 
-    // Validate wait time: driver must have waited at least WAIT_TIME_MINUTES.
-    // Local simulations can bypass this so the full lifecycle is testable from one session.
-    const allowRideSimulation = process.env.ALLOW_RIDE_SIMULATION === 'true';
-    if (!allowRideSimulation && booking.waitTimerStartedAt) {
-        const waitedMs = Date.now() - booking.waitTimerStartedAt.getTime();
-        const waitedMinutes = waitedMs / 60_000;
-        force.assertOrForce(waitedMinutes < WAIT_TIME_MINUTES, 'WAIT_TIME_NOT_ELAPSED');
+    // The rider gets WAIT_TIME_MINUTES after the driver arrives. The driver's ride payload
+    // carries the same instant as `noShowAvailableAt`, which the webapp counts down to.
+    const availableAt = noShowAvailableAt(booking.waitTimerStartedAt);
+    if (availableAt) {
+        force.assertOrForce(Date.now() < availableAt.getTime(), 'WAIT_TIME_NOT_ELAPSED');
     }
 
     const now = new Date();

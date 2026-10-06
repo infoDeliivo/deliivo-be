@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import http from 'http';
 import logger from '../utils/logger.js';
 import * as ChatService from '../modules/chat/chat.service.js';
+import { chatSenderName, pushChatMessageIfOffline } from '../modules/chat/chat-notification.service.js';
 import * as PresenceService from '../services/presence.service.js';
 import { ACCESS_TOKEN_SECRET } from '../modules/token/tokens.constants.js';
 import redis from '../cache/redis.js';
@@ -255,6 +256,8 @@ export const initSocket = async (server: http.Server) => {
                         id: message.id,
                         conversationId: message.conversationId,
                         senderId: userId,
+                        // Shown as the chat title when the receiver opens it from the message.
+                        senderName: await chatSenderName(userId),
                         receiverId,
                         type: message.type,
                         text: message.text,
@@ -277,7 +280,8 @@ export const initSocket = async (server: http.Server) => {
                         deliveredAt: new Date(),
                     });
                 }
-                // TODO: If receiver is offline, trigger push notification via FCM/APNs
+                // Receiver offline: push it, titled with the sender's name.
+                await pushChatMessageIfOffline(message);
             } catch (error: any) {
                 logger.error('chat:send error:', error);
                 const errorMsg =
