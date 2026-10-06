@@ -9,6 +9,7 @@ import {
 } from './dispute.service.js';
 import { settleDispute, DisputeResolution } from './dispute-settlement.service.js';
 import { DISPUTE_STATUSES } from './dispute.constants.js';
+import { adminListDisputesQuerySchema } from './dispute.validator.js';
 
 /** Another dispute on the same booking was already settled as a full refund. */
 const BOOKING_ALREADY_REFUNDED_MESSAGE =
@@ -72,13 +73,16 @@ export const myDisputesHandler = async (req: Request, res: Response) => {
 
 // Admin handlers
 export const adminListDisputesHandler = async (req: Request, res: Response) => {
-    try {
-        const { status, page, limit } = req.query as any;
-        const result = await listDisputes({
-            status,
-            page: page ? Number(page) : undefined,
-            limit: limit ? Number(limit) : undefined,
+    const parsed = adminListDisputesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+        return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: parsed.error.issues.map((issue) => ({ field: issue.path.join('.'), message: issue.message })),
         });
+    }
+    try {
+        const result = await listDisputes(parsed.data);
         res.json({ success: true, data: result });
     } catch {
         res.status(500).json({ success: false, error: 'Internal server error' });

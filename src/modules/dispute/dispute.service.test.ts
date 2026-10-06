@@ -5,6 +5,11 @@ const mockPrisma = {
     dispute: {
         findFirst: jest.fn(),
         create: jest.fn(),
+        findMany: jest.fn(),
+        count: jest.fn(),
+    },
+    user: {
+        findMany: jest.fn(),
     },
 };
 
@@ -26,7 +31,7 @@ jest.mock('../../socket/index.js', () => ({
     emitToUsers: mockEmitToUsers,
 }));
 
-import { createDispute } from './dispute.service.js';
+import { createDispute, listDisputes } from './dispute.service.js';
 
 const booking = {
     id: 'booking-1',
@@ -112,5 +117,75 @@ describe('createDispute', () => {
         await expect(createDispute({ rideId: 'ride-1', bookingId: 'booking-1', raisedBy: 'rider-1', reason: 'OTHER' }))
             .rejects.toThrow('DISPUTE_ALREADY_EXISTS');
         expect(disputes).toHaveLength(2);
+    });
+});
+
+describe('listDisputes (admin)', () => {
+    const BOOKING_UUID = '3f2a9c1e-8b7d-4c6a-9e1f-2b3c4d5e6f70';
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockPrisma.dispute.findMany.mockResolvedValue([]);
+        mockPrisma.dispute.count.mockResolvedValue(0);
+        mockPrisma.user.findMany.mockResolvedValue([]);
+    });
+
+    const listArgs = () => mockPrisma.dispute.findMany.mock.calls[0][0];
+
+    it('lists newest first with a stable tie-break', async () => {
+        await listDisputes({});
+        expect(listArgs().orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+        expect(listArgs().where).toEqual({});
+    });
+
+    it('searches text fields and the route, and leaves id equality out for a non-UUID term', async () => {
+        await listDisputes({ search: ' tartu ' });
+        const or = listArgs().where.AND[0].OR;
+        expect(or).toEqual(expect.arrayContaining([
+            { reason: { contains: 'tartu', mode: 'insensitive' } },
+            { ride: { destinationAddress: { contains: 'tartu', mode: 'insensitive' } } },
+        ]));
+        expect(or).not.toContainEqual({ bookingId: 'tartu' });
+    });
+
+    it('matches a pasted UUID exactly against the dispute, booking and ride ids', async () => {
+        await listDisputes({ search: BOOKING_UUID });
+        expect(listArgs().where.AND[0].OR).toEqual(expect.arrayContaining([
+            { id: BOOKING_UUID },
+            { bookingId: BOOKING_UUID },
+            { rideId: BOOKING_UUID },
+        ]));
+    });
+
+    it('finds disputes by the name or email of whoever raised them', async () => {
+        mockPrisma.user.findMany.mockResolvedValueOnce([{ id: 'rider-1' }]);
+        await listDisputes({ search: 'anna' });
+        expect(mockPrisma.user.findMany.mock.calls[0][0].where.OR).toContainEqual({ email: { contains: 'anna', mode: 'insensitive' } });
+        expect(listArgs().where.AND[0].OR).toContainEqual({ raisedBy: { in: ['rider-1'] } });
+    });
+
+    it('combines the status filter with the search', async () => {
+        await listDisputes({ status: 'OPEN', search: 'tartu' });
+        expect(listArgs().where.AND).toHaveLength(2);
+        expect(listArgs().where.AND[0]).toEqual({ status: 'OPEN' });
+    });
+
+    it('attaches who raised each dispute from one batched lookup', async () => {
+        mockPrisma.dispute.findMany.mockResolvedValue([
+            { id: 'd1', raisedBy: 'rider-1' },
+            { id: 'd2', raisedBy: 'driver-1' },
+            { id: 'd3', raisedBy: 'rider-1' },
+        ]);
+        mockPrisma.dispute.count.mockResolvedValue(3);
+        mockPrisma.user.findMany.mockResolvedValue([
+            { id: 'rider-1', firstName: 'Anna', lastName: null, email: 'anna@test.local', role: 'USER' },
+            { id: 'driver-1', firstName: 'Dan', lastName: null, email: 'dan@test.local', role: 'USER' },
+        ]);
+
+        const result = await listDisputes({});
+
+        expect(mockPrisma.user.findMany).toHaveBeenCalledTimes(1);
+        expect(mockPrisma.user.findMany.mock.calls[0][0].where).toEqual({ id: { in: ['rider-1', 'driver-1'] } });
+        expect(result.disputes.map((d) => d.raisedByUser?.firstName)).toEqual(['Anna', 'Dan', 'Anna']);
     });
 });

@@ -1,6 +1,6 @@
 /**
  * E2E — Rider and driver can each raise a dispute on the same booking
- * Covers: TC-DISPUTE2-001 through TC-DISPUTE2-004
+ * Covers: TC-DISPUTE2-001 through TC-DISPUTE2-006 (005-006: admin list search and order)
  *
  * Reported bug: once the driver had reported an issue on a booking, the rider could no longer
  * raise one. Each side may have one open dispute of its own on a booking; only a second open
@@ -9,7 +9,13 @@
  * Publishing is restricted to the Baltics and resolves real Google place ids, same as
  * 40-force-override.e2e.test.ts. Every test skips if the ride cannot be set up.
  */
-import { authed } from '../helpers/api.client';
+import dotenv from 'dotenv';
+import path from 'path';
+dotenv.config({ path: path.resolve(process.cwd(), '.env.test') });
+
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { api, authed } from '../helpers/api.client';
 import { readState } from '../helpers/state';
 import { publishRide, futureDateStr } from '../helpers/ride.helper';
 import { signupAndVerifyEmail } from '../helpers/auth.helper';
@@ -34,6 +40,9 @@ let rideId: string | null = null;
 let bookingId: string;
 let riderId: string;
 let rider: ReturnType<typeof authed>;
+let riderEmail: string;
+let admin: ReturnType<typeof authed> | null = null;
+let db: PrismaClient | null = null;
 
 const body = (res: { data: { data?: unknown } }) => (res.data.data ?? res.data) as Record<string, unknown>;
 
@@ -74,7 +83,8 @@ beforeAll(async () => {
     const pickupWaypointId = waypoints.find((w) => w.waypointType === 'PICKUP')?.id;
     const dropoffWaypointId = waypoints.find((w) => w.waypointType === 'DROPOFF')?.id;
 
-    const signup = await signupAndVerifyEmail(`e2e-dispute2-rider-${state.runId}@test.local`);
+    riderEmail = `e2e-dispute2-rider-${state.runId}@test.local`;
+    const signup = await signupAndVerifyEmail(riderEmail);
     riderId = signup.user.id;
     rider = authed(signup.accessToken);
     await rider.post('/auth/accept-tos', { tosVersion: '1.0', privacyVersion: '1.0' });
@@ -85,11 +95,22 @@ beforeAll(async () => {
       throw new Error(`Booking failed: ${bookRes.status} ${JSON.stringify(bookRes.data)}`);
     }
     bookingId = String(body(bookRes).id);
+
+    // Admin role cannot be granted through the API; promote directly, as 14-admin does.
+    db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }) });
+    const adminSignup = await signupAndVerifyEmail(`e2e-dispute2-admin-${state.runId}@test.local`);
+    await db.user.update({ where: { id: adminSignup.user.id }, data: { role: 'ADMIN' } });
+    const refreshed = await api.post('/auth/access-token', { refreshToken: adminSignup.refreshToken });
+    admin = authed(refreshed.data.data.accessToken);
   } catch (error) {
     console.warn(`[44-two-party-dispute] Skipping: could not set up the booking (${(error as Error).message})`);
     rideId = null;
   }
 }, 120_000);
+
+afterAll(async () => {
+  await db?.$disconnect();
+});
 
 const run = (name: string, fn: () => Promise<void>) =>
   it(name, async () => {
@@ -122,5 +143,26 @@ describe('Two-party disputes on one booking', () => {
       const rows = await disputesOnBooking(client);
       expect(rows.map((row) => row.raisedBy).sort()).toEqual([riderId, state.driverA.id].sort());
     }
+  });
+
+  run('TC-DISPUTE2-005: admin search finds both disputes by booking id, and the rider\'s by email', async () => {
+    if (!admin) return;
+    const byBooking = await admin.get('/admin/disputes', { search: bookingId });
+    expect(byBooking.status).toBe(200);
+    const rows = byBooking.data.data.disputes as Array<DisputeRow & { raisedByUser: { email: string | null } | null }>;
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.bookingId === bookingId)).toBe(true);
+
+    const byEmail = await admin.get('/admin/disputes', { search: riderEmail });
+    const emailRows = byEmail.data.data.disputes as Array<DisputeRow & { raisedByUser: { email: string | null } | null }>;
+    expect(emailRows.some((row) => row.raisedBy === riderId && row.raisedByUser?.email === riderEmail)).toBe(true);
+  });
+
+  run('TC-DISPUTE2-006: the admin list is newest first', async () => {
+    if (!admin) return;
+    const res = await admin.get('/admin/disputes', { limit: 50 });
+    expect(res.status).toBe(200);
+    const times = (res.data.data.disputes as Array<{ createdAt: string }>).map((row) => Date.parse(row.createdAt));
+    expect(times).toEqual([...times].sort((a, b) => b - a));
   });
 });

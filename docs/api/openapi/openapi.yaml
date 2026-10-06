@@ -440,6 +440,9 @@
     },
     "/api/v1/admin/ride-overrides": {
       "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1ride-overrides"
+    },
+    "/api/v1/admin/disputes": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1disputes"
     }
   },
   "components": {

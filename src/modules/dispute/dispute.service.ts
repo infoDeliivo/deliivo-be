@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/index.js';
 import { DISPUTE_STATUSES, OPEN_DISPUTE_STATUSES } from './dispute.constants.js';
 import { createNotification } from '../notification/notification.service.js';
@@ -583,20 +584,66 @@ export const getDisputeById = async (disputeId: string) => {
     });
 };
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Users a dispute search term could name, so their disputes match by `raisedBy`. */
+const RAISER_SEARCH_LIMIT = 50;
+
+/**
+ * Where-clause for the admin dispute search. `raisedBy` is a plain user id with no relation,
+ * so people are matched with a pre-query on User and folded in as `raisedBy in [...]`.
+ */
+const disputeSearchWhere = async (term: string): Promise<Prisma.DisputeWhereInput> => {
+    const contains = { contains: term, mode: 'insensitive' as const };
+    const raisers = await prisma.user.findMany({
+        where: {
+            OR: [
+                { firstName: contains },
+                { lastName: contains },
+                { email: contains },
+                { phone: contains },
+            ],
+        },
+        select: { id: true },
+        take: RAISER_SEARCH_LIMIT,
+    });
+
+    const or: Prisma.DisputeWhereInput[] = [
+        { reason: contains },
+        { description: contains },
+        { ride: { originAddress: contains } },
+        { ride: { destinationAddress: contains } },
+    ];
+    // An admin pasting an id expects an exact hit, not a substring scan over UUID columns.
+    if (UUID_PATTERN.test(term)) {
+        or.push({ id: term }, { bookingId: term }, { rideId: term }, { raisedBy: term });
+    }
+    if (raisers.length > 0) {
+        or.push({ raisedBy: { in: raisers.map((user) => user.id) } });
+    }
+    return { OR: or };
+};
+
 export const listDisputes = async (params: {
     status?: string;
+    search?: string;
     page?: number;
     limit?: number;
 }) => {
     const { status, page = 1, limit = 20 } = params;
     const skip = (page - 1) * limit;
+    const search = params.search?.trim();
 
-    const where = status ? { status } : {};
+    const conditions: Prisma.DisputeWhereInput[] = [];
+    if (status) conditions.push({ status });
+    if (search) conditions.push(await disputeSearchWhere(search));
+    const where: Prisma.DisputeWhereInput = conditions.length > 0 ? { AND: conditions } : {};
 
     const [disputes, total] = await Promise.all([
         prisma.dispute.findMany({
             where,
-            orderBy: [{ riskScore: 'desc' }, { createdAt: 'asc' }],
+            // Newest first; the id tie-break keeps pages stable when disputes share a timestamp.
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             skip,
             take: limit,
             include: {
@@ -607,7 +654,21 @@ export const listDisputes = async (params: {
         prisma.dispute.count({ where }),
     ]);
 
-    return { disputes, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+    // Who raised each dispute, in one query for the page. The rider and the driver can each
+    // have a dispute on the same booking, so the admin list needs to tell them apart.
+    const raiserIds = [...new Set(disputes.map((dispute) => dispute.raisedBy))];
+    const raisers = raiserIds.length > 0
+        ? await prisma.user.findMany({
+            where: { id: { in: raiserIds } },
+            select: { id: true, firstName: true, lastName: true, email: true, role: true },
+        })
+        : [];
+    const raiserById = new Map(raisers.map((user) => [user.id, user]));
+
+    return {
+        disputes: disputes.map((dispute) => ({ ...dispute, raisedByUser: raiserById.get(dispute.raisedBy) ?? null })),
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
 };
 
 export const getUserDisputes = async (userId: string) => {
