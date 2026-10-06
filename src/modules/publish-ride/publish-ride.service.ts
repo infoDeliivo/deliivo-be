@@ -14,6 +14,7 @@ import {
 import { formatBookingReference } from '../../utils/booking-reference.js';
 import { combineDepartureDateTimeInRideTimezone } from '../../utils/ride-timezone.js';
 import { isRideStartTooEarly } from '../../utils/ride-start-window.js';
+import { noShowAvailableAt } from '../ride-operations/no-show-window.js';
 import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
 
 const OVERDUE_CANCEL_AFTER_MINUTES = Number(process.env.RIDE_OVERDUE_CANCEL_AFTER_MINUTES || '120');
@@ -266,6 +267,12 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
                 };
             }
 
+            // When the driver may mark this rider a no-show, so the UI can count down to the
+            // same instant markNoShow enforces.
+            if (booking.status === 'DRIVER_ARRIVED') {
+                enhanced.noShowAvailableAt = noShowAvailableAt(booking.waitTimerStartedAt);
+            }
+
             // Add pickup/dropoff location info with arrival times
             if (booking.pickupWaypointId || booking.dropoffWaypointId) {
                 const pickupWaypoint = ride.waypoints.find((w: any) => w.id === booking.pickupWaypointId);
@@ -449,6 +456,12 @@ export const getRideById = async (driverId: string, rideId: string) => {
                 timeRemainingSeconds: Math.max(0, Math.floor(timeRemainingMs / 1000)),
                 isExpired: timeRemainingMs <= 0,
             };
+        }
+
+        // When the driver may mark this rider a no-show, so the UI can count down to the
+        // same instant markNoShow enforces.
+        if (booking.status === 'DRIVER_ARRIVED') {
+            enhanced.noShowAvailableAt = noShowAvailableAt(booking.waitTimerStartedAt);
         }
 
         // Add pickup/dropoff location info with arrival times
