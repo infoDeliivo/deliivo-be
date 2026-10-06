@@ -10,6 +10,10 @@ import {
 import { settleDispute, DisputeResolution } from './dispute-settlement.service.js';
 import { DISPUTE_STATUSES } from './dispute.constants.js';
 
+/** Another dispute on the same booking was already settled as a full refund. */
+const BOOKING_ALREADY_REFUNDED_MESSAGE =
+    'This booking was already fully refunded through another dispute, so the driver cannot be paid out. Resolve this dispute as REFUND instead.';
+
 export const createDisputeHandler = async (req: Request, res: Response) => {
     try {
         const userId = (req as any).user.id;
@@ -120,6 +124,9 @@ export const adminEvaluateHandler = async (req: Request, res: Response) => {
         if (err.message === 'EVIDENCE_NOT_COLLECTED') {
             return res.status(400).json({ success: false, error: 'Collect evidence first' });
         }
+        if (err.message === 'BOOKING_ALREADY_REFUNDED') {
+            return res.status(409).json({ success: false, error: BOOKING_ALREADY_REFUNDED_MESSAGE });
+        }
         res.status(500).json({ success: false, error: err.message });
     }
 };
@@ -141,6 +148,9 @@ export const adminResolveHandler = async (req: Request, res: Response) => {
         }
         if (err.message === 'DISPUTE_ALREADY_RESOLVED') {
             return res.status(409).json({ success: false, error: 'Dispute already resolved' });
+        }
+        if (err.message === 'BOOKING_ALREADY_REFUNDED') {
+            return res.status(409).json({ success: false, error: BOOKING_ALREADY_REFUNDED_MESSAGE });
         }
         res.status(500).json({ success: false, error: err.message });
     }

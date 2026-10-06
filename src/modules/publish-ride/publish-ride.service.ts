@@ -320,9 +320,8 @@ export const getUserRides = async (driverId: string, query: ListRidesQuery) => {
 
         return {
             ...ride,
-            // Seats actually sold. Not totalSeats - availableSeats: that scalar is peak
-            // occupancy over the ride's segment edges, so disjoint segment bookings do
-            // not move it. See sumReservedSeats.
+            // Seats actually sold. Capacity is counted for the whole ride, so this equals
+            // totalSeats - availableSeats. See sumReservedSeats.
             bookedSeats: sumReservedSeats(ride.bookings.filter((booking: any) => booking.status !== BookingStatus.CANCELLED)),
             bookings: enhancedBookings,
         };

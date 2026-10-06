@@ -8,6 +8,7 @@ const mockPrisma = {
         findUniqueOrThrow: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        aggregate: jest.fn().mockResolvedValue({ _sum: { seatsBooked: 0 } }),
     },
     reconciliationIssue: {
         create: jest.fn().mockResolvedValue({}),
@@ -17,6 +18,7 @@ const mockPrisma = {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     ride: {
+        findUnique: jest.fn().mockResolvedValue({ status: 'PUBLISHED' }),
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
@@ -65,6 +67,7 @@ jest.mock('../../queue/deadline.queue.js', () => ({
 
 jest.mock('./segment-capacity.utils.js', () => ({
     __esModule: true,
+    reserveRideSeats: jest.requireActual('./segment-capacity.utils.js').reserveRideSeats,
     releaseSegmentSeats: jest.fn().mockResolvedValue(undefined),
     releaseBookingSeats: jest.fn().mockResolvedValue(true),
 }));
@@ -112,6 +115,8 @@ describe('confirmBookingPayment', () => {
         mockPrisma.rideSegmentCapacity.findMany.mockResolvedValue([]);
         mockPrisma.rideSegmentCapacity.updateMany.mockResolvedValue({ count: 1 });
         mockPrisma.ride.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.ride.findUnique.mockResolvedValue({ status: 'PUBLISHED' });
+        mockPrisma.rideBooking.aggregate.mockResolvedValue({ _sum: { seatsBooked: 0 } });
         mockedRefundPaymentIntent.mockResolvedValue({});
         mockPrisma.$transaction.mockImplementation(
             async (callback: (tx: unknown) => unknown) => callback(mockPrisma)
@@ -245,10 +250,8 @@ describe('confirmBookingPayment', () => {
         mockRetrieve.mockResolvedValue(intentWith('succeeded'));
         mockPrisma.rideBooking.updateMany.mockResolvedValue({ count: 1 });
         mockPrisma.rideBooking.findUniqueOrThrow.mockResolvedValue(reservableBooking);
-        // Every edge is already full, so reservation cannot succeed.
-        mockPrisma.rideSegmentCapacity.findMany.mockResolvedValue([
-            { rideId: 'ride-1', fromPosition: 0, toPosition: 2, occupiedSeats: 4 },
-        ]);
+        // Other bookings already hold all 4 seats, so reservation cannot succeed.
+        mockPrisma.rideBooking.aggregate.mockResolvedValue({ _sum: { seatsBooked: 4 } });
         mockPrisma.rideBooking.findUnique.mockResolvedValue({
             passengerId: 'passenger-1',
             paymentAmount: 25,
@@ -263,6 +266,45 @@ describe('confirmBookingPayment', () => {
             where: { id: 'booking-1', status: 'PAYMENT_PENDING' },
             data: expect.objectContaining({ status: 'RIDE_FULL_REFUNDED' }),
         }));
+    });
+
+    it('counts seats held on other legs, so a full ride refunds even a disjoint leg', async () => {
+        mockRetrieve.mockResolvedValue(intentWith('succeeded'));
+        mockPrisma.rideBooking.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.rideBooking.findUniqueOrThrow.mockResolvedValue({ ...reservableBooking, pickupPosition: 2, dropoffPosition: 3 });
+        // No leg in this booking's range is occupied, but 3 of 4 seats are held elsewhere.
+        mockPrisma.rideBooking.aggregate.mockResolvedValue({ _sum: { seatsBooked: 3 } });
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            passengerId: 'passenger-1',
+            paymentAmount: 25,
+            totalPrice: 25,
+            ride: { id: 'ride-1', driverId: 'driver-1', originAddress: 'A', destinationAddress: 'B' },
+        });
+
+        await confirmBookingPayment('passenger-1', 'booking-1');
+
+        expect(mockedRefundPaymentIntent).toHaveBeenCalledWith('pi_123', 2500);
+        // The booking's own row is excluded from the held count.
+        expect(mockPrisma.rideBooking.aggregate).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: { not: 'booking-1' } }),
+        }));
+    });
+
+    it('refunds the rider when the ride was cancelled while the payment was in flight', async () => {
+        mockRetrieve.mockResolvedValue(intentWith('succeeded'));
+        mockPrisma.rideBooking.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.rideBooking.findUniqueOrThrow.mockResolvedValue(reservableBooking);
+        mockPrisma.ride.findUnique.mockResolvedValue({ status: 'CANCELLED' });
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            passengerId: 'passenger-1',
+            paymentAmount: 25,
+            totalPrice: 25,
+            ride: { id: 'ride-1', driverId: 'driver-1', originAddress: 'A', destinationAddress: 'B' },
+        });
+
+        await confirmBookingPayment('passenger-1', 'booking-1');
+
+        expect(mockedRefundPaymentIntent).toHaveBeenCalledWith('pi_123', 2500);
     });
 
     it('is idempotent once the booking has already been paid for', async () => {

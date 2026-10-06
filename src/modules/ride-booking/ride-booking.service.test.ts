@@ -89,6 +89,9 @@ jest.mock('../publish-ride/draft-ride.service.js', () => ({ assertDriverHasNoOve
 
 jest.mock('./segment-capacity.utils.js', () => ({
     __esModule: true,
+    // The real reservation runs against the tx fixture, so these tests exercise the
+    // whole-ride capacity rule rather than a stub of it.
+    reserveRideSeats: jest.requireActual('./segment-capacity.utils.js').reserveRideSeats,
     releaseSegmentSeats: jest.fn().mockResolvedValue(undefined),
     releaseBookingSeats: jest.fn().mockResolvedValue(true),
 }));
@@ -169,10 +172,13 @@ const buildTx = () => {
         },
         ride: {
             findFirst: jest.fn().mockResolvedValue(ride),
+            findUnique: jest.fn().mockResolvedValue({ status: ride.status }),
             update: jest.fn().mockResolvedValue(null),
             updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         rideBooking: {
+            // Seats already held by other bookings on the ride (whole-ride count).
+            aggregate: jest.fn().mockResolvedValue({ _sum: { seatsBooked: 0 } }),
             findFirst: jest.fn().mockResolvedValue(null),
             create: jest.fn().mockImplementation(async ({ data }) => ({
                 stripePaymentIntentId: null,
@@ -771,23 +777,16 @@ describe('createBooking atomicity', () => {
         }));
     });
 
-    it('rolls back rather than overselling a bypass-mode booking', async () => {
+    it('counts every held seat against the whole ride, whatever leg it is on', async () => {
         process.env.BOOKING_PAYMENT_MODE = 'bypass';
 
         const tx = buildTx();
         useTx(tx);
-
-        const freeEdges = [
-            { rideId: 'ride-1', fromPosition: 0, toPosition: 1, occupiedSeats: 2 },
-            { rideId: 'ride-1', fromPosition: 1, toPosition: 2, occupiedSeats: 2 },
-        ];
-        // Pre-check sees room for one more seat; the re-read after the increment shows
-        // the ride is over capacity because another booking landed in between.
-        tx.rideSegmentCapacity.findMany
-            .mockResolvedValueOnce(freeEdges)
-            .mockResolvedValue([
-                { rideId: 'ride-1', fromPosition: 0, toPosition: 1, occupiedSeats: 4 },
-            ]);
+        // availableSeats still says 1 (stale), but 3 seats are held on other legs of this
+        // 3-seat ride. The locked count is what decides.
+        const ride = await tx.ride.findFirst();
+        ride.availableSeats = 1;
+        tx.rideBooking.aggregate.mockResolvedValue({ _sum: { seatsBooked: 3 } });
 
         await expect(
             createBooking('passenger-1', {
@@ -798,7 +797,57 @@ describe('createBooking atomicity', () => {
             })
         ).rejects.toThrow('INSUFFICIENT_SEATS');
 
+        expect(tx.$queryRaw).toHaveBeenCalled();
         expect(tx.rideBooking.create).not.toHaveBeenCalled();
+        expect(tx.rideSegmentCapacity.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('writes availableSeats as totalSeats minus every held seat', async () => {
+        process.env.BOOKING_PAYMENT_MODE = 'bypass';
+
+        const tx = buildTx();
+        useTx(tx);
+        tx.rideBooking.aggregate.mockResolvedValue({ _sum: { seatsBooked: 1 } });
+
+        await createBooking('passenger-1', {
+            rideId: 'ride-1',
+            seatsBooked: 2,
+            pickupWaypointId: 'wp-b',
+            dropoffWaypointId: 'wp-c',
+        });
+
+        expect(tx.ride.update).toHaveBeenCalledWith({ where: { id: 'ride-1' }, data: { availableSeats: 0 } });
+    });
+
+    it('refuses a full ride before any payment is set up', async () => {
+        const tx = buildTx();
+        useTx(tx);
+        const ride = await tx.ride.findFirst();
+        ride.availableSeats = 0;
+
+        await expect(
+            createBooking('passenger-1', {
+                rideId: 'ride-1',
+                seatsBooked: 1,
+                pickupWaypointId: 'wp-b',
+                dropoffWaypointId: 'wp-c',
+            })
+        ).rejects.toThrow('INSUFFICIENT_SEATS');
+
+        expect(mockedCreateBookingPaymentIntent).not.toHaveBeenCalled();
+        expect(tx.rideBooking.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses more seats than are left', async () => {
+        const tx = buildTx();
+        useTx(tx);
+        const ride = await tx.ride.findFirst();
+        ride.availableSeats = 1;
+
+        await expect(
+            createBooking('passenger-1', { rideId: 'ride-1', seatsBooked: 2, pickupWaypointId: 'wp-b', dropoffWaypointId: 'wp-c' })
+        ).rejects.toThrow('INSUFFICIENT_SEATS');
+        expect(mockedCreateBookingPaymentIntent).not.toHaveBeenCalled();
     });
 });
 

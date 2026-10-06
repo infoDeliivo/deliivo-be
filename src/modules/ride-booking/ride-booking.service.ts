@@ -47,7 +47,7 @@ import { resolvePaymentSplit } from './booking-payment-split.js';
 import { resolveRideFeeTerms, type ServiceFeeTerms } from '../pricing/pricing.service.js';
 import { recordProviderFeeExpense } from '../ledger/ledger.service.js';
 import { isBypassBookingPaymentMode } from './booking-payment-mode.js';
-import { releaseBookingSeats } from './segment-capacity.utils.js';
+import { releaseBookingSeats, reserveRideSeats } from './segment-capacity.utils.js';
 import {
     createPayment,
     markBookingPaymentPaid,
@@ -403,12 +403,16 @@ export const applyStripePaymentSucceededToBooking = async (intent: Stripe.Paymen
                 seatsBooked: reserving.seatsBooked,
                 pickupPosition: reserving.pickupPosition,
                 dropoffPosition: reserving.dropoffPosition,
+                // seatsReservedAt was set on this row just above.
+                bookingId,
             });
 
             return 'CLAIMED';
         }, BOOKING_TRANSACTION_OPTIONS);
     } catch (error) {
-        if (error instanceof Error && error.message === 'INSUFFICIENT_SEATS') {
+        // RIDE_NOT_FOUND: the ride was cancelled while the payment was in flight. Either way
+        // the rider cannot travel, so it is refunded the same way.
+        if (error instanceof Error && (error.message === 'INSUFFICIENT_SEATS' || error.message === 'RIDE_NOT_FOUND')) {
             claimed = 'RIDE_FULL';
         } else {
             throw error;
@@ -1122,6 +1126,13 @@ const resolveBookingPlan = async (
     const resolvedDropoffWaypointId = riderView.bookingContext.dropoffWaypointId;
     assertExplicitMeetingPointsSelected(ride, resolvedPickupWaypointId, resolvedDropoffWaypointId);
 
+    // Seats are counted for the whole ride, so availableSeats is the answer for every leg.
+    // Checked here so a full ride is refused before any payment is set up; the
+    // reservation re-checks under the ride lock.
+    if (seatsBooked > ride.availableSeats) {
+        throw new Error('INSUFFICIENT_SEATS');
+    }
+
     // Resolve segment positions for per-segment capacity tracking
     const pickupPoint = points.find(p => p.waypointId === resolvedPickupWaypointId && resolvedPickupWaypointId !== null)
         ?? points.find(p => p.ref === (resolvedPickupWaypointId ? `waypoint:${resolvedPickupWaypointId}` : 'origin'))!;
@@ -1161,32 +1172,10 @@ const resolveBookingPlan = async (
 };
 
 /**
- * Compare-and-swap on the whole-ride seat count. Used when the booking has no segment
- * positions, or when the ride has no per-segment capacity rows at all.
- */
-const reserveWholeRideSeats = async (
-    tx: Prisma.TransactionClient,
-    rideId: string,
-    seatsBooked: number,
-    allowDraft = false,
-): Promise<void> => {
-    const seatUpdate = await tx.ride.updateMany({
-        where: {
-            id: rideId,
-            availableSeats: { gte: seatsBooked },
-            status: allowDraft ? RideStatus.DRAFT : RideStatus.PUBLISHED,
-        },
-        data: { availableSeats: { decrement: seatsBooked } },
-    });
-
-    if (seatUpdate.count === 0) {
-        throw new Error('INSUFFICIENT_SEATS');
-    }
-};
-
-/**
- * Reserves seats for the booking. Throws INSUFFICIENT_SEATS so the surrounding
- * transaction rolls back rather than overselling.
+ * Reserves seats for the booking against the whole ride (see segment-capacity.utils).
+ * Throws INSUFFICIENT_SEATS so the surrounding transaction rolls back rather than
+ * overselling, and RIDE_NOT_FOUND when the ride is no longer bookable (cancelled while
+ * a payment was in flight).
  */
 const reserveSeatsForBooking = async (
     tx: Prisma.TransactionClient,
@@ -1194,67 +1183,22 @@ const reserveSeatsForBooking = async (
         rideId: string;
         totalSeats: number;
         seatsBooked: number;
-        // Nullable to match the booking row these are read back from, and to mirror
-        // releaseSegmentSeats: with no positions there are no edges to target, so both
-        // sides fall back to the whole-ride seat count.
         pickupPosition: number | null;
         dropoffPosition: number | null;
+        /** Set when the booking row already exists, so it is not counted as already holding seats. */
+        bookingId?: string;
         allowDraft?: boolean;
     }
 ): Promise<void> => {
-    const { rideId, totalSeats, seatsBooked, pickupPosition, dropoffPosition } = params;
-    // Keep the same ride-first lock order as seat release and request checkout.
-    await tx.$queryRaw`SELECT "id" FROM "Ride" WHERE "id" = ${rideId} FOR UPDATE`;
+    await reserveRideSeats(tx, params);
 
-    if (pickupPosition === null || dropoffPosition === null) {
-        await reserveWholeRideSeats(tx, rideId, seatsBooked, params.allowDraft);
-        return;
+    // Checked after the lock taken inside reserveRideSeats, so a concurrent cancel of the
+    // ride is seen here. Throwing rolls the reservation back with the transaction.
+    const ride = await tx.ride.findUnique({ where: { id: params.rideId }, select: { status: true } });
+    const bookableStatus = params.allowDraft ? RideStatus.DRAFT : RideStatus.PUBLISHED;
+    if (ride?.status !== bookableStatus) {
+        throw new Error('RIDE_NOT_FOUND');
     }
-
-    // Per-segment capacity check: verify all edges in the booked range have capacity
-    const edgeCapacities = await tx.rideSegmentCapacity.findMany({
-        where: {
-            rideId,
-            fromPosition: { gte: pickupPosition },
-            toPosition: { lte: dropoffPosition },
-        },
-    });
-
-    if (edgeCapacities.length === 0) {
-        // Rides without segment capacity rows
-        await reserveWholeRideSeats(tx, rideId, seatsBooked, params.allowDraft);
-        return;
-    }
-
-    const maxOccupied = Math.max(...edgeCapacities.map(e => e.occupiedSeats));
-    if (maxOccupied + seatsBooked > totalSeats) {
-        throw new Error('INSUFFICIENT_SEATS');
-    }
-
-    // Increment occupied seats on all covered edges
-    await tx.rideSegmentCapacity.updateMany({
-        where: {
-            rideId,
-            fromPosition: { gte: pickupPosition },
-            toPosition: { lte: dropoffPosition },
-        },
-        data: { occupiedSeats: { increment: seatsBooked } },
-    });
-
-    // Re-read after the increment: the pre-check above is not a lock, so a
-    // concurrent booking may have taken the same seats. Rolling back here is
-    // what keeps the ride from being oversold.
-    const allEdges = await tx.rideSegmentCapacity.findMany({ where: { rideId } });
-    const newMaxOccupied = Math.max(...allEdges.map(e => e.occupiedSeats));
-    if (newMaxOccupied > totalSeats) {
-        throw new Error('INSUFFICIENT_SEATS');
-    }
-
-    // Update denormalized availableSeats = totalSeats - max(occupiedSeats across ALL edges)
-    await tx.ride.update({
-        where: { id: rideId },
-        data: { availableSeats: totalSeats - newMaxOccupied },
-    });
 };
 
 const isUniqueConstraintError = (error: unknown): boolean =>
@@ -1262,11 +1206,11 @@ const isUniqueConstraintError = (error: unknown): boolean =>
 
 /**
  * Deliberately left at the Postgres default READ COMMITTED. Seat safety comes from
- * `reserveSeatsForBooking`, which re-reads after the increment: under READ COMMITTED
- * the increment blocks on the row lock and then applies to the concurrent writer's
- * committed value, so the re-read sees the true occupancy. Raising the level to
- * REPEATABLE READ would instead abort one of the two bookings with a serialization
- * error, which is a worse outcome for the same guarantee.
+ * `reserveSeatsForBooking`, which takes the ride row lock before counting held seats:
+ * under READ COMMITTED each statement after the lock sees every committed booking, so
+ * the count is current. Raising the level to REPEATABLE READ would instead abort one of
+ * the two bookings with a serialization error, which is a worse outcome for the same
+ * guarantee.
  *
  * The timeout is raised from the 5s default because the booking transaction does a
  * full re-validation before it writes.

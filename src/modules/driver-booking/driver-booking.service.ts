@@ -133,8 +133,15 @@ export const acceptBooking = async (driverId: string, bookingId: string): Promis
     const pickupOtp = generateBookingOtp();
     const dropOtp = generateBookingOtp();
 
-    const updated = await prisma.rideBooking.update({
-        where: { id: bookingId },
+    // Guarded write: the status check above read the row earlier. If the rider cancelled or
+    // withdrew in between, their seats were already released, and confirming the row now
+    // would put a rider in the car without a seat held for them.
+    const confirmed = await prisma.rideBooking.updateMany({
+        where: {
+            id: bookingId,
+            status: BookingStatus.DRIVER_PENDING,
+            seatsReservedAt: { not: null },
+        },
         data: {
             status: BookingStatus.CONFIRMED,
             driverDecisionAt: now,
@@ -145,13 +152,17 @@ export const acceptBooking = async (driverId: string, bookingId: string): Promis
             ...bookingOtpExpiries(booking.ride, now),
             otpAttemptCount: 0,
         },
-        select: {
-            id: true,
-            rideId: true,
-            passengerId: true,
-            status: true,
-        },
     });
+    if (confirmed.count === 0) {
+        throw new Error('BOOKING_NOT_DRIVER_PENDING');
+    }
+
+    const updated = {
+        id: booking.id,
+        rideId: booking.ride.id,
+        passengerId: booking.passengerId,
+        status: BookingStatus.CONFIRMED,
+    };
 
     await createNotification({
         userId: booking.passengerId,

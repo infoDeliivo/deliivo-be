@@ -511,6 +511,7 @@ jest.mock('../../config/index.js', () => ({
             findFirst: jest.fn(({ where }: any) => {
                 const d = disputes.find(x =>
                     x.bookingId === where.bookingId &&
+                    (where.raisedBy ? x.raisedBy === where.raisedBy : true) &&
                     (where.status?.in ? where.status.in.includes(x.status) : true)
                 );
                 return Promise.resolve(d ?? null);

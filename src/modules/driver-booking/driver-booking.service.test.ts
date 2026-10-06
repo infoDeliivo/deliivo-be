@@ -2,6 +2,7 @@ const mockPrisma = {
     rideBooking: {
         findUnique: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
     },
     ride: {
         update: jest.fn(),
@@ -104,18 +105,14 @@ describe('driver booking service', () => {
             .mockReturnValueOnce('111111')
             .mockReturnValueOnce('222222');
 
-        mockPrisma.rideBooking.update.mockResolvedValue({
-            id: 'booking-1',
-            rideId: 'ride-1',
-            passengerId: 'passenger-1',
-            status: BookingStatus.CONFIRMED,
-        });
+        mockPrisma.rideBooking.updateMany.mockResolvedValue({ count: 1 });
 
         const result = await acceptBooking('driver-1', 'booking-1');
 
         expect(result.status).toBe(BookingStatus.CONFIRMED);
-        expect(mockPrisma.rideBooking.update).toHaveBeenCalledWith(
+        expect(mockPrisma.rideBooking.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
+                where: { id: 'booking-1', status: BookingStatus.DRIVER_PENDING, seatsReservedAt: { not: null } },
                 data: expect.objectContaining({
                     status: BookingStatus.CONFIRMED,
                 }),
@@ -127,6 +124,32 @@ describe('driver booking service', () => {
                 type: 'booking.driver.accepted',
             })
         );
+    });
+
+    it('refuses to confirm a booking the rider cancelled after the driver opened it', async () => {
+        mockPrisma.rideBooking.findUnique.mockResolvedValue({
+            id: 'booking-1',
+            rideId: 'ride-1',
+            passengerId: 'passenger-1',
+            status: BookingStatus.DRIVER_PENDING,
+            driverDecisionDeadlineAt: new Date(Date.now() + 60_000),
+            ride: {
+                id: 'ride-1',
+                driverId: 'driver-1',
+                originAddress: 'Mathura',
+                destinationAddress: 'Delhi',
+                departureDate: new Date('2026-09-01T00:00:00.000Z'),
+                departureTime: '09:00',
+                driver: { id: 'driver-1', name: 'Driver', avatarUrl: null, dlVerified: true },
+                waypoints: [],
+            },
+        });
+        mockGenerateBookingOtp.mockReturnValue('111111');
+        // The cancel landed between the read and the write: no row matches the guard.
+        mockPrisma.rideBooking.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(acceptBooking('driver-1', 'booking-1')).rejects.toThrow('BOOKING_NOT_DRIVER_PENDING');
+        expect(mockCreateNotification).not.toHaveBeenCalled();
     });
 
     it('reject flow triggers refund and seat restore', async () => {
