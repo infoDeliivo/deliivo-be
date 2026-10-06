@@ -3,6 +3,7 @@ const mockPrisma = {
         findMany: jest.fn(),
         findUnique: jest.fn(),
         count: jest.fn(),
+        groupBy: jest.fn(),
     },
     vehicle: {
         findUnique: jest.fn(),
@@ -71,6 +72,7 @@ import { getContentSummary } from '../content/content.service.js';
 import {
     getOperationsSummary,
     getUserDetails,
+    listUserCountries,
     listUsers,
     listVehicles,
     rejectVehicle,
@@ -311,5 +313,76 @@ describe('admin user language visibility', () => {
         const result = await listUsers({});
 
         expect(result.users[0]).toMatchObject({ preferredLocale: null });
+    });
+});
+
+describe('admin user list filters', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockPrisma.user.findMany.mockResolvedValue([]);
+        mockPrisma.user.count.mockResolvedValue(0);
+    });
+
+    const whereOfLastList = () => mockPrisma.user.findMany.mock.calls[0][0].where;
+
+    it('hides archived users when no status is given, so the legacy isBanned filter keeps its meaning', async () => {
+        await listUsers({ isBanned: true });
+
+        expect(whereOfLastList()).toMatchObject({ AND: [{ archivedAt: null }], isBanned: true });
+    });
+
+    it.each([
+        ['active', { archivedAt: null, isBanned: false }],
+        ['banned', { archivedAt: null, isBanned: true }],
+        ['archived', { archivedAt: { not: null } }],
+        ['all', {}],
+    ] as const)('maps status=%s to its where clause', async (status, expected) => {
+        await listUsers({ status });
+
+        expect(whereOfLastList().AND[0]).toEqual(expected);
+    });
+
+    it('matches a country on the trailing segment of detectedCountry, alongside a search', async () => {
+        await listUsers({ status: 'active', country: 'ee', search: 'anna' });
+
+        const where = whereOfLastList();
+        expect(where.AND).toContainEqual({
+            OR: [
+                { detectedCountry: { equals: 'EE', mode: 'insensitive' } },
+                { detectedCountry: { endsWith: ', EE', mode: 'insensitive' } },
+            ],
+        });
+        // The search OR must survive the country OR.
+        expect(where.OR).toHaveLength(4);
+    });
+
+    it('applies dlVerified together with status', async () => {
+        await listUsers({ status: 'active', dlVerified: false });
+
+        expect(whereOfLastList()).toMatchObject({ dlVerified: false, AND: [{ archivedAt: null, isBanned: false }] });
+    });
+
+    it('selects the fields the filters and archive view need', async () => {
+        await listUsers({});
+
+        const select = mockPrisma.user.findMany.mock.calls[0][0].select;
+        expect(select).toMatchObject({ detectedCountry: true, archivedAt: true, lastName: true });
+    });
+
+    it('folds city-level detectedCountry groups into ISO-2 counts and drops unparseable values', async () => {
+        mockPrisma.user.groupBy.mockResolvedValue([
+            { detectedCountry: 'Tallinn, EE', _count: { _all: 3 } },
+            { detectedCountry: 'Tartu, EE', _count: { _all: 1 } },
+            { detectedCountry: 'IN', _count: { _all: 2 } },
+            { detectedCountry: 'New Delhi, IN', _count: { _all: 2 } },
+            { detectedCountry: 'Somewhere', _count: { _all: 9 } },
+        ]);
+
+        const result = await listUserCountries({ status: 'active' });
+
+        expect(result.countries).toEqual([
+            { code: 'EE', count: 4 },
+            { code: 'IN', count: 4 },
+        ]);
     });
 });

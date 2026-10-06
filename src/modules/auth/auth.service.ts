@@ -27,6 +27,7 @@ export const googleAuthService = async (idToken: string, locale?: SupportedLocal
 
   const email = normalizeAuthIdentifier('email', payload.email);
   let user = await prisma.user.findUnique({ where: { email } });
+  if (user?.archivedAt) throw new Error('USER_ARCHIVED');
   if (user?.isBanned) throw new Error('USER_BANNED');
 
   if (!user) {
@@ -200,6 +201,12 @@ export const verifyOtpService = async (
 
     if (!user) {
       return { success: false, reason: 'USER_NOT_FOUND' };
+    }
+
+    // An archived account keeps its phone and email (so it can be restored), which means the
+    // identifier still matches; refuse before any token is issued.
+    if (user.archivedAt) {
+      return { success: false, reason: 'USER_ARCHIVED' };
     }
 
     // Login flow → ensure verified user. This runs before anything is written so an
@@ -377,6 +384,10 @@ export const loginService = async (method: string, identifier: string) => {
       success: false,
       reason: 'USER_NOT_FOUND_OR_VERIFIED',
     };
+  }
+
+  if (user.archivedAt) {
+    return { success: false, reason: 'USER_ARCHIVED', user };
   }
 
   return { success: true, user };

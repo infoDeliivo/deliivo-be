@@ -32,6 +32,8 @@ import { getClientIpForGeo } from '../../utils/geoip.js';
 
 type OtpPurpose = 'signup' | 'login' | 'reset_password';
 
+const ACCOUNT_ARCHIVED_MESSAGE = 'This account has been archived. Contact support to restore it.';
+
 const isOtpDebugMode = process.env.NODE_ENV === 'staging' || process.env.DISABLE_REAL_OTP === 'true';
 
 const getOtpTemplateByPurpose = (purpose: OtpPurpose, code: string) => {
@@ -83,6 +85,9 @@ export const googleAuth = async (req: Request, res: Response) => {
     }
     if (error.message === 'USER_BANNED') {
       return sendError(res, { status: HttpStatus.FORBIDDEN, message: 'Your account has been suspended' });
+    }
+    if (error.message === 'USER_ARCHIVED') {
+      return sendError(res, { status: HttpStatus.FORBIDDEN, message: ACCOUNT_ARCHIVED_MESSAGE });
     }
     return sendError(res, { status: HttpStatus.UNAUTHORIZED, message: 'Google authentication failed' });
   }
@@ -278,6 +283,9 @@ export const verifyOtpCont = async (req: Request, res: Response) => {
     }
     
     const result = await verifyOtpService(identifier, code, purpose, method);
+    if (!result.success && result.reason === 'USER_ARCHIVED') {
+      return sendError(res, { status: HttpStatus.FORBIDDEN, message: ACCOUNT_ARCHIVED_MESSAGE });
+    }
     if ('success' in result && !result.success) {
       return sendError(res, {
         status: HttpStatus.BAD_REQUEST,
@@ -327,7 +335,10 @@ export const login = async (req: Request, res: Response) => {
     }
     const identifier = normalizeAuthIdentifier(method, rawIdentifier);
 
-    const { user } = await loginService(method, identifier);
+    const { user, reason } = await loginService(method, identifier);
+    if (reason === 'USER_ARCHIVED') {
+      return sendError(res, { status: HttpStatus.FORBIDDEN, message: ACCOUNT_ARCHIVED_MESSAGE });
+    }
     if (!user) {
       return sendError(res, {
         status: HttpStatus.NOT_FOUND,

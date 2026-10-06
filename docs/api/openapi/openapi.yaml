@@ -440,6 +440,30 @@
     },
     "/api/v1/admin/ride-overrides": {
       "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1ride-overrides"
+    },
+    "/api/v1/admin/users": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users"
+    },
+    "/api/v1/admin/users/countries": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users~1countries"
+    },
+    "/api/v1/admin/users/{id}": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users~1{id}"
+    },
+    "/api/v1/admin/users/{id}/ban": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users~1{id}~1ban"
+    },
+    "/api/v1/admin/users/{id}/unban": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users~1{id}~1unban"
+    },
+    "/api/v1/admin/users/{id}/archive": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users~1{id}~1archive"
+    },
+    "/api/v1/admin/users/{id}/restore": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users~1{id}~1restore"
+    },
+    "/api/v1/admin/users/{id}/purge": {
+      "$ref": "./paths/admin.yaml#/paths/~1api~1v1~1admin~1users~1{id}~1purge"
     }
   },
   "components": {

@@ -1,25 +1,44 @@
 import { Response } from 'express';
 import { VehicleVerificationStatus } from '@prisma/client';
+import { ZodError } from 'zod';
 import { AuthRequest } from '../../types/auth.js';
 import { HttpStatus, sendError, sendSuccess } from '../../utils/index.js';
 import { logError } from '../../utils/logger.js';
 import * as AdminService from './admin.service.js';
+import { adminListUsersQuerySchema, adminUserCountriesQuerySchema } from './admin.validator.js';
 import { createPricingConfig as createPricingConfigService, listPricingConfigs as listPricingConfigsService, updatePricingConfig as updatePricingConfigService } from '../pricing/pricing.service.js';
 
 /* ================= LIST USERS ================= */
+const sendQueryValidationError = (res: Response, error: ZodError) =>
+    res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: error.issues.map((issue) => ({ field: issue.path.join('.'), message: issue.message })),
+    });
+
 export const listUsers = async (req: AuthRequest, res: Response) => {
+    // Parsed here rather than by `validate`: it writes the transformed values back into
+    // req.query, whose type would then lie about them.
+    const parsed = adminListUsersQuerySchema.safeParse(req.query);
+    if (!parsed.success) return sendQueryValidationError(res, parsed.error);
     try {
-        const result = await AdminService.listUsers({
-            page: req.query.page ? Number(req.query.page) : undefined,
-            limit: req.query.limit ? Number(req.query.limit) : undefined,
-            search: req.query.search as string | undefined,
-            isBanned: req.query.isBanned !== undefined ? req.query.isBanned === 'true' : undefined,
-            role: req.query.role as string | undefined,
-            dlVerified: req.query.dlVerified !== undefined ? req.query.dlVerified === 'true' : undefined,
-        });
+        const result = await AdminService.listUsers(parsed.data);
         return sendSuccess(res, { message: 'Users fetched', data: result });
-    } catch {
+    } catch (error) {
+        logError('[ADMIN] user list failed', error);
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch users' });
+    }
+};
+
+export const listUserCountries = async (req: AuthRequest, res: Response) => {
+    const parsed = adminUserCountriesQuerySchema.safeParse(req.query);
+    if (!parsed.success) return sendQueryValidationError(res, parsed.error);
+    try {
+        const result = await AdminService.listUserCountries(parsed.data);
+        return sendSuccess(res, { message: 'User countries fetched', data: result });
+    } catch (error) {
+        logError('[ADMIN] user countries failed', error);
+        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to fetch user countries' });
     }
 };
 
@@ -46,6 +65,8 @@ export const banUser = async (req: AuthRequest, res: Response) => {
             return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
         if (error.message === 'CANNOT_BAN_ADMIN')
             return sendError(res, { status: HttpStatus.FORBIDDEN, message: 'Cannot ban an admin account' });
+        if (error.message === 'USER_ARCHIVED')
+            return sendError(res, { status: HttpStatus.CONFLICT, message: 'User is archived; restore them first' });
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to ban user' });
     }
 };
@@ -58,29 +79,9 @@ export const unbanUser = async (req: AuthRequest, res: Response) => {
     } catch (error: any) {
         if (error.message === 'USER_NOT_FOUND')
             return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
+        if (error.message === 'USER_ARCHIVED')
+            return sendError(res, { status: HttpStatus.CONFLICT, message: 'User is archived; restore them first' });
         return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to unban user' });
-    }
-};
-
-export const deleteUser = async (req: AuthRequest, res: Response) => {
-    try {
-        const mode = req.body?.mode === 'hard' ? 'hard' : 'soft';
-        const result = await AdminService.deleteUser(req.params.id as string, { mode });
-        return sendSuccess(res, {
-            message: mode === 'hard' ? 'User permanently deleted' : 'User soft-deleted',
-            data: result,
-        });
-    } catch (error: any) {
-        if (error.message === 'USER_NOT_FOUND') {
-            return sendError(res, { status: HttpStatus.NOT_FOUND, message: 'User not found' });
-        }
-        if (error.message === 'CANNOT_DELETE_ADMIN') {
-            return sendError(res, { status: HttpStatus.FORBIDDEN, message: 'Cannot delete an admin account' });
-        }
-        if (error.message === 'HARD_DELETE_DISABLED') {
-            return sendError(res, { status: HttpStatus.CONFLICT, message: 'Hard delete is disabled' });
-        }
-        return sendError(res, { status: HttpStatus.INTERNAL_ERROR, message: 'Failed to delete user' });
     }
 };
 
