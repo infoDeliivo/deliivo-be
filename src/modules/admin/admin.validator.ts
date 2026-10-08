@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SUPPORTED_LOCALES } from '../../utils/locale.js';
 
 export const vehicleIdParamSchema = z.object({
     id: z.string().uuid('A valid vehicle id is required'),
@@ -9,6 +10,8 @@ export const userIdParamSchema = z.object({
 });
 
 const queryBoolean = z.enum(['true', 'false']).transform((value) => value === 'true');
+
+export const ADMIN_USER_SORT_FIELDS = ['createdAt', 'firstName', 'email'] as const;
 
 export const adminListUsersQuerySchema = z.object({
     page: z.coerce.number().int().min(1).optional(),
@@ -25,6 +28,21 @@ export const adminListUsersQuerySchema = z.object({
         .regex(/^[A-Za-z]{2}$/, 'country must be an ISO 3166-1 alpha-2 code')
         .transform((value) => value.toUpperCase())
         .optional(),
+    // Only users with a DL upload or vehicle waiting on an admin decision.
+    pending: queryBoolean.optional(),
+    // Per-column filters from the admin users table.
+    name: z.string().trim().min(1).max(100).optional(),
+    email: z.string().trim().min(1).max(200).optional(),
+    phone: z.string().trim().min(1).max(50).optional(),
+    // `none` = the locale was never detected.
+    language: z.enum([...SUPPORTED_LOCALES, 'none']).optional(),
+    joinedFrom: z.coerce.date().optional(),
+    joinedTo: z.coerce.date().optional(),
+    // Same states the Vehicle and Payout columns display.
+    vehicleState: z.enum(['NONE', 'PENDING', 'APPROVED', 'REJECTED']).optional(),
+    payoutState: z.enum(['NOT_STARTED', 'INCOMPLETE', 'READY']).optional(),
+    sortBy: z.enum(ADMIN_USER_SORT_FIELDS).optional(),
+    sortDir: z.enum(['asc', 'desc']).optional(),
 });
 
 export type AdminListUsersQuery = z.infer<typeof adminListUsersQuerySchema>;

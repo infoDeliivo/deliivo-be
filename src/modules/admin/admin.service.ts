@@ -13,6 +13,11 @@ import { recoverPendingVeriffDecisionsForUser } from '../dl-verification/dl-veri
 import { sendMail } from '../mail/mail.service.js';
 import { REQUIRED_DOCUMENT_TYPES, requiresFullDocumentSet } from '../vehicles/vehicle.constants.js';
 import { awardBookingCompletionRewards, awardRideCompletionRewards } from '../rewards/rewards.service.js';
+import type { SupportedLocale } from '../../utils/locale.js';
+import { buildVerificationSummary, type AdminPayoutState, type AdminVehicleState } from './admin-user-status.js';
+import type { ADMIN_USER_SORT_FIELDS } from './admin.validator.js';
+
+type AdminUserSortField = (typeof ADMIN_USER_SORT_FIELDS)[number];
 
 const emergencyAlertSelect = {
     id: true,
@@ -136,20 +141,92 @@ export const countryCodeOf = (detectedCountry: string | null): string | null => 
     return code && /^[A-Z]{2}$/.test(code) ? code : null;
 };
 
-export const listUsers = async (query: {
-    page?: number;
-    limit?: number;
+/** Mirrors the DL and vehicle review queues, so the filter and the Pending column agree. */
+const pendingReviewWhere: Prisma.UserWhereInput = {
+    OR: [
+        { dlVerifications: { some: { status: 'PENDING', documentImageKey: { not: null } } } },
+        { vehicles: { some: { deletedAt: null, verificationStatus: VehicleVerificationStatus.PENDING } } },
+    ],
+};
+
+/**
+ * Every word must match the first or last name, so "anna tamm" finds Anna Tamm while
+ * still matching a single word against either name.
+ */
+export const userNameWhere = (name: string): Prisma.UserWhereInput => ({
+    AND: name
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((word) => ({
+            OR: [
+                { firstName: { contains: word, mode: 'insensitive' } },
+                { lastName: { contains: word, mode: 'insensitive' } },
+            ],
+        })),
+});
+
+/** Phones are stored as E.164 ("+3725..."), so spaces, dashes and brackets typed by an admin are dropped. */
+export const normalizePhoneSearch = (phone: string): string => phone.replace(/[\s\-().]/g, '');
+
+const liveVehicle = (verificationStatus: VehicleVerificationStatus): Prisma.UserWhereInput => ({
+    vehicles: { some: { deletedAt: null, verificationStatus } },
+});
+const noLiveVehicle = (verificationStatus: VehicleVerificationStatus): Prisma.UserWhereInput => ({
+    vehicles: { none: { deletedAt: null, verificationStatus } },
+});
+
+/**
+ * Matches the precedence of `deriveVehicleState` (PENDING > APPROVED > REJECTED), so a
+ * filtered row always shows the state that was filtered on.
+ */
+export const vehicleStateWhere = (state: AdminVehicleState): Prisma.UserWhereInput => {
+    const { PENDING, APPROVED, REJECTED } = VehicleVerificationStatus;
+    switch (state) {
+        case 'PENDING':
+            return liveVehicle(PENDING);
+        case 'APPROVED':
+            return { AND: [liveVehicle(APPROVED), noLiveVehicle(PENDING)] };
+        case 'REJECTED':
+            return { AND: [liveVehicle(REJECTED), noLiveVehicle(PENDING), noLiveVehicle(APPROVED)] };
+        case 'NONE':
+            return { vehicles: { none: { deletedAt: null } } };
+    }
+};
+
+/** Matches `derivePayoutState`. */
+export const payoutStateWhere = (state: AdminPayoutState): Prisma.UserWhereInput => {
+    switch (state) {
+        case 'NOT_STARTED':
+            return { stripeAccountId: null };
+        case 'INCOMPLETE':
+            return { stripeAccountId: { not: null }, stripeOnboardingComplete: false };
+        case 'READY':
+            return { stripeAccountId: { not: null }, stripeOnboardingComplete: true };
+    }
+};
+
+export interface AdminUserListFilters {
     search?: string;
     status?: AdminUserStatusFilter;
     isBanned?: boolean;
     role?: string;
     dlVerified?: boolean;
     country?: string;
-}) => {
-    const page = Math.max(1, query.page ?? 1);
-    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
-    const skip = (page - 1) * limit;
+    pending?: boolean;
+    name?: string;
+    email?: string;
+    phone?: string;
+    language?: SupportedLocale | 'none';
+    joinedFrom?: Date;
+    joinedTo?: Date;
+    vehicleState?: AdminVehicleState;
+    payoutState?: AdminPayoutState;
+    sortBy?: AdminUserSortField;
+    sortDir?: 'asc' | 'desc';
+}
 
+/** Where-clause shared by the users list and its export, so both always return the same users. */
+export const buildUserListWhere = (query: AdminUserListFilters): Prisma.UserWhereInput => {
     // Typed rather than `any`: an untyped where silently compiles against columns that
     // no longer exist and only fails at runtime.
     // Independent conditions are ANDed so the search OR and the country OR do not overwrite
@@ -181,34 +258,121 @@ export const listUsers = async (query: {
     if (query.country) {
         and.push(userCountryWhere(query.country));
     }
+    if (query.pending) {
+        and.push(pendingReviewWhere);
+    }
+    if (query.name) {
+        and.push(userNameWhere(query.name));
+    }
+    if (query.email) {
+        and.push({ email: { contains: query.email, mode: 'insensitive' } });
+    }
+    if (query.phone) {
+        const phone = normalizePhoneSearch(query.phone);
+        if (phone) and.push({ phone: { contains: phone } });
+    }
+    if (query.language) {
+        and.push({ preferredLocale: query.language === 'none' ? null : query.language });
+    }
+    if (query.joinedFrom || query.joinedTo) {
+        and.push({ createdAt: { gte: query.joinedFrom, lte: query.joinedTo } });
+    }
+    if (query.vehicleState) {
+        and.push(vehicleStateWhere(query.vehicleState));
+    }
+    if (query.payoutState) {
+        and.push(payoutStateWhere(query.payoutState));
+    }
+    return where;
+};
 
-    const [users, total] = await Promise.all([
+export const buildUserListOrderBy = (query: AdminUserListFilters): Prisma.UserOrderByWithRelationInput[] => {
+    const sortDir = query.sortDir ?? 'desc';
+    // createdAt breaks ties so paging over a name/email sort stays stable.
+    return query.sortBy === 'firstName'
+        ? [{ firstName: sortDir }, { createdAt: 'desc' }]
+        : query.sortBy === 'email'
+            ? [{ email: sortDir }, { createdAt: 'desc' }]
+            : [{ createdAt: sortDir }];
+};
+
+export const userListSelect = {
+    id: true,
+    firstName: true,
+    lastName: true,
+    avatarUrl: true,
+    salutation: true,
+    gender: true,
+    email: true,
+    phone: true,
+    preferredLocale: true,
+    detectedCountry: true,
+    role: true,
+    isBanned: true,
+    isVerified: true,
+    dlVerified: true,
+    onboardingStatus: true,
+    archivedAt: true,
+    createdAt: true,
+    stripeAccountId: true,
+    stripeOnboardingComplete: true,
+    stripeNameMatch: true,
+    stripeDobMatch: true,
+    dlVerifications: {
+        where: { status: { not: 'SUPERSEDED' } },
+        orderBy: { updatedAt: 'desc' },
+        take: 5,
+        select: { status: true, documentImageKey: true, updatedAt: true },
+    },
+    vehicles: {
+        where: { deletedAt: null },
+        select: { verificationStatus: true },
+    },
+} satisfies Prisma.UserSelect;
+
+type UserListRow = Prisma.UserGetPayload<{ select: typeof userListSelect }>;
+
+/** Raw Stripe/DL/vehicle rows stay server-side; callers only get the derived summary. */
+export const toAdminUserListItem = ({
+    stripeAccountId,
+    stripeOnboardingComplete,
+    stripeNameMatch,
+    stripeDobMatch,
+    dlVerifications,
+    vehicles,
+    ...user
+}: UserListRow) => ({
+    ...user,
+    verification: buildVerificationSummary({
+        stripeAccountId,
+        stripeOnboardingComplete,
+        stripeNameMatch,
+        stripeDobMatch,
+        dlVerifications,
+        vehicles,
+    }),
+});
+
+export type AdminUserListItem = ReturnType<typeof toAdminUserListItem>;
+
+export const listUsers = async (query: AdminUserListFilters & { page?: number; limit?: number }) => {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const skip = (page - 1) * limit;
+    const where = buildUserListWhere(query);
+
+    const [rows, total] = await Promise.all([
         prisma.user.findMany({
             where,
             skip,
             take: limit,
-            orderBy: { createdAt: 'desc' },
-            select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                salutation: true,
-                gender: true,
-                email: true,
-                phone: true,
-                preferredLocale: true,
-                detectedCountry: true,
-                role: true,
-                isBanned: true,
-                isVerified: true,
-                dlVerified: true,
-                onboardingStatus: true,
-                archivedAt: true,
-                createdAt: true,
-            },
+            orderBy: buildUserListOrderBy(query),
+            select: userListSelect,
         }),
         prisma.user.count({ where }),
     ]);
+
+    const users = rows.map(toAdminUserListItem);
 
     return {
         users,
