@@ -263,7 +263,7 @@ describe('admin user language visibility', () => {
 
     it('selects preferredLocale in the user list', async () => {
         mockPrisma.user.findMany.mockResolvedValue([
-            { id: 'u1', email: 'a@test.local', preferredLocale: 'et' },
+            { id: 'u1', email: 'a@test.local', preferredLocale: 'et', dlVerifications: [], vehicles: [] },
         ]);
         mockPrisma.user.count.mockResolvedValue(1);
 
@@ -306,7 +306,7 @@ describe('admin user language visibility', () => {
 
     it('passes a null locale through untouched for a user who never chose one', async () => {
         mockPrisma.user.findMany.mockResolvedValue([
-            { id: 'u2', email: 'b@test.local', preferredLocale: null },
+            { id: 'u2', email: 'b@test.local', preferredLocale: null, dlVerifications: [], vehicles: [] },
         ]);
         mockPrisma.user.count.mockResolvedValue(1);
 
@@ -366,7 +366,136 @@ describe('admin user list filters', () => {
         await listUsers({});
 
         const select = mockPrisma.user.findMany.mock.calls[0][0].select;
-        expect(select).toMatchObject({ detectedCountry: true, archivedAt: true, lastName: true });
+        expect(select).toMatchObject({ detectedCountry: true, archivedAt: true, lastName: true, avatarUrl: true });
+    });
+
+    it('restricts to users with a DL upload or vehicle awaiting review when pending=true', async () => {
+        await listUsers({ status: 'active', pending: true });
+
+        expect(whereOfLastList().AND).toContainEqual({
+            OR: [
+                { dlVerifications: { some: { status: 'PENDING', documentImageKey: { not: null } } } },
+                { vehicles: { some: { deletedAt: null, verificationStatus: 'PENDING' } } },
+            ],
+        });
+    });
+
+    it.each([
+        [{}, [{ createdAt: 'desc' }]],
+        [{ sortBy: 'createdAt', sortDir: 'asc' }, [{ createdAt: 'asc' }]],
+        [{ sortBy: 'firstName', sortDir: 'asc' }, [{ firstName: 'asc' }, { createdAt: 'desc' }]],
+        [{ sortBy: 'email' }, [{ email: 'desc' }, { createdAt: 'desc' }]],
+    ] as const)('maps sort %j to orderBy', async (sort, expected) => {
+        await listUsers(sort);
+
+        expect(mockPrisma.user.findMany.mock.calls[0][0].orderBy).toEqual(expected);
+    });
+
+    it.each([
+        ['PENDING', { vehicles: { some: { deletedAt: null, verificationStatus: 'PENDING' } } }],
+        [
+            'APPROVED',
+            {
+                AND: [
+                    { vehicles: { some: { deletedAt: null, verificationStatus: 'APPROVED' } } },
+                    { vehicles: { none: { deletedAt: null, verificationStatus: 'PENDING' } } },
+                ],
+            },
+        ],
+        [
+            'REJECTED',
+            {
+                AND: [
+                    { vehicles: { some: { deletedAt: null, verificationStatus: 'REJECTED' } } },
+                    { vehicles: { none: { deletedAt: null, verificationStatus: 'PENDING' } } },
+                    { vehicles: { none: { deletedAt: null, verificationStatus: 'APPROVED' } } },
+                ],
+            },
+        ],
+        ['NONE', { vehicles: { none: { deletedAt: null } } }],
+    ] as const)('maps vehicleState=%s with the same precedence as the Vehicle column', async (vehicleState, expected) => {
+        await listUsers({ vehicleState });
+
+        expect(whereOfLastList().AND).toContainEqual(expected);
+    });
+
+    it.each([
+        ['NOT_STARTED', { stripeAccountId: null }],
+        ['INCOMPLETE', { stripeAccountId: { not: null }, stripeOnboardingComplete: false }],
+        ['READY', { stripeAccountId: { not: null }, stripeOnboardingComplete: true }],
+    ] as const)('maps payoutState=%s to its where clause', async (payoutState, expected) => {
+        await listUsers({ payoutState });
+
+        expect(whereOfLastList().AND).toContainEqual(expected);
+    });
+
+    it('requires every word of a name search to match the first or last name', async () => {
+        await listUsers({ name: 'anna  tamm' });
+
+        const nameMatch = (word: string) => ({
+            OR: [
+                { firstName: { contains: word, mode: 'insensitive' } },
+                { lastName: { contains: word, mode: 'insensitive' } },
+            ],
+        });
+        expect(whereOfLastList().AND).toContainEqual({ AND: [nameMatch('anna'), nameMatch('tamm')] });
+    });
+
+    it('strips formatting from a phone search and matches email case-insensitively', async () => {
+        await listUsers({ phone: '+372 (5) 91-82', email: 'Test.Local' });
+
+        const and = whereOfLastList().AND;
+        expect(and).toContainEqual({ phone: { contains: '+37259182' } });
+        expect(and).toContainEqual({ email: { contains: 'Test.Local', mode: 'insensitive' } });
+    });
+
+    it.each([
+        ['et', { preferredLocale: 'et' }],
+        ['none', { preferredLocale: null }],
+    ] as const)('maps language=%s to its where clause', async (language, expected) => {
+        await listUsers({ language });
+
+        expect(whereOfLastList().AND).toContainEqual(expected);
+    });
+
+    it('bounds createdAt by joinedFrom and joinedTo', async () => {
+        const joinedFrom = new Date('2026-09-01T00:00:00Z');
+        const joinedTo = new Date('2026-10-01T00:00:00Z');
+        await listUsers({ joinedFrom, joinedTo });
+
+        expect(whereOfLastList().AND).toContainEqual({ createdAt: { gte: joinedFrom, lte: joinedTo } });
+    });
+
+    it('returns a verification summary and keeps raw Stripe and DL rows out of the response', async () => {
+        mockPrisma.user.findMany.mockResolvedValue([
+            {
+                id: 'u1',
+                stripeAccountId: 'acct_1',
+                stripeOnboardingComplete: false,
+                stripeNameMatch: null,
+                stripeDobMatch: false,
+                dlVerifications: [
+                    { status: 'PENDING', documentImageKey: 'dl/u1.jpg', updatedAt: new Date('2026-10-01') },
+                ],
+                vehicles: [{ verificationStatus: 'PENDING' }, { verificationStatus: 'APPROVED' }],
+            },
+        ]);
+        mockPrisma.user.count.mockResolvedValue(1);
+
+        const { users } = await listUsers({});
+
+        expect(users[0]).toEqual({
+            id: 'u1',
+            verification: {
+                dl: 'PENDING',
+                vehicle: { state: 'PENDING', pending: 1, approved: 1, rejected: 0 },
+                payout: { state: 'INCOMPLETE', mismatch: true },
+                pending: [
+                    { kind: 'DL_REVIEW', count: 1 },
+                    { kind: 'VEHICLE_REVIEW', count: 1 },
+                ],
+            },
+        });
     });
 
     it('folds city-level detectedCountry groups into ISO-2 counts and drops unparseable values', async () => {

@@ -524,7 +524,7 @@
       "get": {
         "operationId": "adminListUsers",
         "summary": "GET admin/users",
-        "description": "Paginated user list for admins, newest first, with status, country and driving-licence filters.",
+        "description": "Paginated user list for admins, newest first by default, with status, country, driving-licence and pending-review filters. Each user carries a `verification` summary: `dl` (NONE or the latest non-superseded DlVerificationStatus), `vehicle` ({state: NONE|PENDING|APPROVED|REJECTED, pending, approved, rejected}), `payout` ({state: NOT_STARTED|INCOMPLETE|READY, mismatch}) and `pending` (array of {kind: DL_REVIEW|VEHICLE_REVIEW, count}).",
         "tags": [
           "Admin"
         ],
@@ -626,6 +626,142 @@
               "pattern": "^[A-Za-z]{2}$"
             },
             "description": "ISO 3166-1 alpha-2 code, matched against the country part of the IP-detected `detectedCountry`. Users with no detected country never match."
+          },
+          {
+            "name": "pending",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "`true` keeps only users with an item awaiting admin review: a PENDING driving-licence upload or a PENDING non-deleted vehicle."
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "Per-column filter. Every whitespace-separated word must match first or last name (case-insensitive)."
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Per-column filter. Case-insensitive substring of email."
+          },
+          {
+            "name": "phone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 50
+            },
+            "description": "Per-column filter. Spaces, dashes, dots and brackets are stripped, then matched as a substring of the E.164 phone."
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "en",
+                "et",
+                "lv",
+                "lt",
+                "ru",
+                "none"
+              ]
+            },
+            "description": "`preferredLocale`; `none` = never detected."
+          },
+          {
+            "name": "joinedFrom",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Inclusive lower bound on `createdAt`."
+          },
+          {
+            "name": "joinedTo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Inclusive upper bound on `createdAt`."
+          },
+          {
+            "name": "vehicleState",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "NONE",
+                "PENDING",
+                "APPROVED",
+                "REJECTED"
+              ]
+            },
+            "description": "Filter by the derived vehicle state (PENDING > APPROVED > REJECTED precedence over non-deleted vehicles; NONE = no vehicle)."
+          },
+          {
+            "name": "payoutState",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "NOT_STARTED",
+                "INCOMPLETE",
+                "READY"
+              ]
+            },
+            "description": "NOT_STARTED = no Stripe account; INCOMPLETE = account without completed onboarding; READY = onboarding complete."
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "createdAt",
+                "firstName",
+                "email"
+              ],
+              "default": "createdAt"
+            }
+          },
+          {
+            "name": "sortDir",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
           }
         ],
         "responses": {
